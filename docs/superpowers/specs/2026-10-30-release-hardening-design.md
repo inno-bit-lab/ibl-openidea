@@ -1,7 +1,7 @@
 # Release and hardening (v0.2.2, v0.2.3): design
 
 - **Date**: 2026-10-30
-- **Status**: Draft for owner review
+- **Status**: Approved by the coordinator on 2026-10-30, under the owner's delegation ("delego a te le mie scelte fino al mio ritorno"). Decisions taken under that delegation are marked "Delegated decision".
 - **Roadmap**: [`2026-10-30-improvement-roadmap.md`](2026-10-30-improvement-roadmap.md), sub-project 1
 - **Base**: `main` at `cd6b3a0` (tag `v0.2.1`); work branch `fix/release-hardening`
 
@@ -117,7 +117,13 @@ Each fix starts from a failing test.
 - Correct the settings hint in `src/features/settings/pages/vcs.tsx` that says the agent "cannot change files".
 - Tests with `FakeAgent`: the mode comes from the allowlist; only permissive modes give an error; no mode gives an error; the cwd is not the project root and is removed afterwards.
 
-> **Changed after the in-chat design review**: the reviewed design let agents without a mode run, with refusing permissions as the only guard. This spec fails closed instead, because some agents have no permission gate. The owner confirms or reverts this at spec review.
+> **Delegated decision.** The in-chat design let agents without a mode run, with refused permissions as the only guard. This spec fails closed instead, because some agents have no permission gate. Effect on the built-in agents, based on the hard-coded fallback configuration (`default_known_config`, `crates/ide-agent/src/lib.rs`):
+>
+> - Still available for commit suggestion: Claude (`default`), Codex (`read-only`), Antigravity (`default`).
+> - No longer available: Pi (no mode option, no permission gate) and GitHub Copilot (modes `agent`, `plan`, `autopilot`, none of them allowlisted).
+> - Depends on the modes the agent reports at runtime: Gemini CLI, Cursor, OpenCode, Qwen Code, Kimi, Goose, Auggie, Kiro, Mistral Vibe (no fallback configuration).
+>
+> The error message names the agent and suggests one of the available ones. The owner can revert this on return.
 
 ### 5.3 Ignored files in analysis scopes (v0.2.1 regression)
 
@@ -264,27 +270,34 @@ Worktrees follow the Crew rule: `<base>/.ibl-crew-worktree/<name>`, with `.ibl-c
   - Claude Code with subagents (multi-agent orchestration is authorised by this spec for that member);
   - Codex with its native parallel agents, if the installed version offers them (NOT_VERIFIED).
   The harness splits the work internally.
-- **Reviewer and consolidator**: one harness per release that implemented nothing in that release. It:
-  - reviews each macro-task branch against its plan's Definition of Done;
+- **Reviewers and consolidators**: one per macro task, always on a different harness from its implementer. Each one:
+  - reviews the macro-task branch against its plan's Definition of Done;
   - closes the necessary findings itself;
   - merges into `fix/release-hardening`;
   - brings CI to green;
-  - runs the acceptance tests that do not need the owner.
+  - runs the acceptance tests of its macro task that do not need the owner.
 
 ### 8.2 Macro tasks
 
 | Macro task | Release | Content (from sections 4, 5, 7) | Proposed implementer | Allowlist |
 |---|---|---|---|---|
-| MT-A Infrastructure | v0.2.2 | CI baseline, `release.yml`, `export_bindings` (section 4); local loop (section 7) | Codex | `.github/workflows/release.yml`, `export_bindings` in `src-tauri/src/lib.rs`, `src-tauri/tests/export_bindings.rs`, `scripts/local/**`, `vite.config.ts`, `package.json` (scripts only), `docs/development/**`, plus whatever the CI baseline requires (fmt or clippy findings) |
-| MT-B Fixes | v0.2.2 | the six fixes of section 5 | Antigravity, teamwork mode | `crates/ide-agent/**`, `crates/ide-vcs/**`, `crates/ide-host/src/{project.rs,lib.rs,rpc.rs,ops/agent.rs,ops/vcs.rs,bin/server.rs}`, `src-tauri/src/state.rs`, `src-tauri/src/commands/**`, `src/features/vcs/**`, `src/features/analysis/scope.ts`, `src/features/settings/pages/vcs.tsx`, `src/bindings.ts` |
-| MT-C Identity | v0.2.3 | identifier and migration (section 6) | Claude Code (a Crew member, not the coordinator) | `src-tauri/tauri.conf.json`, `src-tauri/src/migrate.rs`, `run()` in `src-tauri/src/lib.rs` |
+| MT-A Infrastructure | v0.2.2 | CI baseline, `release.yml`, `export_bindings` (section 4); local loop (section 7) | Codex (`dev-codex`) | `.github/workflows/release.yml`, `export_bindings` in `src-tauri/src/lib.rs`, `src-tauri/tests/export_bindings.rs`, `scripts/local/**`, `vite.config.ts`, `package.json` (scripts only), `docs/development/**`, plus whatever the CI baseline requires (fmt or clippy findings) |
+| MT-B Fixes | v0.2.2 | the six fixes of section 5 | Antigravity, teamwork mode (`dev-agy`) | `crates/ide-agent/**`, `crates/ide-vcs/**`, `crates/ide-host/src/{project.rs,lib.rs,rpc.rs,ops/agent.rs,ops/vcs.rs,bin/server.rs}`, `src-tauri/src/state.rs`, `src-tauri/src/commands/**`, `src/features/vcs/**`, `src/features/analysis/scope.ts`, `src/features/settings/pages/vcs.tsx`, `src/bindings.ts` |
+| MT-C Identity | v0.2.3 | identifier and migration (section 6) | Claude Code (`dev-claude`) | `src-tauri/tauri.conf.json`, `src-tauri/src/migrate.rs`, `run()` in `src-tauri/src/lib.rs` |
 
-| Release | Reviewer and consolidator (proposed) |
-|---|---|
-| v0.2.2 (MT-A, MT-B) | Claude Code (a Crew member, not the coordinator) |
-| v0.2.3 (MT-C) | Codex |
+**Crew team** (owner's choice, 2026-10-30): team `ibl-openidea`, base folder the repository root, six working members plus the bridge.
 
-The owner confirms or changes the assignments at spec review.
+| Member | Harness and model | Role |
+|---|---|---|
+| `pilot-bridge` | Claude, `sonnet` | bridge between the coordinator and the team |
+| `dev-agy` | Antigravity, `gemini-4-argon-high` | implements MT-B in teamwork mode |
+| `dev-codex` | Codex, `gpt-6.1-sol`, effort `xhigh` | implements MT-A |
+| `dev-claude` | Claude, `opus`, effort `xhigh` | implements MT-C |
+| `rev-claude` | Claude, `opus`, effort `xhigh` | reviews and consolidates MT-B |
+| `rev-agy` | Antigravity, `gemini-4-argon-high` | reviews and consolidates MT-A |
+| `rev-codex` | Codex, `gpt-6.1-sol`, effort `xhigh` | reviews and consolidates MT-C |
+
+Reviewers rotate so that no harness reviews its own work. Before dispatch, each reviewer also lints the plan of the macro task it will review.
 
 **Overlaps**:
 
@@ -294,15 +307,16 @@ The owner confirms or changes the assignments at spec review.
 ### 8.3 Flow per release
 
 1. The coordinator writes one plan per macro task in the nine-section mandate format (context and goal, frozen base, design, closed allowlist, ordered steps, verification with exact commands, Definition of Done, acceptance criteria, risks with NOT_VERIFIED). The writing-plans step produces them from this spec.
-2. The release's reviewer lints the plans before they are dispatched.
-3. Through the bridge, the coordinator sends each plan to its implementer. Implementers work in parallel, each on `fix/rh-<macro-task>` from `fix/release-hardening`, in `<base>/.ibl-crew-worktree/<name>`.
-4. Each implementer delivers a frozen SHA with a green CI run on its PR and the receipts of its own verification commands.
-5. The reviewer reviews, closes findings, consolidates, brings CI to green on `fix/release-hardening`, and runs the release's acceptance tests on a candidate. The review cycle is bounded: one round of findings back to the implementer, then the reviewer closes what remains.
-6. The coordinator checks the receipts, not the authors' claims, and asks the owner to approve the tag.
+2. The macro task's reviewer lints its plan before dispatch.
+3. Through the bridge, the coordinator sends each plan to its implementer. The three implementers work in parallel, each on `fix/rh-<macro-task>` from `fix/release-hardening`, in `<base>/.ibl-crew-worktree/<member>`. MT-C is developed now, but it is consolidated and released only after v0.2.2.
+4. Each implementer delivers a frozen SHA, a pushed branch with a green CI run on its PR into `fix/release-hardening`, and the receipts of its own verification commands.
+5. The reviewer reviews against the plan's Definition of Done and closes the findings itself, committing on the macro-task branch. It sends work back to the implementer only for a finding that needs a redesign.
+6. Consolidation happens one macro task at a time, in the order the coordinator gives, in the shared worktree `<base>/.ibl-crew-worktree/integration` on `fix/release-hardening`. The reviewer merges the PR, brings CI to green, and hands over.
+7. The coordinator checks the receipts rather than the authors' claims. It prepares the release candidate commit, but the owner approves the tag before anyone pushes it.
 
 ### 8.4 Resource limits during parallel work
 
-Two multi-agent swarms building Rust on one machine (8 cores, about 32 GB) will run out of memory. MT-A therefore delivers `env.ps1` and `cargo-slot.ps1` first, as an early commit merged into `fix/release-hardening`, and MT-B's plan uses them from then on. Until then MT-B runs at most one cargo build at a time, with `CARGO_BUILD_JOBS=4`.
+Three multi-agent swarms building Rust on one machine (8 cores, about 32 GB) will run out of memory. MT-A therefore delivers `env.ps1` and `cargo-slot.ps1` first, as an early commit merged into `fix/release-hardening`, and the other plans use them from then on. Until then, each implementer runs at most one cargo command at a time, with `CARGO_BUILD_JOBS=2`, and swarm sub-agents do not run cargo in parallel.
 
 ## 9. Verification and acceptance
 
@@ -325,7 +339,7 @@ Two multi-agent swarms building Rust on one machine (8 cores, about 32 GB) will 
 
 **v0.2.3 acceptance, on `v0.2.3-rc.N`, in Windows Sandbox:**
 
-- B1. Install v0.2.2, create a preset, change the layout and download a JDK. Then install the candidate. Expected: one entry in installed apps, `.migrated.json` present, and preset, layout, JDK and agents all present.
+- B1. Install v0.2.2, create a preset, change the layout and download a JDK. Then update to the candidate through the real updater: set `OPENIDEA_UPDATE_ENDPOINT` to the candidate's `latest.json` (`https://github.com/inno-bit-lab/ibl-openidea/releases/download/v0.2.3-rc.N/latest.json`) and use "Check for Updates". The override already exists (`src-tauri/src/commands/window.rs:276-279`) and the update is still verified against the compiled public key. Expected: one entry in installed apps, `.migrated.json` present, and preset, layout, JDK and agents all present. Repeat once by running the candidate's installer by hand.
 - B2. With upstream OpenIDEA installed, both apps run at the same time, each with its own directories.
 - B3. Debug build with `IBLOPENIDEA_SEED_FROM=ai.l0ng.openidea` and no target profile: seeding runs; on the next start it does not.
 
@@ -353,11 +367,10 @@ Two multi-agent swarms building Rust on one machine (8 cores, about 32 GB) will 
 - Confirm that the signing secret is the pair of key `6F488B067990A3BE`.
 - Install `sccache` on development machines (optional, machine-level).
 - Enable the Windows Sandbox feature (needed for B1 to B3).
-- Enable cross-session messaging for the coordinator and the bridge, then start the bridge as a member of the Crew team. According to the Claude Code documentation (`cross-session-messaging`):
+- Cross-session messaging between the coordinator and the bridge (delegated decision: the coordinator sets it up and records it in the owner report). According to the Claude Code documentation (`cross-session-messaging`):
   - Sending between sessions on the same machine is on by default from Claude Code v2.1.234 on native Windows.
   - A desktop session holds incoming messages without an approval dialog and drops them after `dialogExpiry` (5 minutes by default) unless `crossSessionInbound` is `accept`. Set it in the user settings (`~/.claude/settings.json`); a project or local `refuse` overrides it.
   - That setting lets any local session start turns in every session of this user. Messages still cannot approve permission prompts or change configuration.
   - Both sessions must run natively on Windows. A WSL 2 session cannot reach a native one.
   - No allow rule is needed for `SendMessage` or `ListAgents`, unless a deny rule blocks them.
-- Confirm the harness assignments in section 8.2.
-- Approve each release tag before it is pushed; tags are public and trigger publishing.
+- Approve each release tag before it is pushed; tags are public and trigger publishing. Not delegated.
