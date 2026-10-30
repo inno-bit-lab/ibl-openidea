@@ -311,7 +311,7 @@ Reviewers rotate so that no harness reviews its own work. Before dispatch, each 
 3. Through the bridge, the coordinator sends each plan to its implementer. The three implementers work in parallel, each on `fix/rh-<macro-task>` from `fix/release-hardening`, in `<base>/.ibl-crew-worktree/<member>`. MT-C is developed now, but it is consolidated and released only after v0.2.2.
 4. Each implementer delivers a frozen SHA, a pushed branch with a green CI run on its PR into `fix/release-hardening`, and the receipts of its own verification commands.
 5. The reviewer reviews against the plan's Definition of Done and closes the findings itself, committing on the macro-task branch. It sends work back to the implementer only for a finding that needs a redesign.
-6. Consolidation happens one macro task at a time, in the order the coordinator gives, in the shared worktree `<base>/.ibl-crew-worktree/integration` on `fix/release-hardening`. The reviewer merges the PR, brings CI to green, and hands over.
+6. Consolidation happens one macro task at a time, in the order the coordinator gives, through the macro task's GitHub PR into `fix/release-hardening`. In its own worktree the reviewer checks out the PR branch (`gh pr checkout <n>`), merges `fix/release-hardening` into it when needed, pushes, waits for CI to be green, and merges the PR with `gh pr merge --merge`. No local worktree checks out `fix/release-hardening` except the base folder, which only pulls.
 7. The coordinator checks the receipts rather than the authors' claims. It prepares the release candidate commit, but the owner approves the tag before anyone pushes it.
 
 ### 8.4 Resource limits during parallel work
