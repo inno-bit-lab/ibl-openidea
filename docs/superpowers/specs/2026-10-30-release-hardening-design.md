@@ -243,13 +243,13 @@ Scripts live in `scripts/local/` (PowerShell) and are exposed as `pnpm` commands
 4. **Shared compile cache.** Each worktree keeps its own `target/`, so there is no contention on cargo's lock.
    - When `sccache` is installed, the scripts set `RUSTC_WRAPPER=sccache` and dependencies are shared.
    - `CARGO_PROFILE_DEV_DEBUG=line-tables-only` is the default for a smaller `target/` and faster links; `-FullDebug` turns it off.
-5. **Machine-wide build slots.** `cargo-slot.ps1` holds a named semaphore (`Local\ibl-openidea-cargo`, K slots, default 2) around cargo builds, tests and clippy and around the full vitest run, and sets `CARGO_BUILD_JOBS` to cores / K. Callers beyond K wait instead of exhausting memory. Targeted vitest runs do not take a slot.
+5. **Machine-wide build slots.** `cargo-slot.ps1` holds one of K named mutexes (`Local\ibl-openidea-cargo-0` to `-<K-1>`, default K = 2; mutexes rather than a semaphore, because Windows releases a mutex as abandoned when its owner dies and never releases a semaphore) around cargo builds, tests and clippy and around the full vitest run, and sets `CARGO_BUILD_JOBS` to cores / K. Callers beyond K wait instead of exhausting memory. Targeted vitest runs do not take a slot.
 6. **Commands in `package.json`**:
    - `dev:local`: per-worktree dev run.
    - `build:local`: local NSIS installer inside a slot, using `--bundles nsis` and an overlay with `createUpdaterArtifacts: false`, so no signing key is needed. It uses a lighter release profile through `CARGO_PROFILE_RELEASE_LTO=thin` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`, and prints the installer path and size.
    - `test:rust`: targeted `cargo test` inside a slot.
    - `test:full`: the full vitest suite inside a slot.
-7. **Clean-profile testing.** `scripts/local/acceptance.wsb` (Windows Sandbox) maps the installers folder read-only. Windows Sandbox runs one instance at a time, so clean-profile acceptance tests are serial and run by the integrator.
+7. **Clean-profile testing.** `scripts/local/acceptance.ps1` generates a Windows Sandbox `.wsb` file that maps the installers folder read-only, using an absolute path. Windows Sandbox runs one instance at a time, so clean-profile acceptance tests are serial and run by the integrator.
 8. **Documentation for agents.** `docs/development/parallel-local-dev.md` covers the commands, slots, profiles, ports, and the cleanup of `*.dev.*` profiles and of the `target/` of removed worktrees. The repository has no tracked `AGENTS.md`, and `CLAUDE.md` is gitignored. Agents therefore learn the convention through the exact commands in their work plans.
 
 Worktrees follow the Crew rule: `<base>/.ibl-crew-worktree/<name>`, with `.ibl-crew-worktree/` in the repository's `info/exclude`. `node_modules` per worktree is cheap, because pnpm hard-links from its global store.
