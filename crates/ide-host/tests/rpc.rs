@@ -56,6 +56,7 @@ async fn serves_projects_files_documents_search_and_runs() {
     let host = Arc::new(Host::new(HostConfig {
         config_dir: base.join("config"),
         data_dir: base.join("data"),
+        managed_agents_dir: None,
         languages: Arc::new(ide_language::LanguageRegistry::load(None).unwrap()),
         syntax: Arc::default(),
         sink_for: Box::new(move |w| rpc::event_sink(sink_peer.clone(), Some(w.to_owned()))),

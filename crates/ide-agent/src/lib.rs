@@ -58,6 +58,8 @@ pub struct AgentPaths {
     pub models_file: PathBuf,
     /// User-defined agents, one `<id>.toml` each (`name`, `command`, `args`, `env`).
     pub custom_agents_dir: Option<PathBuf>,
+    /// Managed ACP agent binaries (`<app_local_data>/acp-agents`).
+    pub managed_agents_dir: Option<PathBuf>,
     /// The user's home: its `.claude` holds their own skills and commands.
     pub home_dir: Option<PathBuf>,
 }
@@ -149,7 +151,11 @@ impl Shared {
 }
 
 /// Lists agents and their known/default settings without requiring an open project.
-pub fn providers_from(custom_agents_dir: Option<&Path>, models_file: &Path) -> Vec<AgentProvider> {
+pub fn providers_from(
+    custom_agents_dir: Option<&Path>,
+    models_file: &Path,
+    managed_agents_dir: Option<&Path>,
+) -> Vec<AgentProvider> {
     let known: HashMap<String, Known> =
         std::fs::read(models_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     provider::load(custom_agents_dir)
@@ -167,7 +173,7 @@ pub fn providers_from(custom_agents_dir: Option<&Path>, models_file: &Path) -> V
                     .chain(p.args.iter().map(String::as_str))
                     .collect::<Vec<_>>()
                     .join(" "),
-                installed: provider::installed(&p.command),
+                installed: provider::installed(&p.command, managed_agents_dir),
                 config,
                 commands: Vec::new(),
             }
@@ -179,11 +185,12 @@ pub fn providers_from(custom_agents_dir: Option<&Path>, models_file: &Path) -> V
 pub fn set_custom_args_in(
     custom_agents_dir: &Path,
     models_file: &Path,
+    managed_agents_dir: Option<&Path>,
     provider: &str,
     args: &[String],
 ) -> IdeResult<Vec<AgentProvider>> {
     provider::set_custom_args(custom_agents_dir, provider, args).map_err(|e| IdeError::internal(e.to_string()))?;
-    Ok(providers_from(Some(custom_agents_dir), models_file))
+    Ok(providers_from(Some(custom_agents_dir), models_file, managed_agents_dir))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -245,8 +252,9 @@ struct Task {
 impl AgentManager {
     /// Loads the project's saved tasks. Spawned work runs on `runtime`.
     pub fn new(paths: AgentPaths, runtime: tokio::runtime::Handle) -> Self {
-        let connector: Connector = Arc::new(|spec, cwd, client, on_stderr| {
-            let (command, args) = provider::resolve_spawn(spec);
+        let managed = paths.managed_agents_dir.clone();
+        let connector: Connector = Arc::new(move |spec, cwd, client, on_stderr| {
+            let (command, args) = provider::resolve_spawn(spec, managed.as_deref());
             Peer::spawn_framed(&command, &args, cwd, &spec.env, client, on_stderr, Framing::Lines)
         });
         Self::with_connector(paths, runtime, connector)
@@ -312,7 +320,7 @@ impl AgentManager {
                     .chain(p.args.iter().map(String::as_str))
                     .collect::<Vec<_>>()
                     .join(" "),
-                installed: provider::installed(&p.command),
+                installed: provider::installed(&p.command, self.shared.paths.managed_agents_dir.as_deref()),
                 config: self.shared.known_config(&p.id),
                 commands: self.shared.known_commands(&p.id),
             })

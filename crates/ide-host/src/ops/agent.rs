@@ -24,6 +24,7 @@ pub fn providers(host: &Host, window: &str) -> IdeResult<Vec<AgentProvider>> {
         Err(_) => Ok(ide_agent::providers_from(
             Some(&host.config_dir.join("agents")),
             &host.data_dir.join("agents").join("models.json"),
+            host.managed_agents_dir.as_deref(),
         )),
     }
 }
@@ -35,6 +36,7 @@ pub fn set_args(host: &Host, window: &str, provider: String, args: Vec<String>) 
         Err(_) => ide_agent::set_custom_args_in(
             &host.config_dir.join("agents"),
             &host.data_dir.join("agents").join("models.json"),
+            host.managed_agents_dir.as_deref(),
             &provider,
             &args,
         ),
