@@ -9,6 +9,7 @@ if (-not (Test-Path -LiteralPath $slotScript -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'scripts/local/env.ps1') -PathType Leaf)) {
     throw 'The local environment script is missing: scripts/local/env.ps1'
 }
+. (Join-Path $repoRoot 'scripts/local/env.ps1')
 
 $pwshPath = (Get-Process -Id $PID).Path
 $runId = [Guid]::NewGuid().ToString('N')
