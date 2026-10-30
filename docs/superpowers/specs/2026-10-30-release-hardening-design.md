@@ -281,9 +281,9 @@ Worktrees follow the Crew rule: `<base>/.ibl-crew-worktree/<name>`, with `.ibl-c
 
 | Macro task | Release | Content (from sections 4, 5, 7) | Proposed implementer | Allowlist |
 |---|---|---|---|---|
-| MT-A Infrastructure | v0.2.2 | CI baseline, `release.yml`, `export_bindings` (section 4); local loop (section 7) | Codex (`dev-codex`) | `.github/workflows/release.yml`, `export_bindings` in `src-tauri/src/lib.rs`, `src-tauri/tests/export_bindings.rs`, `scripts/local/**`, `vite.config.ts`, `package.json` (scripts only), `docs/development/**`, plus whatever the CI baseline requires (fmt or clippy findings) |
-| MT-B Fixes | v0.2.2 | the six fixes of section 5 | Antigravity, teamwork mode (`dev-agy`) | `crates/ide-agent/**`, `crates/ide-vcs/**`, `crates/ide-host/src/{project.rs,lib.rs,rpc.rs,ops/agent.rs,ops/vcs.rs,bin/server.rs}`, `src-tauri/src/state.rs`, `src-tauri/src/commands/**`, `src/features/vcs/**`, `src/features/analysis/scope.ts`, `src/features/settings/pages/vcs.tsx`, `src/bindings.ts` |
-| MT-C Identity | v0.2.3 | identifier and migration (section 6) | Claude Code (`dev-claude`) | `src-tauri/tauri.conf.json`, `src-tauri/src/migrate.rs`, `run()` in `src-tauri/src/lib.rs` |
+| MT-A Infrastructure | v0.2.2 | CI baseline, `release.yml`, `export_bindings` (section 4); local loop (section 7) | Codex (`dev-codex`) | `.github/workflows/release.yml`, `export_bindings` in `src-tauri/src/lib.rs`, `src-tauri/tests/export_bindings.rs`, `scripts/local/**`, `src-tauri/tauri.local.conf.json`, `vite.config.ts`, `package.json` (scripts only), `docs/development/**`, plus whatever the CI baseline requires (fmt or clippy findings) |
+| MT-B Fixes | v0.2.2 | the six fixes of section 5 | Antigravity, teamwork mode (`dev-agy`) | `crates/ide-agent/**`, `crates/ide-vcs/**`, `crates/ide-host/src/{project.rs,lib.rs,rpc.rs,ops/agent.rs,ops/vcs.rs,bin/server.rs}`, `crates/ide-host/tests/**`, `src-tauri/src/state.rs`, `src-tauri/src/commands/**`, `src/features/vcs/**`, `src/features/analysis/**`, `src/features/settings/pages/vcs.tsx`, `src/platform/locales/**`, `src/bindings.ts` |
+| MT-C Identity | v0.2.3 | identifier and migration (section 6) | Claude Code (`dev-claude`) | `src-tauri/tauri.conf.json`, `src-tauri/src/migrate.rs`, `run()` in `src-tauri/src/lib.rs`, a test-only dev-dependency in `src-tauri/Cargo.toml` if needed |
 
 **Crew team** (owner's choice, 2026-10-30): team `ibl-openidea`, base folder the repository root, six working members plus the bridge.
 
