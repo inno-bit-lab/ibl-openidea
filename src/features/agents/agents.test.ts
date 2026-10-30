@@ -199,4 +199,58 @@ describe("agents model", () => {
     expect(html).not.toContain("onerror");
     expect(html).not.toContain("<script");
   });
+
+  it("maps built-in pi and agy providers to their dedicated icons", async () => {
+    const { providerIcon } = await import("./model");
+    expect(providerIcon("pi")).toBe("agent-pi");
+    expect(providerIcon("agy")).toBe("agent-agy");
+    expect(providerIcon("custom-agent")).toBe("toolwindow-agents");
+  });
+
+  it("parses ACP command-line arguments and builds preset configs and injected instructions", async () => {
+    const { parseCliArgs, presetConfigFor, withInjectedInstructions } = await import("./store");
+    expect(parseCliArgs("")).toEqual([]);
+    expect(parseCliArgs("  --model gpt-5.4 --Prompt \"hello world\" 'single arg' ")).toEqual([
+      "--model",
+      "gpt-5.4",
+      "--Prompt",
+      "hello world",
+      "single arg",
+    ]);
+    expect(parseCliArgs('--config "C:\\Users\\Innotech\\cfg.toml" --flag "say \\"hi\\""')).toEqual([
+      "--config",
+      "C:\\Users\\Innotech\\cfg.toml",
+      "--flag",
+      'say "hi"',
+    ]);
+
+    expect(
+      presetConfigFor({
+        model: "openai-codex/gpt-5.4",
+        effort: "xhigh",
+        mode: "code",
+      }),
+    ).toEqual({
+      model: "openai-codex/gpt-5.4",
+      thought_level: "xhigh",
+      mode: "code",
+    });
+
+    expect(withInjectedInstructions("Fix bug", "")).toBe("Fix bug");
+    expect(withInjectedInstructions("Fix bug", "  Always run tests first.  ")).toBe(
+      "Always run tests first.\n\nFix bug",
+    );
+  });
+
+  it("filters catalog providers by name, id, command, or description", async () => {
+    const { filterCatalogProviders } = await import("./AgentsCatalogEditor");
+    const list = [
+      { id: "pi", name: "pi ACP", command: "npx -y pi-acp@0.0.34", installed: true, config: [], commands: [] },
+      { id: "agy", name: "Google Antigravity", command: "agy_acp_server", installed: true, config: [], commands: [] },
+      { id: "claude", name: "Claude Code", command: "npx", installed: false, config: [], commands: [] },
+    ];
+    expect(filterCatalogProviders(list, "antigravity").map((p) => p.id)).toEqual(["agy"]);
+    expect(filterCatalogProviders(list, "pi-acp").map((p) => p.id)).toEqual(["pi"]);
+    expect(filterCatalogProviders(list, "anthropic").map((p) => p.id)).toEqual(["claude"]);
+  });
 });

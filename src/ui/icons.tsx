@@ -165,6 +165,8 @@ const ICONS = {
   "toolwindow-database": "openidea/toolwindows/database",
   "toolwindow-agents": "openidea/toolwindows/agents",
   // Coding agents (logos via Paseo)
+  "agent-agy": "openidea/agents/agy",
+  "agent-pi": "openidea/agents/pi",
   "agent-claude": "openidea/agents/claude",
   "agent-codex": "openidea/agents/codex",
   "agent-gemini": "openidea/agents/gemini",

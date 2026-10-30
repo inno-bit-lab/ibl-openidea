@@ -100,7 +100,7 @@ impl Native {
             Native::Paste => "Paste",
             Native::SelectAll => "Select All",
             Native::Services => "Services",
-            Native::Hide => "Hide OpenIDEA",
+            Native::Hide => "Hide IBLOpenIdea",
             Native::HideOthers => "Hide Others",
             Native::ShowAll => "Show All",
             Native::Minimize => "Minimize",
@@ -184,9 +184,9 @@ pub fn spec(os: Os) -> Vec<Entry> {
     if mac {
         menus.push(sub(
             "app",
-            "OpenIDEA",
+            "IBLOpenIdea",
             vec![
-                act("app.about", "About OpenIDEA"),
+                act("app.about", "About IBLOpenIdea"),
                 act("app.checkForUpdates", "Check for Updates…"),
                 SEP,
                 act("file.settings", "Settings…"),
@@ -197,7 +197,7 @@ pub fn spec(os: Os) -> Vec<Entry> {
                 Entry::Native(Native::HideOthers),
                 Entry::Native(Native::ShowAll),
                 SEP,
-                accel("app.quit", "Quit OpenIDEA", "CmdOrCtrl+Q"),
+                accel("app.quit", "Quit IBLOpenIdea", "CmdOrCtrl+Q"),
             ],
         ));
     }
@@ -733,7 +733,7 @@ pub fn spec(os: Os) -> Vec<Entry> {
         act("help.showLog", show_log),
     ];
     if !mac {
-        help.extend([act("app.checkForUpdates", "Check for Updates…"), SEP, act("app.about", "About OpenIDEA")]);
+        help.extend([act("app.checkForUpdates", "Check for Updates…"), SEP, act("app.about", "About IBLOpenIdea")]);
     }
     menus.push(sub("help", "Help", help));
     menus

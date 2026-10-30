@@ -1,6 +1,6 @@
 /** Local change operations: commit, rollback, add, stash. */
-import { useState } from "react";
-import type { FileStatus, PartialCommitFile } from "@/bindings";
+import { useEffect, useState } from "react";
+import type { FileStatus, PartialCommitFile, Stash } from "@/bindings";
 import { call, commands } from "@/platform/ipc";
 import { Checkbox, Dialog, Icon, Input, T, fileIconName } from "@/ui";
 import { notifications } from "@/workbench/contributions";
@@ -9,6 +9,7 @@ import { useChangelists, withListDefaults } from "./changelists";
 import { runCommitChecks } from "./commitChecks";
 import { forgetAmendDraft, rememberMessage, useCommit } from "./commitStore";
 import { confirmDialog, openDialog } from "./dialogs";
+import { RepoSelect, useDialogRepo } from "./gitMenuDialogs";
 import { hunkKeys } from "./hunks";
 import { KIND_COLOR, baseName, dirName, effectiveKind, relTo, rootOf, stripSlash } from "./model";
 import { logConsole, runOp, saveAll } from "./ops";
@@ -288,17 +289,18 @@ export async function addToVcs(paths: readonly string[]) {
 }
 
 /** Stash Changes dialog: message, Keep index (staged changes stay), include untracked files. */
-export function stashChanges(): Promise<void> {
+export function stashChanges(initialRepo?: string): Promise<void> {
   return new Promise((resolve) => {
     const close = openDialog(() => (
       <StashDialog
+        initialRepo={initialRepo}
         onDone={async (r) => {
           close();
           if (r) {
             await saveAll();
             await runOp(
               "Stash changes",
-              () => call(commands.vcsStashPush(currentRepo(), r.message || null, r.includeUntracked, r.keepIndex)),
+              () => call(commands.vcsStashPush(r.repo, r.message || null, r.includeUntracked, r.keepIndex)),
               { success: "Changes stashed" },
             );
             void loadStashes().catch(() => undefined);
@@ -311,15 +313,18 @@ export function stashChanges(): Promise<void> {
 }
 
 function StashDialog({
+  initialRepo,
   onDone,
 }: {
-  onDone: (r: { message: string; keepIndex: boolean; includeUntracked: boolean } | null) => void;
+  initialRepo?: string;
+  onDone: (r: { repo: string | null; message: string; keepIndex: boolean; includeUntracked: boolean } | null) => void;
 }) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
   const [message, setMessage] = useState("");
   const [keepIndex, setKeepIndex] = useState(false);
   const [includeUntracked, setIncludeUntracked] = useState(false);
-  const branch = useVcs((s) => s.branch?.head ?? null);
-  const submit = () => onDone({ message: message.trim(), keepIndex, includeUntracked });
+  const branch = useVcs((s) => (repo && s.heads[repo] ? s.heads[repo]!.head : (s.branch?.head ?? null)));
+  const submit = () => onDone({ repo, message: message.trim(), keepIndex, includeUntracked });
   return (
     <Dialog
       open
@@ -338,6 +343,7 @@ function StashDialog({
           submit();
         }}
       >
+        <RepoSelect roots={roots} value={repo} onChange={setRepo} />
         {branch && <div className={styles.hint}>{tx`Current branch: ${branch}`}</div>}
         <label className={styles.fieldLabel}>
           <T>Message:</T>
@@ -357,6 +363,7 @@ function StashDialog({
 }
 
 export interface UnstashOptions {
+  repo?: string | null;
   index: number;
   /** Drop the stash after applying it. */
   pop: boolean;
@@ -379,34 +386,65 @@ export function unstashTitles(o: UnstashOptions): { title: string; success: stri
 export async function unstash(o: UnstashOptions) {
   await saveAll();
   const { title, success } = unstashTitles(o);
-  await runOp(title, () => call(commands.vcsStashApply(currentRepo(), o.index, o.pop, o.reinstateIndex, o.branch)), {
+  const targetRepo = o.repo !== undefined ? o.repo : currentRepo();
+  await runOp(title, () => call(commands.vcsStashApply(targetRepo, o.index, o.pop, o.reinstateIndex, o.branch)), {
     success,
   });
   void loadStashes().catch((e) => logConsole("err", String(e)));
 }
 
-export function applyStash(index: number, pop: boolean) {
-  return unstash({ index, pop, reinstateIndex: false, branch: null });
+export function applyStash(index: number, pop: boolean, repo?: string | null) {
+  return unstash({ repo, index, pop, reinstateIndex: false, branch: null });
 }
 
 /** Unstash Changes dialog: pick a stash; Pop, Reinstate index, or As new branch. */
-export function showUnstashDialog(index = 0) {
+export function showUnstashDialog(index = 0, initialRepo?: string) {
   void loadStashes().catch(() => undefined);
-  openDialog((close) => <UnstashDialog initial={index} onClose={close} />);
+  openDialog((close) => <UnstashDialog initial={index} initialRepo={initialRepo} onClose={close} />);
 }
 
-function UnstashDialog({ initial, onClose }: { initial: number; onClose: () => void }) {
-  const stashes = useVcs((s) => s.stashes);
+function UnstashDialog({
+  initial,
+  initialRepo,
+  onClose,
+}: {
+  initial: number;
+  initialRepo?: string;
+  onClose: () => void;
+}) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
+  const storeStashes = useVcs((s) => s.stashes);
+  const [repoStashes, setRepoStashes] = useState<{ repo: string | null; list: Stash[] } | null>(null);
   const [index, setIndex] = useState(initial);
   const [pop, setPop] = useState(false);
   const [reinstateIndex, setReinstateIndex] = useState(false);
   const [branch, setBranch] = useState("");
+
+  useEffect(() => {
+    if (!repo || repo === currentRepo()) return;
+    let alive = true;
+    call(commands.vcsStashes(repo))
+      .then((list) => {
+        if (alive && Array.isArray(list)) setRepoStashes({ repo, list });
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [repo]);
+
+  const stashes =
+    repoStashes && repoStashes.repo === repo
+      ? repoStashes.list
+      : !repo || repo === currentRepo()
+        ? storeStashes
+        : [];
   const asBranch = branch.trim();
   const chosen = stashes.find((s) => s.index === index) ?? stashes[0];
   const submit = () => {
     if (!chosen) return;
     onClose();
-    void unstash({ index: chosen.index, pop, reinstateIndex, branch: asBranch || null });
+    void unstash({ repo, index: chosen.index, pop, reinstateIndex, branch: asBranch || null });
   };
   return (
     <Dialog
@@ -431,6 +469,7 @@ function UnstashDialog({ initial, onClose }: { initial: number; onClose: () => v
           submit();
         }}
       >
+        <RepoSelect roots={roots} value={repo} onChange={setRepo} />
         <div className={styles.choiceList} role="radiogroup" aria-label={tx("Stashes")}>
           {stashes.length === 0 && (
             <div className={styles.hint}>
@@ -462,7 +501,7 @@ function UnstashDialog({ initial, onClose }: { initial: number; onClose: () => v
   );
 }
 
-export async function dropStash(index: number, message: string) {
+export async function dropStash(index: number, message: string, repo?: string | null) {
   const ok = await confirmDialog({
     title: "Drop Stash",
     message: message
@@ -472,7 +511,8 @@ export async function dropStash(index: number, message: string) {
     danger: true,
   });
   if (!ok) return;
-  await runOp(`Drop stash@{${index}}`, () => call(commands.vcsStashDrop(currentRepo(), index)), {
+  const targetRepo = repo !== undefined ? repo : currentRepo();
+  await runOp(`Drop stash@{${index}}`, () => call(commands.vcsStashDrop(targetRepo, index)), {
     success: `Dropped stash@{${index}}`,
   });
   void loadStashes().catch((e) => logConsole("err", String(e)));

@@ -15,10 +15,10 @@ import {
   toolWindowService,
 } from "@/workbench/contributions";
 import { AgentsStatus } from "./AgentsStatus";
-import { HOME_KIND, SESSION_KIND, TOOL_WINDOW } from "./model";
+import { CATALOG_KIND, HOME_KIND, SESSION_KIND, TOOL_WINDOW } from "./model";
 import { sendPaths, sendSelection } from "./references";
 import { focusedSession } from "./sessionFocus";
-import { connect, disconnect, openHome, useAgents } from "./store";
+import { connect, disconnect, openCatalog, openHome, useAgents } from "./store";
 
 export function activate(): () => void {
   const sync = (root: string | null | undefined) => {
@@ -61,6 +61,13 @@ export function activate(): () => void {
       icon: () => "toolwindow-agents",
       restorable: true,
     }),
+    registerEditorKind({
+      kind: CATALOG_KIND,
+      component: lazyComponent(() => import("./AgentsCatalogEditor").then((m) => m.AgentsCatalogEditor)),
+      title: () => "Agents",
+      icon: () => "toolwindow-agents",
+      restorable: true,
+    }),
     registerStatusItem({ id: "agents.status", align: "right", priority: 3, title: "Agents", component: AgentsStatus }),
     registerMenuGroup({
       id: "agents.send",
@@ -87,8 +94,26 @@ export function activate(): () => void {
         category: "Agents",
         icon: "plus",
         when: "projectOpen",
-        keywords: ["agent", "claude", "codex", "gemini", "ai"],
+        keywords: ["agent", "claude", "codex", "gemini", "pi", "agy", "ai"],
         run: ({ arg }) => openHome(typeof arg === "string" ? arg : undefined),
+      },
+      {
+        id: "agents.manageAgents",
+        title: "Manage Agents…",
+        description: "Opens the Agents catalog tab to configure ACP agents and presets.",
+        category: "Agents",
+        icon: "settings",
+        keywords: ["agent", "acp", "presets", "pi", "agy", "arguments"],
+        run: () => openCatalog(false),
+      },
+      {
+        id: "agents.managePresets",
+        title: "Manage Agent Presets…",
+        description: "Opens the Manage Presets dialog in the Agents tab.",
+        category: "Agents",
+        icon: "settings",
+        keywords: ["agent", "preset", "model", "effort", "instructions"],
+        run: () => openCatalog(true),
       },
       {
         id: "agents.sendToAgent",

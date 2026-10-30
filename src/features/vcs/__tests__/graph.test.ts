@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeGraph } from "../graph";
+import { collapseLinear, computeGraph, computeMultiRepoGraph } from "../graph";
 
 const c = (id: string, ...parents: string[]) => ({ id, parents });
 
@@ -62,3 +62,40 @@ describe("computeGraph", () => {
     expect(m2.down).toContainEqual({ from: m2.lane, to: 0, color: rows[0]!.color });
   });
 });
+
+describe("computeMultiRepoGraph", () => {
+  it("lays out each repository independently at lane 0 and adds arrow stubs across repository boundaries", () => {
+    const roots = ["/w/repo-a", "/w/repo-b"];
+    const commits = [
+      { id: "a2", parents: ["a1"], repo: "/w/repo-a" },
+      { id: "b2", parents: ["b1"], repo: "/w/repo-b" },
+      { id: "b1", parents: [], repo: "/w/repo-b" },
+      { id: "a1", parents: [], repo: "/w/repo-a" },
+    ];
+    const rows = computeMultiRepoGraph(commits, roots);
+    expect(rows.map((r) => r.lane)).toEqual([0, 0, 0, 0]);
+    // repo-a commit a2 is followed by repo-b commit b2, so its downward edge becomes an arrow stub
+    expect(rows[0]!.down).toEqual([{ from: 0, to: 0, color: 0, arrow: "down" }]);
+    // repo-b commits b2 -> b1 are contiguous, so they connect directly without arrow stubs
+    expect(rows[1]!.down).toEqual([{ from: 0, to: 0, color: 1 }]);
+    expect(rows[2]!.up).toEqual([{ from: 0, to: 0, color: 1 }]);
+    // repo-a commit a1 resumes after repo-b, so its upward edge from a2 is an arrow stub
+    expect(rows[3]!.up).toEqual([{ from: 0, to: 0, color: 0, arrow: "up" }]);
+  });
+
+  it("preserves repository identity when collapsing linear branches", () => {
+    const commits = [
+      { id: "a3", parents: ["a2"], refs: ["main"], repo: "/w/repo-a" },
+      { id: "a2", parents: ["a1"], refs: [], repo: "/w/repo-a" },
+      { id: "a1", parents: [], refs: [], repo: "/w/repo-a" },
+    ];
+    const collapsed = collapseLinear(commits);
+    expect(collapsed.commits.map((x) => ({ id: x.id, repo: x.repo }))).toEqual([
+      { id: "a3", repo: "/w/repo-a" },
+      { id: "a1", repo: "/w/repo-a" },
+    ]);
+    expect(collapsed.graph[0]!.repo).toBe("/w/repo-a");
+    expect(collapsed.graph[0]!.dashed).toEqual([true]);
+  });
+});
+

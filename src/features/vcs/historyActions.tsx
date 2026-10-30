@@ -20,7 +20,7 @@ import {
 } from "./changelistsUi";
 import { useChangelists } from "./changelists";
 import { useCommit } from "./commitStore";
-import { goToChild, goToParent, goToRef, selectedCommits, useGitLog } from "./logStore";
+import { goToChild, goToParent, goToRef, selectedCommits, useGitLog, type LogCommit } from "./logStore";
 import { chooseRevision } from "./RevisionChooser";
 import {
   cherryPick,
@@ -43,61 +43,71 @@ import {
 } from "./rebase";
 import { showApplyPatch, showCreatePatchForChanges, showCreatePatchForCommits } from "./patches";
 import { deleteShelf, renameShelf, shelveChanges, showShelf, unshelve, useShelf } from "./shelf";
-import { currentRepo, useVcs } from "./store";
+import { argRepo } from "./actions";
+import { currentRepo, focusRepo, useVcs } from "./store";
 
 const VCS = "vcsAvailable";
 const IN_GIT_LOG = "vcsAvailable && activeToolWindow == git";
 const IN_COMMIT = "vcsAvailable && activeToolWindow == commit";
 
 /** The commit an action refers to: its argument (commit or id), else the Git Log selection. */
-export function commitArg(arg: unknown): Commit | null {
+export function commitArg(arg: unknown): LogCommit | null {
   const { commits, selected } = useGitLog.getState();
-  if (arg && typeof arg === "object" && "id" in arg && "summary" in arg) return arg as Commit;
+  if (arg && typeof arg === "object" && "id" in arg && "summary" in arg) return arg as LogCommit;
   const id = typeof arg === "string" ? arg : selected;
   if (!id) return null;
   return commits.find((c) => c.id === id) ?? null;
 }
 
 /** Commits an action refers to: its argument (commit list or commit), else the Git Log selection. */
-export function commitsArg(arg: unknown): Commit[] {
-  if (Array.isArray(arg)) return arg.filter((x): x is Commit => !!x && typeof x === "object" && "id" in x);
+export function commitsArg(arg: unknown): LogCommit[] {
+  if (Array.isArray(arg)) return arg.filter((x): x is LogCommit => !!x && typeof x === "object" && "id" in x);
   if (arg) {
     const c = commitArg(arg);
     return c ? [c] : [];
   }
   const selection = selectedCommits();
-  return selection.length ? selection : [commitArg(undefined)].filter((c): c is Commit => !!c);
+  return selection.length ? selection : [commitArg(undefined)].filter((c): c is LogCommit => !!c);
 }
 
-function withCommits(fn: (cs: Commit[]) => unknown) {
+function needsRepoFocus(repo: string): boolean {
+  const s = useVcs.getState();
+  return repo !== s.repo || !s.branchesLoaded || (s.branchesRepo !== null && s.branchesRepo !== repo);
+}
+
+function withCommits(fn: (cs: LogCommit[]) => unknown) {
   return ({ arg }: { arg?: unknown }) => {
     const cs = commitsArg(arg);
     if (!cs.length) {
       notifications().notify({ group: "vcs", level: "info", title: "Select a commit in the Git log" });
       return;
     }
-    void fn(cs);
+    const repo = cs[0]?.repo;
+    if (repo && needsRepoFocus(repo)) void focusRepo(repo).then(() => fn(cs));
+    else void fn(cs);
   };
 }
 
 /** View in Browser: the commit page on the web UI of the current branch's remote (or `origin`). */
-async function openCommitInBrowser(c: Commit) {
+async function openCommitInBrowser(c: LogCommit) {
   const upstream = useVcs.getState().branch?.upstream;
   const remote = upstream ? upstream.slice(0, upstream.indexOf("/")) : "origin";
-  const url = await call(commands.vcsConfigGet(currentRepo(), `remote.${remote}.url`)).catch(() => null);
+  const url = await call(commands.vcsConfigGet(c.repo ?? currentRepo(), `remote.${remote}.url`)).catch(() => null);
   const page = url ? commitWebUrl(url, c.id) : null;
   if (page) await openUrl(page);
   else notifications().notify({ group: "vcs", level: "warning", title: `No web URL for remote '${remote}'` });
 }
 
-function withCommit(fn: (c: Commit) => unknown) {
+function withCommit(fn: (c: LogCommit) => unknown) {
   return ({ arg }: { arg?: unknown }) => {
     const c = commitArg(arg);
     if (!c) {
       notifications().notify({ group: "vcs", level: "info", title: "Select a commit in the Git log" });
       return;
     }
-    void fn(c);
+    const repo = c.repo;
+    if (repo && needsRepoFocus(repo)) void focusRepo(repo).then(() => fn(c));
+    else void fn(c);
   };
 }
 
@@ -200,14 +210,14 @@ export function registerHistoryActions(): () => void {
     },
 
     // --- Git menu ---
-    { id: "vcs.newTag", title: "New Tag…", category: "Git", when: VCS, run: showTagDialog },
+    { id: "vcs.newTag", title: "New Tag…", category: "Git", when: VCS, run: (arg) => showTagDialog(argRepo(arg)) },
     {
       id: "vcs.resetHead",
       title: "Reset HEAD…",
       category: "Git",
       when: VCS,
       keywords: ["git reset"],
-      run: () => showResetDialog(),
+      run: (arg) => showResetDialog(undefined, argRepo(arg)),
     },
 
     // --- Git Log toolbar ---

@@ -135,18 +135,18 @@ export function workingDiffData(path: string, line?: number): DiffData {
   return { path, left, right, line };
 }
 
-/** A path of the selected repository's log (repository-relative) made absolute. */
-function joinRoot(rel: string): string {
-  const root = currentRepoRoot();
+/** A path of the commit's or selected repository's log (repository-relative) made absolute. */
+function joinRoot(rel: string, repo?: string | null): string {
+  const root = repo ?? currentRepoRoot();
   return root ? `${root}/${rel}` : rel;
 }
 
 /** Diff of one file changed by `commit` (first parent ↔ commit). */
 export function commitFileDiffData(
-  commit: { id: string; shortId: string; parents: string[] },
+  commit: { id: string; shortId: string; parents: string[]; repo?: string },
   file: ChangedFile,
 ): DiffData {
-  const path = joinRoot(file.path);
+  const path = joinRoot(file.path, commit.repo);
   const parent = commit.parents[0];
   const left: DiffSide =
     !parent || file.kind === "added"
@@ -154,7 +154,7 @@ export function commitFileDiffData(
       : {
           type: "rev",
           rev: parent,
-          path: file.oldPath ? joinRoot(file.oldPath) : undefined,
+          path: file.oldPath ? joinRoot(file.oldPath, commit.repo) : undefined,
           label: parent.slice(0, 8),
         };
   const right: DiffSide =
@@ -165,14 +165,14 @@ export function commitFileDiffData(
 }
 
 /** Diff of one file of several commits' combined changes (`before` ↔ `after`). */
-export function revisionChangeDiffData(change: RevisionChange): DiffData {
-  const path = joinRoot(change.path);
+export function revisionChangeDiffData(change: RevisionChange, repo?: string | null): DiffData {
+  const path = joinRoot(change.path, repo);
   const { before, after } = change;
   const left: DiffSide = before
     ? {
         type: "rev",
         rev: before,
-        path: change.oldPath ? joinRoot(change.oldPath) : undefined,
+        path: change.oldPath ? joinRoot(change.oldPath, repo) : undefined,
         label: before.slice(0, 8),
       }
     : { type: "text", text: "", label: "(does not exist)" };

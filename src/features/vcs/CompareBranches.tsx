@@ -26,9 +26,11 @@ const commitsBetween = (from: string, to: string, repo: string | null = currentR
     }),
   );
 
-export function showCompareBranches(branch: string) {
-  const current = useVcs.getState().branch?.head ?? "HEAD";
-  openDialog((close) => <CompareDialog branch={branch} current={current} onClose={close} />);
+export function showCompareBranches(branch: string, repo: string | null = currentRepo()) {
+  const s = useVcs.getState();
+  const current =
+    repo && s.heads[repo] ? (s.heads[repo]!.head ?? "HEAD") : (s.branch?.head ?? "HEAD");
+  openDialog((close) => <CompareDialog branch={branch} current={current} repo={repo} onClose={close} />);
 }
 
 /** IDEA's "View Commits" of a notification: the commits of `from..to`. */
@@ -105,13 +107,23 @@ function CommitList({
   );
 }
 
-function CompareDialog({ branch, current, onClose }: { branch: string; current: string; onClose: () => void }) {
+function CompareDialog({
+  branch,
+  current,
+  repo,
+  onClose,
+}: {
+  branch: string;
+  current: string;
+  repo: string | null;
+  onClose: () => void;
+}) {
   const [data, setData] = useState<{ incoming: Commit[]; outgoing: Commit[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState("incoming");
   useEffect(() => {
     let alive = true;
-    Promise.all([commitsBetween("HEAD", branch), commitsBetween(branch, "HEAD")])
+    Promise.all([commitsBetween("HEAD", branch, repo), commitsBetween(branch, "HEAD", repo)])
       .then(([incoming, outgoing]) => {
         if (alive) setData({ incoming, outgoing });
       })
@@ -119,7 +131,7 @@ function CompareDialog({ branch, current, onClose }: { branch: string; current: 
     return () => {
       alive = false;
     };
-  }, [branch]);
+  }, [branch, repo]);
   const list = data ? (tab === "incoming" ? data.incoming : data.outgoing) : [];
   return (
     <Dialog

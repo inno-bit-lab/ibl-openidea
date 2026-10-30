@@ -134,23 +134,42 @@ export interface BranchTreeNode {
   ref: string | null;
   branch?: Branch;
   favorite?: boolean;
+  /** Repository names shown in parentheses in a multi-repository branch tree. */
+  repos?: string[];
+  /** Repository roots that have this branch in a multi-repository branch tree. */
+  repoRoots?: string[];
+  /** Repository roots where this branch is currently checked out (`HEAD`). */
+  currentRoots?: string[];
   children?: BranchTreeNode[];
 }
 
-/**
- * Git Log Branches pane: HEAD, Local and Remote › <remote>. Names with `/` are
- * grouped into folders (`feat/x` → feat › x); at each level the current branch and
- * favorites come first, then folders, then the other branches.
- */
-export function buildBranchTree(branches: readonly Branch[], favorites: readonly string[] | null): BranchTreeNode[] {
-  const level = (list: { b: Branch; rest: string }[], keyPrefix: string): BranchTreeNode[] => {
-    const folders = new Map<string, { b: Branch; rest: string }[]>();
+export interface RepoBranches {
+  root: string;
+  name: string;
+  /** Current branch of this repository (when known from `heads`), overriding `Branch.current`. */
+  head?: string | null;
+  branches: readonly Branch[];
+}
+
+interface BranchLeafEntry {
+  b: Branch;
+  repos?: string[];
+  repoRoots?: string[];
+  currentRoots?: string[];
+}
+
+function buildBranchTreeFromEntries(
+  entries: readonly BranchLeafEntry[],
+  favorites: readonly string[] | null,
+): BranchTreeNode[] {
+  const level = (list: (BranchLeafEntry & { rest: string })[], keyPrefix: string): BranchTreeNode[] => {
+    const folders = new Map<string, (BranchLeafEntry & { rest: string })[]>();
     const leaves: BranchTreeNode[] = [];
     for (const item of list) {
       const i = item.rest.indexOf("/");
       if (i > 0 && i < item.rest.length - 1) {
         const seg = item.rest.slice(0, i);
-        folders.set(seg, [...(folders.get(seg) ?? []), { b: item.b, rest: item.rest.slice(i + 1) }]);
+        folders.set(seg, [...(folders.get(seg) ?? []), { ...item, rest: item.rest.slice(i + 1) }]);
       } else {
         leaves.push({
           key: `b:${item.b.name}`,
@@ -159,6 +178,9 @@ export function buildBranchTree(branches: readonly Branch[], favorites: readonly
           ref: item.b.name,
           branch: item.b,
           favorite: isFavoriteBranch(item.b, favorites),
+          ...(item.repos ? { repos: item.repos } : {}),
+          ...(item.repoRoots ? { repoRoots: item.repoRoots } : {}),
+          ...(item.currentRoots ? { currentRoots: item.currentRoots } : {}),
         });
       }
     }
@@ -174,13 +196,13 @@ export function buildBranchTree(branches: readonly Branch[], favorites: readonly
     const top = leaves.filter((n) => rank(n) < 2).sort((a, b) => rank(a) - rank(b) || byName(a, b));
     return [...top, ...folderNodes, ...leaves.filter((n) => rank(n) === 2).sort(byName)];
   };
-  const local = branches.filter((b) => !b.remote);
-  const byRemote = new Map<string, Branch[]>();
-  for (const b of branches) {
-    if (!b.remote || b.name.endsWith("/HEAD")) continue;
-    const i = b.name.indexOf("/");
-    const r = i > 0 ? b.name.slice(0, i) : b.name;
-    byRemote.set(r, [...(byRemote.get(r) ?? []), b]);
+  const local = entries.filter((e) => !e.b.remote);
+  const byRemote = new Map<string, BranchLeafEntry[]>();
+  for (const e of entries) {
+    if (!e.b.remote || e.b.name.endsWith("/HEAD")) continue;
+    const i = e.b.name.indexOf("/");
+    const r = i > 0 ? e.b.name.slice(0, i) : e.b.name;
+    byRemote.set(r, [...(byRemote.get(r) ?? []), e]);
   }
   const out: BranchTreeNode[] = [{ key: "head", label: "HEAD (Current Branch)", kind: "head", ref: "HEAD" }];
   if (local.length)
@@ -190,7 +212,7 @@ export function buildBranchTree(branches: readonly Branch[], favorites: readonly
       kind: "group",
       ref: null,
       children: level(
-        local.map((b) => ({ b, rest: b.name })),
+        local.map((e) => ({ ...e, rest: e.b.name })),
         "f:local",
       ),
     });
@@ -206,12 +228,101 @@ export function buildBranchTree(branches: readonly Branch[], favorites: readonly
         kind: "remote",
         ref: null,
         children: level(
-          list.map((b) => ({ b, rest: b.name.slice(r.length + 1) })),
+          list.map((e) => ({ ...e, rest: e.b.name.slice(r.length + 1) })),
           `f:r:${r}`,
         ),
       })),
     });
   return out;
+}
+
+/**
+ * Git Log Branches pane: HEAD, Local and Remote › <remote>. Names with `/` are
+ * grouped into folders (`feat/x` → feat › x); at each level the current branch and
+ * favorites come first, then folders, then the other branches.
+ */
+export function buildBranchTree(branches: readonly Branch[], favorites: readonly string[] | null): BranchTreeNode[] {
+  return buildBranchTreeFromEntries(
+    branches.map((b) => ({ b })),
+    favorites,
+  );
+}
+
+/**
+ * Git Log Branches pane across multiple repositories (IDEA): aggregates local and remote
+ * branches by name. A branch checked out (`current`) in one or more repositories gets
+ * `current: true` (yellow tag icon, sorted to the top of its folder) and lists those
+ * checked-out repositories in `repos`; a branch not checked out anywhere lists every
+ * repository where it exists in `repos`, with incoming / outgoing counts summed.
+ */
+export function buildMultiRepoBranchTree(
+  repos: readonly RepoBranches[],
+  favorites: readonly string[] | null = null,
+): BranchTreeNode[] {
+  interface RepoHit {
+    root: string;
+    name: string;
+    branch: Branch;
+  }
+  const groups = new Map<string, { sample: Branch; current: RepoHit[]; other: RepoHit[]; seen: Set<string> }>();
+  for (const r of repos) {
+    for (const b of r.branches) {
+      if (b.remote && b.name.endsWith("/HEAD")) continue;
+      const key = `${b.remote ? "r" : "l"}:${b.name}`;
+      let g = groups.get(key);
+      if (!g) {
+        g = { sample: b, current: [], other: [], seen: new Set() };
+        groups.set(key, g);
+      }
+      if (g.seen.has(r.root)) continue;
+      g.seen.add(r.root);
+      const isCurrent = !b.remote && (r.head !== undefined ? b.name === r.head : b.current);
+      (isCurrent ? g.current : g.other).push({ root: r.root, name: r.name, branch: b });
+    }
+  }
+  const entries: BranchLeafEntry[] = [];
+  for (const g of groups.values()) {
+    const isCurrent = g.current.length > 0;
+    const active = isCurrent ? g.current : g.other;
+    const all = [...g.current, ...g.other];
+    const ahead = active.reduce((sum, e) => sum + e.branch.ahead, 0);
+    const behind = active.reduce((sum, e) => sum + e.branch.behind, 0);
+    const commitTimes = all.map((e) => e.branch.lastCommitMs).filter((t): t is number => t != null);
+    const lastCommitMs = commitTimes.length ? Math.max(0, ...commitTimes) : null;
+    const upstream =
+      active.find((e) => e.branch.upstream)?.branch.upstream ??
+      all.find((e) => e.branch.upstream)?.branch.upstream ??
+      null;
+    const commit =
+      active.find((e) => e.branch.commit)?.branch.commit ??
+      all.find((e) => e.branch.commit)?.branch.commit ??
+      "";
+    entries.push({
+      b: {
+        name: g.sample.name,
+        remote: g.sample.remote,
+        current: isCurrent,
+        upstream,
+        ahead,
+        behind,
+        lastCommitMs,
+        commit,
+      },
+      repos: active.map((e) => e.name),
+      repoRoots: all.map((e) => e.root),
+      currentRoots: g.current.map((e) => e.root),
+    });
+  }
+  return buildBranchTreeFromEntries(entries, favorites);
+}
+
+/** Trailing detail for a node in the Git Log Branches tree (`current` or `(repo1, repo2)` + `↓behind ↑ahead`). */
+export function branchDetail(n: BranchTreeNode): string | undefined {
+  const b = n.branch;
+  if (!b) return undefined;
+  const sync = [b.behind > 0 ? `↓${b.behind}` : "", b.ahead > 0 ? `↑${b.ahead}` : ""].filter(Boolean).join(" ");
+  const where = n.repos?.length ? `(${n.repos.join(", ")})` : b.current ? tx("current") : "";
+  return [where, sync].filter(Boolean).join("  ") || undefined;
 }
 
 /** Keys of the nodes on the way to branch `name` (to reveal it). */
@@ -227,6 +338,24 @@ export function branchFolderKeys(nodes: readonly BranchTreeNode[], name: string)
   return walk(nodes) ?? [];
 }
 
+/** Keys of all folder / group nodes containing at least one checked-out (`current`) branch. */
+export function currentBranchFolderKeys(nodes: readonly BranchTreeNode[]): string[] {
+  const out: string[] = [];
+  const walk = (list: readonly BranchTreeNode[]): boolean => {
+    let hasCurrent = false;
+    for (const n of list) {
+      if (n.kind === "branch" && n.branch?.current) hasCurrent = true;
+      if (n.children && walk(n.children)) {
+        out.push(n.key);
+        hasCurrent = true;
+      }
+    }
+    return hasCurrent;
+  };
+  walk(nodes);
+  return out;
+}
+
 /** Branches pane search: keeps branches whose full name contains `query` (case-insensitive) and their folders. */
 export function filterBranchTree(nodes: readonly BranchTreeNode[], query: string): BranchTreeNode[] {
   const q = query.trim().toLowerCase();
@@ -235,6 +364,16 @@ export function filterBranchTree(nodes: readonly BranchTreeNode[], query: string
     if (n.kind === "head") return [];
     if (n.kind === "branch") return n.ref?.toLowerCase().includes(q) ? [n] : [];
     const children = filterBranchTree(n.children ?? [], q);
+    return children.length ? [{ ...n, children }] : [];
+  });
+}
+
+/** Filters the branch tree to `HEAD`, current branches, and favorite branches. */
+export function filterFavoriteBranchTree(nodes: readonly BranchTreeNode[]): BranchTreeNode[] {
+  return nodes.flatMap((n): BranchTreeNode[] => {
+    if (n.kind === "head") return [n];
+    if (n.kind === "branch") return n.favorite || n.branch?.current ? [n] : [];
+    const children = filterFavoriteBranchTree(n.children ?? []);
     return children.length ? [{ ...n, children }] : [];
   });
 }

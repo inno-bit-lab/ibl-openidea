@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Branch } from "@/bindings";
 import {
+  branchDetail,
   branchFolderKeys,
   buildBranchRows,
   buildBranchTree,
+  buildMultiRepoBranchTree,
+  currentBranchFolderKeys,
   filterBranchTree,
   isFavoriteBranch,
   pushRecent,
@@ -178,6 +181,96 @@ describe("buildBranchTree", () => {
     expect(isFavoriteBranch(b("origin/master"), null)).toBe(true);
     expect(isFavoriteBranch(b("main"), ["dev"])).toBe(false);
     expect(isFavoriteBranch(b("dev"), ["dev"])).toBe(true);
+  });
+
+  it("aggregates multi-repo branches like IDEA: checked-out repos on current branches, existing repos and sync on others", () => {
+    const tree = buildMultiRepoBranchTree([
+      {
+        root: "/p/appcall-iac",
+        name: "appcall-iac",
+        head: "main",
+        branches: [b("main", { current: true }), b("origin/main")],
+      },
+      {
+        root: "/p/ecs-iac",
+        name: "ecs-iac",
+        head: "master",
+        branches: [b("master", { current: true }), b("origin/master")],
+      },
+      {
+        root: "/p/ngtp-sr",
+        name: "ngtp-sr",
+        head: "release/2026-PI2-2",
+        branches: [b("release/2026-PI2-2", { current: true }), b("release/2026-PI5")],
+      },
+      {
+        root: "/p/chb-iac",
+        name: "chb-iac",
+        head: "release/2026-PI5",
+        branches: [
+          b("main"),
+          b("release/2026-PI5", { current: true }),
+          b("release/2026-PI2-1", { behind: 1 }),
+          b("sprint/2026-PI5-S4"),
+        ],
+      },
+      {
+        root: "/p/xcs",
+        name: "xcs",
+        head: "release/2026-PI5",
+        branches: [
+          b("release/2026-PI5", { current: true }),
+          b("release/2026-PI2-1", { behind: 3 }),
+          b("release/2026-PI4-2", { behind: 16 }),
+        ],
+      },
+    ]);
+
+    const detailedOutline = (nodes: readonly BranchTreeNode[], depth = 0): string[] =>
+      nodes.flatMap((n) => {
+        const cur = n.branch?.current ? "@" : "";
+        const det = branchDetail(n);
+        return [
+          `${"  ".repeat(depth)}${cur}${n.label}${det ? ` ${det}` : ""}`,
+          ...detailedOutline(n.children ?? [], depth + 1),
+        ];
+      });
+
+    expect(detailedOutline(tree)).toEqual([
+      "HEAD (Current Branch)",
+      "Local",
+      "  @main (appcall-iac)",
+      "  @master (ecs-iac)",
+      "  release",
+      "    @2026-PI2-2 (ngtp-sr)",
+      "    @2026-PI5 (chb-iac, xcs)",
+      "    2026-PI2-1 (chb-iac, xcs)  ↓4",
+      "    2026-PI4-2 (xcs)  ↓16",
+      "  sprint",
+      "    2026-PI5-S4 (chb-iac)",
+      "Remote",
+      "  origin",
+      "    main (appcall-iac)",
+      "    master (ecs-iac)",
+    ]);
+    expect(currentBranchFolderKeys(tree)).toEqual(["f:local/release", "g:local"]);
+  });
+
+  it("handles detached HEAD and empty repository lists in buildMultiRepoBranchTree", () => {
+    expect(buildMultiRepoBranchTree([])).toEqual([
+      { key: "head", label: "HEAD (Current Branch)", kind: "head", ref: "HEAD" },
+    ]);
+    const detached = buildMultiRepoBranchTree([
+      {
+        root: "/p/a",
+        name: "a",
+        head: null,
+        branches: [b("main", { current: true, ahead: 2 })],
+      },
+    ]);
+    const localMain = detached[1]?.children?.[0];
+    expect(localMain?.branch?.current).toBe(false);
+    expect(branchDetail(localMain!)).toBe("(a)  ↑2");
   });
 });
 

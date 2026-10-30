@@ -15,11 +15,33 @@ import { call, commands, isTauri } from "@/platform/ipc";
 import { editorService, notifications } from "@/workbench/contributions";
 import { canSend, emptyDraft, toPrompt, type ComposerDraft, type FileRef } from "./composerModel";
 import { withQuote } from "./conversation";
-import { HOME_KEY, HOME_KIND, SESSION_KIND, attentionChange, isBusy, sessionKey, upsertEntry } from "./model";
+import {
+  CATALOG_KEY,
+  CATALOG_KIND,
+  HOME_KEY,
+  HOME_KIND,
+  SESSION_KIND,
+  attentionChange,
+  isBusy,
+  sessionKey,
+  upsertEntry,
+} from "./model";
+
+export interface AgentPreset {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  effort: string;
+  mode: string;
+  instructions: string;
+}
 
 /** New Task page settings (its text lives in the `HOME` composer). */
 export interface Draft {
   provider: string;
+  /** Active preset id, when a preset was selected. */
+  presetId?: string | null;
   /** Settings chosen for the next task, by option id (reset when the agent changes). */
   config: Record<string, string>;
   isolation: Isolation;
@@ -39,6 +61,9 @@ interface AgentsState {
   entries: Map<string, AgentEntry[]>;
   changes: Map<string, AgentChange[]>;
   providers: AgentProvider[];
+  presets: AgentPreset[];
+  disabledProviders: string[];
+  customArgs: Record<string, string>;
   draft: Draft;
   composers: Map<string, ComposerDraft>;
   /** The composer typed in last: where "Send to Agent" adds references. */
@@ -51,6 +76,9 @@ interface AgentsState {
 
 const DRAFT_KEY = "openidea.agents.draft.v2";
 const HISTORY_KEY = "openidea.agents.history.v1";
+const PRESETS_KEY = "openidea.agents.presets.v1";
+const DISABLED_KEY = "openidea.agents.disabled.v1";
+const ARGS_KEY = "openidea.agents.args.v1";
 const HISTORY_SIZE = 50;
 
 function load<T>(key: string, fallback: T): T {
@@ -70,7 +98,7 @@ function save(key: string, value: unknown) {
   }
 }
 
-const fallbackDraft: Draft = { provider: "claude", config: {}, isolation: "worktree", base: null };
+const fallbackDraft: Draft = { provider: "claude", presetId: null, config: {}, isolation: "worktree", base: null };
 
 export const useAgents = create<AgentsState>(() => ({
   loaded: false,
@@ -79,6 +107,9 @@ export const useAgents = create<AgentsState>(() => ({
   entries: new Map(),
   changes: new Map(),
   providers: [],
+  presets: load<AgentPreset[]>(PRESETS_KEY, []),
+  disabledProviders: load<string[]>(DISABLED_KEY, []),
+  customArgs: load<Record<string, string>>(ARGS_KEY, {}),
   draft: { ...fallbackDraft, ...load<Partial<Draft>>(DRAFT_KEY, {}) },
   composers: new Map(),
   lastComposer: HOME,
@@ -90,6 +121,113 @@ export function updateDraft(patch: Partial<Draft>) {
   const draft = { ...useAgents.getState().draft, ...patch };
   useAgents.setState({ draft });
   save(DRAFT_KEY, draft);
+}
+
+/** Builds a draft `config` map from a preset's model, effort, and mode for `provider`. */
+export function presetConfigFor(
+  preset: Pick<AgentPreset, "model" | "effort" | "mode">,
+  provider?: AgentProvider,
+): Record<string, string> {
+  const config: Record<string, string> = {};
+  const modelId = provider?.config.find((c) => c.category === "model" || c.id === "model")?.id ?? "model";
+  const effortId =
+    provider?.config.find((c) => c.category === "thought_level" || c.id === "thought_level")?.id ?? "thought_level";
+  const modeId = provider?.config.find((c) => c.category === "mode" || c.id === "mode")?.id ?? "mode";
+  if (preset.model.trim()) config[modelId] = preset.model.trim();
+  if (preset.effort.trim()) config[effortId] = preset.effort.trim();
+  if (preset.mode.trim()) config[modeId] = preset.mode.trim();
+  return config;
+}
+
+export function savePresets(presets: AgentPreset[]) {
+  useAgents.setState({ presets });
+  save(PRESETS_KEY, presets);
+  const { draft, providers } = useAgents.getState();
+  if (draft.presetId) {
+    const active = presets.find((p) => p.id === draft.presetId);
+    if (!active) {
+      updateDraft({ presetId: null });
+    } else {
+      const prov = providers.find((p) => p.id === active.provider);
+      updateDraft({
+        provider: active.provider,
+        presetId: active.id,
+        config: presetConfigFor(active, prov),
+      });
+    }
+  }
+}
+
+export function applyPreset(presetId: string | null) {
+  if (!presetId) {
+    updateDraft({ presetId: null });
+    return;
+  }
+  const { presets, providers } = useAgents.getState();
+  const preset = presets.find((p) => p.id === presetId);
+  if (!preset) return;
+  const prov = providers.find((p) => p.id === preset.provider);
+  updateDraft({
+    provider: preset.provider,
+    presetId: preset.id,
+    config: presetConfigFor(preset, prov),
+  });
+}
+
+export function toggleProviderEnabled(providerId: string, enabled?: boolean) {
+  const current = new Set(useAgents.getState().disabledProviders);
+  const shouldEnable = enabled ?? current.has(providerId);
+  if (shouldEnable) current.delete(providerId);
+  else current.add(providerId);
+  const disabledProviders = [...current];
+  useAgents.setState({ disabledProviders });
+  save(DISABLED_KEY, disabledProviders);
+}
+
+/** Splits a command-line argument string into tokens, respecting single and double quotes. */
+export function parseCliArgs(raw: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    if (quote) {
+      if (ch === quote) quote = null;
+      else if (ch === "\\" && quote === '"' && raw[i + 1] === '"') cur += raw[++i]!;
+      else cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (/\s/.test(ch)) {
+      if (cur) {
+        out.push(cur);
+        cur = "";
+      }
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+export async function setProviderArgs(providerId: string, rawArgs: string): Promise<void> {
+  const trimmed = rawArgs.trim();
+  const customArgs = { ...useAgents.getState().customArgs };
+  if (trimmed) customArgs[providerId] = trimmed;
+  else delete customArgs[providerId];
+  useAgents.setState({ customArgs });
+  save(ARGS_KEY, customArgs);
+  if (isTauri()) {
+    const providers = await call(commands.agentSetArgs(providerId, parseCliArgs(trimmed))).catch(() => null);
+    if (providers) useAgents.setState({ providers });
+  }
+}
+
+/** Prepends a preset's injected instructions to the first prompt when present. */
+export function withInjectedInstructions(promptText: string, instructions?: string): string {
+  const trimmed = instructions?.trim();
+  if (!trimmed) return promptText;
+  return `${trimmed}\n\n${promptText}`;
 }
 
 export const composerDraft = (key: string) => useAgents.getState().composers.get(key) ?? emptyDraft();
@@ -227,7 +365,7 @@ function scheduleChanges(task: string) {
   );
 }
 
-async function refreshProviders() {
+export async function refreshProviders() {
   const providers = await call(commands.agentProviders()).catch(() => null);
   if (providers) useAgents.setState({ providers });
 }
@@ -272,10 +410,18 @@ export function openHome(prompt?: string) {
   void editorService().openInput({ kind: HOME_KIND, key: HOME_KEY, data: {} }, { focus: true });
 }
 
+/** Opens the Agents catalog & presets editor tab. */
+export function openCatalog(openPresets = false) {
+  if (!useAgents.getState().providers.length && isTauri()) void refreshProviders();
+  void editorService().openInput({ kind: CATALOG_KIND, key: CATALOG_KEY, data: { openPresets } }, { focus: true });
+}
+
 export async function startTask(): Promise<void> {
-  const { draft } = useAgents.getState();
+  const { draft, presets } = useAgents.getState();
   const composer = composerDraft(HOME);
   if (!canSend(composer)) return;
+  const activePreset = draft.presetId ? presets.find((p) => p.id === draft.presetId) : undefined;
+  const instructions = activePreset?.instructions?.trim() || null;
   const task = await call(
     commands.agentCreate({
       prompt: toPrompt(composer),
@@ -283,6 +429,7 @@ export async function startTask(): Promise<void> {
       config: Object.entries(draft.config).map(([id, value]) => ({ id, value })),
       isolation: draft.isolation,
       base: draft.isolation === "worktree" ? draft.base : null,
+      instructions,
     }),
   );
   // Its events can arrive before this reply: keep the newer state they carried.

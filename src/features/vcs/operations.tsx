@@ -11,10 +11,11 @@ import { Checkbox, Dialog, Icon, Input, List, Spinner, fileIconName, T } from "@
 import { notifications } from "@/workbench/contributions";
 import { openDiff, type DiffSide } from "./diffInput";
 import { openDialog, promptText } from "./dialogs";
+import { RepoSelect, useDialogRepo } from "./gitMenuDialogs";
 import { KIND_COLOR, baseName, dirName } from "./model";
 import { runGitOperation, runOp } from "./ops";
 import { reloadLog, useGitLog } from "./logStore";
-import { conflictedFiles, currentRepo, currentRepoRoot, refreshNow, repoOf, useVcs } from "./store";
+import { conflictedFiles, currentRepo, currentRepoRoot, focusRepo, refreshNow, repoOf, useVcs } from "./store";
 import styles from "./common.module.css";
 import { tx } from "@/platform/i18n";
 
@@ -272,18 +273,30 @@ const RESET_MODES: Array<{ mode: ResetMode; label: string; hint: string }> = [
 ];
 
 /** Git Reset dialog: Reset Current Branch to Here… (log) and Git › Reset HEAD… (`commit` omitted). */
-export function showResetDialog(commit?: Commit) {
-  openDialog((close) => <ResetDialog commit={commit} onClose={close} />);
+export function showResetDialog(commit?: Commit, initialRepo?: string) {
+  openDialog((close) => <ResetDialog commit={commit} initialRepo={initialRepo} onClose={close} />);
 }
 
-function ResetDialog({ commit, onClose }: { commit?: Commit; onClose: () => void }) {
-  const head = useVcs((s) => s.branch?.head ?? "HEAD");
+function ResetDialog({
+  commit,
+  initialRepo,
+  onClose,
+}: {
+  commit?: Commit;
+  initialRepo?: string;
+  onClose: () => void;
+}) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
+  const head = useVcs((s) =>
+    !commit && repo && s.heads[repo] ? (s.heads[repo]!.head ?? "HEAD") : (s.branch?.head ?? "HEAD"),
+  );
   const [mode, setMode] = useState<ResetMode>("mixed");
   const [target, setTarget] = useState(commit?.id ?? "HEAD");
   const run = async () => {
     const rev = target.trim();
     if (!rev) return;
     onClose();
+    if (!commit && repo) await focusRepo(repo);
     await runGitOperation(
       { op: "reset", commit: rev, mode },
       {
@@ -318,6 +331,7 @@ function ResetDialog({ commit, onClose }: { commit?: Commit; onClose: () => void
           </div>
         ) : (
           <>
+            <RepoSelect roots={roots} value={repo} onChange={setRepo} />
             <label className={styles.fieldLabel} htmlFor="openidea-reset-to">
               <T>To commit:</T>
             </label>
@@ -374,19 +388,20 @@ export async function newTagOn(commit: Commit) {
 }
 
 /** Git › New Tag…: IDEA's Tag dialog (name, force, commit, message). */
-export function showTagDialog() {
-  openDialog((close) => <TagDialog onClose={close} />);
+export function showTagDialog(initialRepo?: string) {
+  openDialog((close) => <TagDialog initialRepo={initialRepo} onClose={close} />);
 }
 
-function TagDialog({ onClose }: { onClose: () => void }) {
+function TagDialog({ initialRepo, onClose }: { initialRepo?: string; onClose: () => void }) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
   const [name, setName] = useState("");
   const [commit, setCommit] = useState("HEAD");
   const [message, setMessage] = useState("");
   const [force, setForce] = useState(false);
   const [existing, setExisting] = useState<string[]>([]);
   useEffect(() => {
-    void call(commands.vcsTags(currentRepo())).then(setExisting, () => undefined);
-  }, []);
+    void call(commands.vcsTags(repo)).then(setExisting, () => undefined);
+  }, [repo]);
   const error = validateTagName(name, force ? [] : existing);
   const run = async () => {
     if (error) return;
@@ -394,7 +409,7 @@ function TagDialog({ onClose }: { onClose: () => void }) {
     const tag = name.trim();
     const ok = await runOp(
       `Create tag ${tag}`,
-      () => call(commands.vcsCreateTag(currentRepo(), tag, commit.trim() || "HEAD", message || null, force)),
+      () => call(commands.vcsCreateTag(repo, tag, commit.trim() || "HEAD", message || null, force)),
       { success: `Created tag ${tag}` },
     );
     if (ok !== undefined && useGitLog.getState().commits.length) void reloadLog();
@@ -411,6 +426,7 @@ function TagDialog({ onClose }: { onClose: () => void }) {
       ]}
     >
       <div className={styles.form}>
+        <RepoSelect roots={roots} value={repo} onChange={setRepo} />
         <label className={styles.fieldLabel} htmlFor="openidea-tag-name">
           <T>Tag name:</T>
         </label>

@@ -110,6 +110,7 @@ const UNTRANSLATED = new Set<string>([
   "Godot",
   "Gradle",
   "Greenplum",
+  "IBLOpenIdea",
   "Java",
   "java-debug (Java)",
   "js-debug (Node.js / TypeScript)",

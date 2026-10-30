@@ -56,11 +56,15 @@ export const commands = {
 	/**  Streams the project's agent events to this window; returns every task. */
 	agentSubscribe: (onEvent: Channel<AgentEvent>) => typedError<AgentTask[], IdeError>(__TAURI_INVOKE("agent_subscribe", { onEvent })),
 	agentProviders: () => typedError<AgentProvider[], IdeError>(__TAURI_INVOKE("agent_providers")),
+	/**  Saves or resets custom CLI arguments for `provider` in `<config>/agents/<provider>.toml`. */
+	agentSetArgs: (provider: string, args: string[]) => typedError<AgentProvider[], IdeError>(__TAURI_INVOKE("agent_set_args", { provider, args })),
 	/**
 	 *  Slash commands to complete for `provider` in `task`'s directory, or in the project
 	 *  before a task exists (skills and custom commands on disk included).
 	 */
 	agentCommands: (provider: string, task: string | null) => typedError<AgentCommand[], IdeError>(__TAURI_INVOKE("agent_commands", { provider, task })),
+	/**  One question to `provider`, answered in a throwaway session that is not a task. */
+	agentComplete: (provider: string, prompt: string, config: AgentConfigChoice[]) => typedError<string, IdeError>(__TAURI_INVOKE("agent_complete", { provider, prompt, config })),
 	agentEntries: (task: string) => typedError<AgentEntry[], IdeError>(__TAURI_INVOKE("agent_entries", { task })),
 	agentCreate: (request: NewAgentTask) => typedError<AgentTask, IdeError>(__TAURI_INVOKE("agent_create", { request })),
 	/**  Sends a message; while the agent works it is queued, or with `now` it interrupts the turn. */
@@ -1628,6 +1632,14 @@ export type CommitSettings = {
 	bodyLimit?: number,
 	showRightMargin?: boolean,
 	wrapAtMargin?: boolean,
+	/**  Agent that suggests the commit message (an id of `agent_providers`); empty = none chosen. */
+	suggestAgent?: string,
+	/**  Model option value for commit message suggestion; empty = agent default. */
+	suggestModel?: string,
+	/**  Thinking effort (`thought_level`) option value for commit message suggestion; empty = agent default. */
+	suggestThinking?: string,
+	/**  Rules the suggested message must follow, passed to that agent as written. */
+	suggestRules?: string,
 };
 
 export type CompletionItem = {
@@ -3914,6 +3926,11 @@ export type NewAgentTask = {
 	isolation: Isolation,
 	/**  Branch to start the worktree from; the current branch when `None`. */
 	base: string | null,
+	/**
+	 *  Optional preset instructions prepended to the first prompt sent to the agent,
+	 *  while hidden from the session title, branch name, and user transcript entry.
+	 */
+	instructions?: string | null,
 };
 
 /**  Result of `node_at`: the smallest named node covering a range, with its ancestors. */

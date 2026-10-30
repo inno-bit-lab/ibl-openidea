@@ -266,12 +266,25 @@ fn range_ids(r: &Repo, range: &str, path: Option<&str>) -> IdeResult<Vec<ObjectI
 fn tips(repo: &gix::Repository, revs: &[&str]) -> IdeResult<Vec<ObjectId>> {
     let mut tips = Vec::new();
     if !revs.is_empty() {
+        let mut first_err = None;
         for rev in revs {
-            let id = resolve(repo, rev)?;
-            let commit = repo.find_object(id).map_err(gx)?.peel_to_commit().map_err(gx)?;
-            if !tips.contains(&commit.id) {
-                tips.push(commit.id);
+            match resolve(repo, rev).and_then(|id| repo.find_object(id).map_err(gx)?.peel_to_commit().map_err(gx)) {
+                Ok(commit) => {
+                    if !tips.contains(&commit.id) {
+                        tips.push(commit.id);
+                    }
+                }
+                Err(e) => {
+                    if first_err.is_none() {
+                        first_err = Some(e);
+                    }
+                }
             }
+        }
+        if tips.is_empty()
+            && let Some(err) = first_err
+        {
+            return Err(err);
         }
         return Ok(tips);
     }

@@ -44,6 +44,8 @@ export interface GraphCommit {
   parents: readonly string[];
   /** Per parent: the link skips collapsed commits. */
   dashed?: readonly boolean[];
+  /** Repository root when commits from multiple repositories are interleaved. */
+  repo?: string;
 }
 
 export const emptyGraphState = (): GraphState => ({ lanes: [], nextColor: 0 });
@@ -129,19 +131,90 @@ export function computeGraph(
 }
 
 /**
+ * Lays out commits from several repositories: each repository keeps its own graph starting
+ * at lane 0, and edges interrupted by rows of another repository end / resume with arrows
+ * (IDEA's multi-root Git Log layout).
+ */
+export function computeMultiRepoGraph(
+  commits: ReadonlyArray<GraphCommit>,
+  rootOrder: readonly string[] = [],
+): GraphRow[] {
+  const byRepo = new Map<string, { indices: number[]; commits: GraphCommit[] }>();
+  commits.forEach((c, i) => {
+    const key = c.repo ?? "";
+    const entry = byRepo.get(key) ?? { indices: [], commits: [] };
+    entry.indices.push(i);
+    entry.commits.push(c);
+    byRepo.set(key, entry);
+  });
+  if (byRepo.size <= 1) return computeGraph(commits).rows;
+
+  const rawRows: GraphRow[] = new Array(commits.length);
+  for (const [repo, { indices, commits: list }] of byRepo) {
+    const seed = Math.max(0, rootOrder.indexOf(repo));
+    const { rows } = computeGraph(list, { lanes: [], nextColor: seed });
+    indices.forEach((idx, k) => {
+      rawRows[idx] = rows[k]!;
+    });
+  }
+
+  return rawRows.map((row, i) => {
+    const repo = commits[i]!.repo ?? "";
+    const samePrev = i > 0 && (commits[i - 1]!.repo ?? "") === repo;
+    const sameNext = i + 1 < commits.length && (commits[i + 1]!.repo ?? "") === repo;
+    if (samePrev && sameNext) return row;
+
+    let up = row.up;
+    if (!samePrev) {
+      const entering = row.up.find((s) => s.to === row.lane);
+      up = entering
+        ? [{ from: row.lane, to: row.lane, color: entering.color, ...(entering.dashed ? { dashed: true } : {}), arrow: "up" }]
+        : [];
+    }
+
+    let down = row.down;
+    if (!sameNext) {
+      const leaving = row.down.find((s) => s.from === row.lane);
+      down = leaving
+        ? [{ from: row.lane, to: row.lane, color: row.color, ...(leaving.dashed ? { dashed: true } : {}), arrow: "down" }]
+        : [];
+    }
+
+    const width = Math.max(
+      1,
+      row.lane + 1,
+      ...up.map((s) => Math.max(s.from, s.to) + 1),
+      ...down.map((s) => Math.max(s.from, s.to) + 1),
+    );
+    return { ...row, up, down, width };
+  });
+}
+
+/**
  * Collapse Linear Branches: hides the commits of linear chains (one parent, one child,
  * no references) so that only branch points, merges, tips and referenced commits stay,
  * linked by dashed edges. Commits in `keep` (HEAD) stay visible.
  */
-export function collapseLinear<C extends { id: string; parents: readonly string[]; refs: readonly string[] }>(
+export function collapseLinear<C extends { id: string; parents: readonly string[]; refs: readonly string[]; repo?: string }>(
   commits: readonly C[],
-  keep: ReadonlySet<string>,
+  keep: ReadonlySet<string> = new Set(),
 ): { commits: C[]; graph: GraphCommit[] } {
-  const byId = new Map(commits.map((c) => [c.id, c]));
+  const keyOf = (repo: string | undefined, id: string) => (repo ? `${repo}\n${id}` : id);
+  const byId = new Map(commits.map((c) => [keyOf(c.repo, c.id), c]));
   const children = new Map<string, number>();
-  for (const c of commits) for (const p of c.parents) children.set(p, (children.get(p) ?? 0) + 1);
+  for (const c of commits) {
+    for (const p of c.parents) {
+      const k = keyOf(c.repo, p);
+      children.set(k, (children.get(k) ?? 0) + 1);
+    }
+  }
   const hidden = (c: C | undefined): boolean =>
-    !!c && c.parents.length === 1 && children.get(c.id) === 1 && !c.refs.length && !keep.has(c.id);
+    !!c &&
+    c.parents.length === 1 &&
+    children.get(keyOf(c.repo, c.id)) === 1 &&
+    !c.refs.length &&
+    !keep.has(c.id) &&
+    !keep.has(keyOf(c.repo, c.id));
 
   const visible: C[] = [];
   const graph: GraphCommit[] = [];
@@ -152,9 +225,13 @@ export function collapseLinear<C extends { id: string; parents: readonly string[
     for (const p of c.parents) {
       let cur = p;
       let skipped = false;
-      for (let next = byId.get(cur), guard = 0; next && guard < commits.length && hidden(next); guard++) {
+      for (
+        let next = byId.get(keyOf(c.repo, cur)), guard = 0;
+        next && guard < commits.length && hidden(next);
+        guard++
+      ) {
         cur = next.parents[0]!;
-        next = byId.get(cur);
+        next = byId.get(keyOf(c.repo, cur));
         skipped = true;
       }
       // Two collapsed lines can lead to the same commit: draw one edge.
@@ -166,7 +243,9 @@ export function collapseLinear<C extends { id: string; parents: readonly string[
       }
     }
     visible.push(c);
-    graph.push(dashed.some(Boolean) ? { id: c.id, parents, dashed } : { id: c.id, parents });
+    const entry: GraphCommit = dashed.some(Boolean) ? { id: c.id, parents, dashed } : { id: c.id, parents };
+    if (c.repo) entry.repo = c.repo;
+    graph.push(entry);
   }
   return { commits: visible, graph };
 }

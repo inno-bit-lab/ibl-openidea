@@ -28,6 +28,8 @@ const BUILTIN: &[(&str, &str, &[&str], &str)] = &[
     ("codex", "Codex", &["npx", "-y", "@agentclientprotocol/codex-acp@2.3.0"], "Run `codex login` in a terminal."),
     ("gemini", "Gemini CLI", &["gemini", "--experimental-acp"], "Run `gemini` in a terminal and sign in."),
     ("copilot", "GitHub Copilot", &["copilot", "--acp"], "Run `copilot` in a terminal and sign in."),
+    ("agy", "Google Antigravity", &["agy_acp_server"], "Sign in with Google Antigravity first."),
+    ("pi", "pi ACP", &["npx", "-y", "pi-acp@0.0.34"], "Run `pi` in a terminal and sign in."),
     ("cursor", "Cursor", &["cursor-agent", "acp"], "Run `cursor-agent login` in a terminal."),
     ("opencode", "OpenCode", &["opencode", "acp"], "Run `opencode auth login` in a terminal."),
     ("qwen", "Qwen Code", &["qwen", "--experimental-acp"], "Run `qwen` in a terminal and sign in."),
@@ -52,14 +54,15 @@ fn builtins() -> Vec<ProviderSpec> {
         .collect()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct CustomAgent {
+    #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     command: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     args: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     env: HashMap<String, String>,
 }
 
@@ -106,19 +109,220 @@ pub(crate) fn load(custom_dir: Option<&Path>) -> Vec<ProviderSpec> {
     specs
 }
 
+/// Saves or clears custom CLI arguments for `id` in `<custom_dir>/<id>.toml`.
+pub(crate) fn set_custom_args(custom_dir: &Path, id: &str, extra_args: &[String]) -> std::io::Result<()> {
+    let cleaned: Vec<String> = extra_args.iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect();
+    let file = custom_dir.join(format!("{id}.toml"));
+    let builtin = builtins().into_iter().find(|b| b.id == id);
+    let existing_file = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|t| toml::from_str::<CustomAgent>(&t).ok());
+
+    let custom = match (builtin, existing_file) {
+        (Some(b), existing) => {
+            let has_custom_overrides = existing.as_ref().is_some_and(|e| {
+                !e.env.is_empty()
+                    || e.command != b.command
+                    || e.name.as_deref().is_some_and(|n| n != b.name)
+            });
+            if cleaned.is_empty() && !has_custom_overrides {
+                if file.exists() {
+                    let _ = std::fs::remove_file(&file);
+                }
+                return Ok(());
+            }
+            let mut args = b.args;
+            args.extend(cleaned);
+            CustomAgent {
+                name: existing.as_ref().and_then(|e| e.name.clone()).or(Some(b.name)),
+                command: existing.as_ref().map_or(b.command, |e| e.command.clone()),
+                args,
+                env: existing.map_or_else(HashMap::new, |e| e.env),
+            }
+        }
+        (None, Some(mut existing)) => {
+            existing.args = cleaned;
+            existing
+        }
+        (None, None) => {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "unknown agent"));
+        }
+    };
+    std::fs::create_dir_all(custom_dir)?;
+    let text = toml::to_string_pretty(&custom).map_err(std::io::Error::other)?;
+    std::fs::write(file, text)
+}
+
+fn search_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> =
+        std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from) {
+        for rel in [".local/bin", ".cargo/bin", "AppData/Roaming/npm", "AppData/Local/pnpm", ".bun/bin", ".volta/bin"] {
+            dirs.push(home.join(rel));
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
+            dirs.push(appdata.join("npm"));
+        }
+        for d in [r"C:\Program Files\nodejs", r"C:\Program Files\Git\bin", r"C:\Program Files\Git\usr\bin"] {
+            dirs.push(PathBuf::from(d));
+        }
+    }
+    dirs
+}
+
+fn find_agy_in_versions_dir(root: &Path) -> Option<PathBuf> {
+    let bin = if cfg!(windows) { "agy_acp_server.exe" } else { "agy_acp_server" };
+    let direct = root.join(bin);
+    if is_executable(&direct) {
+        return Some(direct);
+    }
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    versions.sort();
+    versions.into_iter().rev().map(|v| v.join(bin)).find(|p| is_executable(p))
+}
+
+fn find_agy_acp_server() -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut data_bases: Vec<PathBuf> = Vec::new();
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        data_bases.push(PathBuf::from(local));
+    }
+    if let Some(roaming) = std::env::var_os("APPDATA") {
+        data_bases.push(PathBuf::from(roaming));
+    }
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from) {
+        data_bases.push(home.join("AppData").join("Local"));
+        data_bases.push(home.join("AppData").join("Roaming"));
+        data_bases.push(home.join(".local").join("share"));
+        data_bases.push(home.join("Library").join("Application Support"));
+    }
+    for base in data_bases {
+        roots.push(base.join("ai.l0ng.openidea").join("acp-agents").join("antigravity-acp"));
+        if let Ok(jb_dirs) = std::fs::read_dir(base.join("JetBrains")) {
+            let mut jb: Vec<PathBuf> = jb_dirs.flatten().map(|e| e.path()).collect();
+            jb.sort();
+            for dir in jb.into_iter().rev() {
+                roots.push(dir.join("acp-agents").join("antigravity-acp"));
+            }
+        }
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        roots.push(dir.join("acp-agents").join("antigravity-acp"));
+        roots.push(dir.to_path_buf());
+    }
+    #[cfg(windows)]
+    if let Ok(users) = std::fs::read_dir(r"C:\Users") {
+        for user in users.flatten() {
+            roots.push(
+                user.path()
+                    .join("AppData")
+                    .join("Local")
+                    .join("ai.l0ng.openidea")
+                    .join("acp-agents")
+                    .join("antigravity-acp"),
+            );
+        }
+    }
+    roots.into_iter().find_map(|r| find_agy_in_versions_dir(&r))
+}
+
+pub(crate) fn resolve_executable(command: &str) -> Option<PathBuf> {
+    let p = Path::new(command);
+    let exts: &[&str] = if cfg!(windows) { &["exe", "cmd", "bat"] } else { &[] };
+    if p.components().count() > 1 {
+        if is_executable(p) {
+            return Some(p.to_path_buf());
+        }
+        if p.extension().is_none() {
+            for ext in exts {
+                let with_ext = p.with_extension(ext);
+                if is_executable(&with_ext) {
+                    return Some(with_ext);
+                }
+            }
+        }
+        if p.file_stem().and_then(|s| s.to_str()) == Some("agy_acp_server") {
+            return find_agy_acp_server();
+        }
+        return None;
+    }
+    for dir in search_dirs() {
+        let candidate = dir.join(command);
+        if cfg!(windows) && candidate.extension().is_none() {
+            for ext in exts {
+                let with_ext = candidate.with_extension(ext);
+                if is_executable(&with_ext) {
+                    return Some(with_ext);
+                }
+            }
+        }
+        if is_executable(&candidate) {
+            return Some(candidate);
+        }
+        if !cfg!(windows) {
+            for ext in exts {
+                let with_ext = candidate.with_extension(ext);
+                if is_executable(&with_ext) {
+                    return Some(with_ext);
+                }
+            }
+        }
+    }
+    if matches!(command, "agy_acp_server" | "agy_acp_server.exe") {
+        return find_agy_acp_server();
+    }
+    None
+}
+
+/// Resolves the command and argument list to pass to `Command::new`.
+/// On Windows, `npx` is resolved either to a native `npx.exe` shim or to `node.exe` + `npx-cli.js`
+/// so `cmd.exe` never mangles special characters in arguments.
+pub(crate) fn resolve_spawn(spec: &ProviderSpec) -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let is_npx = spec.command.eq_ignore_ascii_case("npx")
+            || Path::new(&spec.command)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case("npx"));
+        if is_npx {
+            for dir in search_dirs() {
+                let npx_exe = dir.join("npx.exe");
+                if is_executable(&npx_exe) {
+                    return (npx_exe.to_string_lossy().into_owned(), spec.args.clone());
+                }
+            }
+            for dir in search_dirs() {
+                let node_exe = dir.join("node.exe");
+                let npx_cli = dir.join("node_modules").join("npm").join("bin").join("npx-cli.js");
+                if is_executable(&node_exe) && npx_cli.is_file() {
+                    let mut args = Vec::with_capacity(spec.args.len() + 1);
+                    args.push(npx_cli.to_string_lossy().into_owned());
+                    args.extend(spec.args.iter().cloned());
+                    return (node_exe.to_string_lossy().into_owned(), args);
+                }
+            }
+        }
+    }
+    match resolve_executable(&spec.command) {
+        Some(path) => (path.to_string_lossy().into_owned(), spec.args.clone()),
+        None => (spec.command.clone(), spec.args.clone()),
+    }
+}
+
 /// Whether `command` resolves to an executable (a path, or a name on `PATH`).
 pub(crate) fn installed(command: &str) -> bool {
-    let p = Path::new(command);
-    if p.components().count() > 1 {
-        return is_executable(p);
-    }
-    let exts: &[&str] = if cfg!(windows) { &["exe", "cmd", "bat"] } else { &[] };
-    std::env::var_os("PATH").is_some_and(|path| {
-        std::env::split_paths(&path).any(|dir| {
-            let c = dir.join(command);
-            is_executable(&c) || exts.iter().any(|e| is_executable(&c.with_extension(e)))
-        })
-    })
+    resolve_executable(command).is_some()
 }
 
 fn is_executable(p: &Path) -> bool {
@@ -150,9 +354,61 @@ mod tests {
         assert_eq!(mine.env, vec![("K".to_owned(), "v".to_owned())]);
         let gemini = specs.iter().find(|s| s.id == "gemini").unwrap();
         assert_eq!((gemini.name.as_str(), gemini.args.as_slice()), ("gemini", &["--acp".to_owned()][..]));
+        assert!(specs.iter().any(|s| s.id == "agy" && s.name == "Google Antigravity"));
+        assert!(specs.iter().any(|s| s.id == "pi" && s.name == "pi ACP"));
         assert!(!specs.iter().any(|s| s.id == "broken"));
         assert_eq!(specs.iter().filter(|s| s.id == "claude").count(), 1);
         assert!(!installed("/definitely/not/here"));
         assert!(installed("sh"));
+    }
+
+    #[test]
+    fn set_custom_args_persists_and_resets_builtin_and_custom_agents() {
+        let dir = tempfile::tempdir().unwrap();
+        set_custom_args(dir.path(), "codex", &["--full-auto".into()]).unwrap();
+        let specs = load(Some(dir.path()));
+        let codex = specs.iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.args, ["-y", "@agentclientprotocol/codex-acp@2.3.0", "--full-auto"]);
+
+        // Calling again replaces previous custom args instead of appending.
+        set_custom_args(dir.path(), "codex", &["--sandbox".into(), "read-only".into()]).unwrap();
+        let specs = load(Some(dir.path()));
+        let codex = specs.iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.args, ["-y", "@agentclientprotocol/codex-acp@2.3.0", "--sandbox", "read-only"]);
+
+        set_custom_args(dir.path(), "codex", &[]).unwrap();
+        assert!(!dir.path().join("codex.toml").exists());
+        let specs = load(Some(dir.path()));
+        let codex = specs.iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.args, ["-y", "@agentclientprotocol/codex-acp@2.3.0"]);
+
+        // Builtin agent with custom env preserves env when updating and clearing args.
+        std::fs::write(
+            dir.path().join("codex.toml"),
+            "command = \"npx\"\nargs = [\"-y\", \"@agentclientprotocol/codex-acp@2.3.0\"]\n[env]\nOPENAI_API_KEY = \"sk-test\"\n",
+        )
+        .unwrap();
+        set_custom_args(dir.path(), "codex", &["--full-auto".into()]).unwrap();
+        let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.args, ["-y", "@agentclientprotocol/codex-acp@2.3.0", "--full-auto"]);
+        assert_eq!(codex.env, vec![("OPENAI_API_KEY".to_owned(), "sk-test".to_owned())]);
+
+        set_custom_args(dir.path(), "codex", &[]).unwrap();
+        assert!(dir.path().join("codex.toml").exists());
+        let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.args, ["-y", "@agentclientprotocol/codex-acp@2.3.0"]);
+        assert_eq!(codex.env, vec![("OPENAI_API_KEY".to_owned(), "sk-test".to_owned())]);
+
+        // Custom non-builtin agent replaces args instead of accumulating them.
+        std::fs::write(
+            dir.path().join("mine.toml"),
+            "name = \"Mine\"\ncommand = \"/opt/mine\"\nargs = [\"acp\"]\n[env]\nK = \"v\"\n",
+        )
+        .unwrap();
+        set_custom_args(dir.path(), "mine", &["--foo".into()]).unwrap();
+        set_custom_args(dir.path(), "mine", &["--bar".into()]).unwrap();
+        let mine = load(Some(dir.path())).into_iter().find(|s| s.id == "mine").unwrap();
+        assert_eq!(mine.args, ["--bar"]);
+        assert_eq!(mine.env, vec![("K".to_owned(), "v".to_owned())]);
     }
 }

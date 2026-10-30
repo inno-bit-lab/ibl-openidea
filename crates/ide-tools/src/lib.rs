@@ -151,11 +151,16 @@ pub fn extend_process_path(app_data: &Path) {
     let mut dirs = tools_bin_dirs(app_data);
     let current: Vec<PathBuf> =
         std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-    dirs.retain(|d| !current.contains(d));
-    if dirs.is_empty() {
+    let search: Vec<PathBuf> = std::env::split_paths(&default_search_path()).collect();
+    dirs.extend(current.iter().cloned());
+    for extra in search {
+        if !dirs.contains(&extra) {
+            dirs.push(extra);
+        }
+    }
+    if dirs == current {
         return;
     }
-    dirs.extend(current);
     if let Ok(joined) = std::env::join_paths(dirs) {
         // SAFETY: documented to run at startup before any other thread reads the environment.
         unsafe { std::env::set_var("PATH", joined) };
@@ -167,7 +172,17 @@ pub fn default_search_path() -> OsString {
     let mut dirs: Vec<PathBuf> =
         ide_core::process::host_var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from) {
-        for rel in [".cargo/bin", ".local/bin", "go/bin", ".bun/bin", ".volta/bin", ".npm-global/bin", "Library/pnpm"] {
+        for rel in [
+            ".cargo/bin",
+            ".local/bin",
+            "go/bin",
+            ".bun/bin",
+            ".volta/bin",
+            ".npm-global/bin",
+            "Library/pnpm",
+            "AppData/Roaming/npm",
+            "AppData/Local/pnpm",
+        ] {
             dirs.push(home.join(rel));
         }
         if let Ok(entries) = std::fs::read_dir(home.join(".nvm/versions/node")) {
@@ -176,6 +191,16 @@ pub fn default_search_path() -> OsString {
             dirs.extend(versions.into_iter().rev());
         }
     }
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
+            dirs.push(appdata.join("npm"));
+        }
+        for d in [r"C:\Program Files\nodejs", r"C:\Program Files\Git\bin"] {
+            dirs.push(PathBuf::from(d));
+        }
+    }
+    #[cfg(not(windows))]
     for d in ["/opt/homebrew/bin", "/usr/local/go/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
         dirs.push(PathBuf::from(d));
     }

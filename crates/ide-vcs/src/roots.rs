@@ -25,9 +25,6 @@ impl Repos {
     /// folders `skip` rejects are not searched).
     pub fn discover(project_root: &Path, skip: &dyn Fn(&Path) -> bool) -> IdeResult<Self> {
         let mut repos: Vec<Repo> = Vec::new();
-        if let Some(r) = Repo::discover(project_root)? {
-            repos.push(r);
-        }
         let mut stack: Vec<(PathBuf, usize)> = vec![(project_root.to_path_buf(), 0)];
         while let Some((dir, depth)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -53,11 +50,24 @@ impl Repos {
                 }
             }
         }
+        // Only fall back to an ancestor repository above `project_root` when `project_root`
+        // itself has `.git` or contains no nested repositories of its own (e.g. a subfolder
+        // of a monorepo, not a multi-repo workspace sitting inside an outer repo).
+        if (project_root.join(".git").exists() || repos.is_empty())
+            && let Some(r) = Repo::discover(project_root)?
+            && (r.root() == project_root || repos.is_empty())
+            && !repos.iter().any(|x| x.root() == r.root())
+        {
+            repos.push(r);
+        }
         Ok(Self::new(repos, project_root))
     }
 
     /// Only the repository containing `project_root` (the quick lookup on project open).
     pub fn enclosing(project_root: &Path) -> IdeResult<Self> {
+        if !project_root.join(".git").exists() && has_direct_child_repo(project_root) {
+            return Ok(Self::default());
+        }
         Ok(Self::new(Repo::discover(project_root)?.into_iter().collect(), project_root))
     }
 
@@ -162,6 +172,18 @@ impl Repos {
     }
 }
 
+fn has_direct_child_repo(project_root: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(project_root) else { return false };
+    entries.flatten().any(|entry| {
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            return false;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        !name.starts_with('.') && !SKIPPED.contains(&name.as_ref()) && entry.path().join(".git").exists()
+    })
+}
+
 /// Index of the innermost of `roots` containing `path`. With `strict`, a root equal to
 /// `path` counts only when no other root contains it.
 fn innermost(roots: &[&Path], path: &Path, strict: bool) -> Option<usize> {
@@ -239,5 +261,23 @@ mod tests {
         assert_eq!(repos.all().len(), 2);
         assert_eq!(repos.primary().unwrap().root(), root.join("a"), "the first when none contains the project root");
         assert!(repos.for_path(&root.join("c.txt")).is_none());
+    }
+
+    #[test]
+    fn multi_repo_folder_inside_outer_repository_ignores_ancestor_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = dunce::canonicalize(tmp.path()).unwrap();
+        git_init(&outer);
+        let workspace = outer.join("repos");
+        git_init(&workspace.join("chb"));
+        git_init(&workspace.join("ecs"));
+
+        let enclosing = Repos::enclosing(&workspace).unwrap();
+        assert!(enclosing.is_empty());
+
+        let repos = Repos::discover(&workspace, &|_| false).unwrap();
+        let roots: Vec<&Path> = repos.all().iter().map(|r| r.root()).collect();
+        assert_eq!(roots, [&workspace.join("chb"), &workspace.join("ecs")]);
+        assert_eq!(repos.primary().unwrap().root(), workspace.join("chb"));
     }
 }

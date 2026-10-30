@@ -16,9 +16,10 @@ struct Fixture {
 fn git_in(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .current_dir(dir)
-        .args(["-c", "init.defaultBranch=main", "-c", "core.quotepath=off"])
+        .args(["-c", "init.defaultBranch=main", "-c", "core.quotepath=off", "-c", "core.autocrlf=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CLONE_PROTECTION_ACTIVE", "false")
         .output()
         .expect("git runs");
     assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));

@@ -24,12 +24,49 @@
   flex: 1;
 }
 
+.logWrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  min-width: 0;
+}
+
 /* branches */
 .branches {
   height: 100%;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-width: 0;
+}
+.branchesCollapsed {
+  flex: none;
+  width: 28px;
+}
+.branchesSideBar {
+  flex: none;
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.branchesSideSep {
+  flex: none;
+  width: 16px;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--border);
+}
+.branchesMain {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .branchesBar,
 .filters,
@@ -111,6 +148,100 @@
   border-radius: var(--radius-small);
 }
 
+/* Paths filter popup (IDEA's Select… / Select in Tree… / Roots) */
+.pathsPopup {
+  min-width: 210px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pathsMenu {
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+  outline: none;
+}
+.pathsItem {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 6px;
+  padding: 0 10px;
+  border-radius: var(--radius-selection, 5px);
+  color: var(--fg-strong);
+  font-size: var(--fs-ui);
+  text-align: left;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.pathsItemActive {
+  background: var(--bg-tree-selected);
+  color: var(--fg-strong);
+}
+.pathsItemText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pathsSection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 2px;
+}
+.pathsSectionLabel {
+  flex: none;
+  font-size: var(--fs-small);
+  color: var(--fg-subtle);
+}
+.pathsSectionLine {
+  flex: 1;
+  height: 1px;
+  background: var(--border-popup-divider, var(--border));
+}
+.pathsRoots {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-bottom: 4px;
+}
+.rootCheckbox {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid var(--root-color, var(--border-control));
+  background: color-mix(in srgb, var(--root-color, transparent) 22%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #fff;
+}
+.rootCheckboxChecked {
+  background: var(--root-color, var(--accent));
+  border-color: var(--root-color, var(--accent));
+}
+.rootCheckboxMark {
+  color: #fff;
+}
+.pathsFooter {
+  margin-top: 2px;
+  padding: 5px 12px;
+  border-top: 1px solid var(--border-popup-divider, var(--border));
+  background: color-mix(in srgb, var(--bg-panel, transparent) 50%, transparent);
+  color: var(--fg-subtle);
+  font-size: var(--fs-small);
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* commit table */
 .listWrap {
   flex: 1;
@@ -138,6 +269,16 @@
   white-space: nowrap;
   cursor: default;
   font-size: var(--fs-ui);
+}
+.rowMultiRepo {
+  padding-left: 10px;
+}
+.repoStripe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
 }
 /* View Options › Highlight › Current Branch (before .row:hover / .selected so they win). */
 .currentBranch {

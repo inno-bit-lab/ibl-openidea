@@ -42,6 +42,8 @@ export interface VcsState {
   branch: BranchInfo | null;
   branches: Branch[];
   branchesLoaded: boolean;
+  /** Repository root that `branches` currently belongs to. */
+  branchesRepo: string | null;
   stashes: Stash[];
   stashesLoaded: boolean;
   /** Bumped after each refresh; gutters re-query hunks when it changes. */
@@ -65,6 +67,7 @@ const initial: VcsState = {
   branch: null,
   branches: [],
   branchesLoaded: false,
+  branchesRepo: null,
   stashes: [],
   stashesLoaded: false,
   version: 0,
@@ -74,6 +77,26 @@ const initial: VcsState = {
 };
 
 export const useVcs = create<VcsState>(() => ({ ...initial }));
+
+let branchesWanted = false;
+let stashesWanted = false;
+let branchesSeq = 0;
+let stashesSeq = 0;
+let branchesInflight: { root: string | null; repo: string | null; seq: number; promise: Promise<Branch[]> } | null =
+  null;
+
+useVcs.subscribe((s, prev) => {
+  if (s.available !== prev.available) {
+    setContext("vcsAvailable", s.available);
+  }
+  if (s.root !== prev.root) {
+    branchesWanted = false;
+    stashesWanted = false;
+    branchesSeq++;
+    stashesSeq++;
+    branchesInflight = null;
+  }
+});
 
 /** Root of the selected repository; `null` = the project's primary one. */
 export function currentRepo(): string | null {
@@ -112,15 +135,43 @@ export function attentionRepo(
 
 /** Selects the repository branch / log / remote operations act on. */
 export function selectRepo(root: string): Promise<void> {
-  if (useVcs.getState().repo === root) return Promise.resolve();
-  useVcs.setState({ repo: root, branches: [], branchesLoaded: false, stashes: [], stashesLoaded: false });
+  const s = useVcs.getState();
+  if (s.repo === root) return inflight ?? Promise.resolve();
+  const head = s.heads[root];
+  const wantBranches = s.branchesLoaded || branchesWanted;
+  const wantStashes = s.stashesLoaded || stashesWanted;
+  branchesWanted = wantBranches;
+  stashesWanted = wantStashes;
+  branchesSeq++;
+  stashesSeq++;
+  branchesInflight = null;
+  useVcs.setState({
+    repo: root,
+    branch: head
+      ? {
+          head: head.head,
+          headCommit: head.headCommit,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          operation: s.operations[root] ?? null,
+        }
+      : s.branch,
+    branchesLoaded: false,
+    stashesLoaded: false,
+  });
+  if (wantBranches) void loadBranches().catch(() => undefined);
+  if (wantStashes) void loadStashes().catch(() => undefined);
   return refreshNow();
 }
 
 /** Selects `root` and loads its branches, so branch operations act on it. */
 export async function focusRepo(root: string): Promise<void> {
   await selectRepo(root);
-  if (!useVcs.getState().branchesLoaded) await loadBranches();
+  const s = useVcs.getState();
+  if (!s.branchesLoaded || (s.branchesRepo !== null && s.branchesRepo !== root)) {
+    await loadBranches();
+  }
 }
 
 export function conflictedFiles(status: readonly FileStatus[] = useVcs.getState().status): FileStatus[] {
@@ -170,8 +221,8 @@ export function refreshNow(): Promise<void> {
       const s = useVcs.getState();
       const scoped = Promise.all([
         call(commands.vcsBranchInfo(s.repo)),
-        s.branchesLoaded ? call(commands.vcsBranches(s.repo)) : Promise.resolve(s.branches),
-        s.stashesLoaded ? call(commands.vcsStashes(s.repo)) : Promise.resolve(s.stashes),
+        s.branchesLoaded ? call(commands.vcsBranches(s.repo)) : Promise.resolve(null),
+        s.stashesLoaded ? call(commands.vcsStashes(s.repo)) : Promise.resolve(null),
       ]).then(
         (values) => ({ values }),
         (error: unknown) => ({ error }),
@@ -181,29 +232,61 @@ export function refreshNow(): Promise<void> {
         call(commands.vcsStatus()),
         scoped,
       ]);
+      if (useVcs.getState().root !== s.root) return;
       const roots = vcsRoots.map((r) => r.root);
       if ("error" in selected) {
         // The selected repository is gone (removed since the last scan): fall back to the primary one.
         if (!s.repo || roots.includes(s.repo)) throw selected.error;
+        branchesSeq++;
+        stashesSeq++;
+        branchesInflight = null;
         useVcs.setState({ roots, repo: null, branchesLoaded: false, stashesLoaded: false });
+        if (branchesWanted) void loadBranches().catch(() => undefined);
+        if (stashesWanted) void loadStashes().catch(() => undefined);
         void refreshNow();
         return;
       }
       const [branch, branches, stashes] = selected.values;
       const operations = Object.fromEntries(vcsRoots.filter((r) => r.operation).map((r) => [r.root, r.operation!]));
+      const heads = Object.fromEntries(vcsRoots.map((r) => [r.root, { head: r.head, headCommit: r.headCommit }]));
+      const current = useVcs.getState();
+      if (current.repo !== s.repo) {
+        // Another repository was selected while this refresh was in flight: keep its selection and refresh it next.
+        useVcs.setState({ roots, operations, heads });
+        applyStatus(status, current.branch);
+        void refreshNow();
+        return;
+      }
       // `null` (before the first refresh) is the primary repository, listed first.
       const shown = s.repo && roots.includes(s.repo) ? s.repo : (roots[0] ?? null);
       const repo = attentionRepo(shown, s.operations, operations) ?? shown;
-      const heads = Object.fromEntries(vcsRoots.map((r) => [r.root, { head: r.head, headCommit: r.headCommit }]));
       useVcs.setState({ operations, heads });
       if (repo !== s.repo || roots.join("\n") !== s.roots.join("\n")) useVcs.setState({ roots, repo });
-      applyStatus(status, branch);
-      useVcs.setState({ branches, stashes, error: null });
       // Branch info and branches above are of another repository: load the selected one's.
       if (repo !== shown || (s.repo && repo !== s.repo)) {
-        useVcs.setState({ branchesLoaded: false, stashesLoaded: false });
+        applyStatus(status, current.branch);
+        const reloadBranches = current.branchesLoaded || branchesWanted;
+        const reloadStashes = current.stashesLoaded || stashesWanted;
+        branchesSeq++;
+        stashesSeq++;
+        branchesInflight = null;
+        useVcs.setState({ branchesLoaded: false, stashesLoaded: false, error: null });
+        if (reloadBranches) void loadBranches().catch(() => undefined);
+        if (reloadStashes) void loadStashes().catch(() => undefined);
         void refreshNow();
+        return;
       }
+      applyStatus(status, branch);
+      const latest = useVcs.getState();
+      useVcs.setState({
+        ...(branches !== null
+          ? { branches, branchesLoaded: true, branchesRepo: repo }
+          : latest.branchesLoaded && latest.branchesRepo === null
+            ? { branchesRepo: repo }
+            : {}),
+        ...(stashes !== null ? { stashes, stashesLoaded: true } : {}),
+        error: null,
+      });
     } catch (e) {
       useVcs.setState({ error: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -225,14 +308,55 @@ export function applyStatus(status: FileStatus[], branch: BranchInfo | null) {
 }
 
 export async function loadBranches(): Promise<Branch[]> {
-  const branches = await call(commands.vcsBranches(currentRepo()));
-  useVcs.setState({ branches, branchesLoaded: true });
-  return branches;
+  const s = useVcs.getState();
+  const root = s.root;
+  const repo = s.repo;
+  branchesWanted = true;
+  if (branchesInflight && branchesInflight.root === root && branchesInflight.repo === repo) {
+    return branchesInflight.promise;
+  }
+  const seq = ++branchesSeq;
+  const promise = (async () => {
+    try {
+      const branches = await call(commands.vcsBranches(repo));
+      const cur = useVcs.getState();
+      const now = cur.repo;
+      if (
+        cur.root === root &&
+        seq === branchesSeq &&
+        (now === repo || (repo === null && now === (cur.roots[0] ?? null)))
+      ) {
+        useVcs.setState({
+          branches,
+          branchesLoaded: true,
+          branchesRepo: now ?? cur.roots[0] ?? null,
+        });
+      }
+      return branches;
+    } finally {
+      if (branchesInflight?.seq === seq) branchesInflight = null;
+    }
+  })();
+  branchesInflight = { root, repo, seq, promise };
+  return promise;
 }
 
 export async function loadStashes(): Promise<Stash[]> {
-  const stashes = await call(commands.vcsStashes(currentRepo()));
-  useVcs.setState({ stashes, stashesLoaded: true });
+  const s = useVcs.getState();
+  const root = s.root;
+  const repo = s.repo;
+  stashesWanted = true;
+  const seq = ++stashesSeq;
+  const stashes = await call(commands.vcsStashes(repo));
+  const cur = useVcs.getState();
+  const now = cur.repo;
+  if (
+    cur.root === root &&
+    seq === stashesSeq &&
+    (now === repo || (repo === null && now === (cur.roots[0] ?? null)))
+  ) {
+    useVcs.setState({ stashes, stashesLoaded: true });
+  }
   return stashes;
 }
 
@@ -244,9 +368,13 @@ export function statusOf(path: string): FileStatus | undefined {
 async function discoverRoots() {
   const root = useVcs.getState().root;
   if (!root || !isTauri()) return;
-  const roots = await call(commands.vcsRoots()).catch(() => []);
-  if (!roots.length || useVcs.getState().root !== root || useVcs.getState().available) return;
-  useVcs.setState({ available: true });
+  const vcsRoots = await call(commands.vcsRoots()).catch(() => []);
+  if (!vcsRoots.length || useVcs.getState().root !== root || useVcs.getState().available) return;
+  const roots = vcsRoots.map((r) => r.root);
+  const operations = Object.fromEntries(vcsRoots.filter((r) => r.operation).map((r) => [r.root, r.operation!]));
+  const heads = Object.fromEntries(vcsRoots.map((r) => [r.root, { head: r.head, headCommit: r.headCommit }]));
+  const repo = roots[0] ?? null;
+  useVcs.setState({ available: true, roots, repo, operations, heads });
   setContext("vcsAvailable", true);
   void refreshNow();
 }

@@ -91,7 +91,13 @@ export function refLabels(
   opts: { compact: boolean; tagNames: boolean },
   remoteNames: ReadonlySet<string>,
 ): RefLabel[] {
-  const isRemote = (r: string) => (remoteNames.size ? remoteNames.has(r) : r.includes("/"));
+  const remotePrefixes = new Set(
+    [...remoteNames].map((n) => n.slice(0, n.indexOf("/") + 1)).filter((p) => p.length > 1),
+  );
+  const isRemote = (r: string) =>
+    remoteNames.size
+      ? remoteNames.has(r) || [...remotePrefixes].some((p) => r.startsWith(p))
+      : r.startsWith("origin/") || r.startsWith("upstream/") || r.includes("/");
   const tags = refs.filter((r) => r.startsWith("tag: ")).map((r) => r.slice(5));
   const branches = refs.filter((r) => r !== "HEAD" && !r.startsWith("tag: "));
   const out: RefLabel[] = [];

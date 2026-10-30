@@ -23,10 +23,15 @@ import {
   emptyFilters,
   hasFilters,
   inDateRange,
+  logRepoOf,
+  pathsFilterLabel,
   reloadLog,
   resolveAuthors,
+  resolveLogTargets,
+  toggleRootFilter,
   useGitLog,
 } from "../logStore";
+import { useVcs } from "../store";
 
 describe("Git Log filters", () => {
   it("resolves the 'me' user to the current Git user and drops duplicates", () => {
@@ -50,19 +55,71 @@ describe("Git Log filters", () => {
     expect(parseDay("nope")).toBeNull();
   });
 
-  it("counts multi-value filters as filters", () => {
+  it("counts multi-value filters and root filters as filters", () => {
     expect(hasFilters(emptyFilters())).toBe(false);
     expect(hasFilters({ ...emptyFilters(), branches: ["main", "dev"] })).toBe(true);
     expect(hasFilters({ ...emptyFilters(), authors: [ME] })).toBe(true);
+    expect(hasFilters({ ...emptyFilters(), roots: ["/w/repo-a"] })).toBe(true);
   });
 
   it("splits comma-separated custom values", () => {
     expect(splitList(" a, ,b ,")).toEqual(["a", "b"]);
   });
+
+  it("resolves paths and repository roots for multi-repo projects", () => {
+    const roots = ["/w/alpha", "/w/beta", "/w/beta/nested"];
+    expect(logRepoOf("/w/beta", roots)).toBe("/w/beta");
+    expect(logRepoOf("/w/beta/nested", roots)).toBe("/w/beta/nested");
+    expect(logRepoOf("/w/beta/nested/src/a.ts", roots)).toBe("/w/beta/nested");
+    expect(logRepoOf("/w/beta/src/b.ts", roots)).toBe("/w/beta");
+
+    // All roots active by default in a multi-repo project
+    expect(resolveLogTargets(roots, "/w/alpha", emptyFilters())).toEqual([
+      { repo: "/w/alpha", path: null },
+      { repo: "/w/beta", path: null },
+      { repo: "/w/beta/nested", path: null },
+    ]);
+
+    // Filtering by specific roots
+    expect(resolveLogTargets(roots, "/w/alpha", { ...emptyFilters(), roots: ["/w/beta"] })).toEqual([
+      { repo: "/w/beta", path: null },
+    ]);
+
+    // Filtering by path inside a sub-repo routes to that sub-repo
+    expect(resolveLogTargets(roots, "/w/alpha", { ...emptyFilters(), path: "/w/beta/src/lib" })).toEqual([
+      { repo: "/w/beta", path: "/w/beta/src/lib" },
+    ]);
+    // Filtering by the exact root path of a sub-repo routes to that sub-repo (and any nested repos inside it)
+    expect(resolveLogTargets(roots, "/w/alpha", { ...emptyFilters(), path: "/w/alpha" })).toEqual([
+      { repo: "/w/alpha", path: null },
+    ]);
+    expect(resolveLogTargets(roots, "/w/alpha", { ...emptyFilters(), path: "/w/beta" })).toEqual([
+      { repo: "/w/beta", path: null },
+      { repo: "/w/beta/nested", path: null },
+    ]);
+  });
+
+  it("toggles repository roots and formats the Paths filter button label like IDEA", () => {
+    const roots = ["/w/claude-howto", "/w/ecc", "/w/gstack"];
+    // Unchecking one root when all are implicitly selected selects the remaining ones
+    const afterUncheck = toggleRootFilter([], roots, "/w/ecc");
+    expect(afterUncheck).toEqual(["/w/claude-howto", "/w/gstack"]);
+    expect(pathsFilterLabel({ ...emptyFilters(), roots: afterUncheck }, "/w", roots)).toBe("claude-howto, gstack");
+
+    // Re-checking that root restores "all selected" (empty filter)
+    const afterRecheck = toggleRootFilter(afterUncheck, roots, "/w/ecc");
+    expect(afterRecheck).toEqual([]);
+    expect(pathsFilterLabel({ ...emptyFilters(), roots: afterRecheck }, "/w", roots)).toBeNull();
+
+    // Single root label
+    expect(pathsFilterLabel({ ...emptyFilters(), roots: ["/w/gstack"] }, "/w", roots)).toBe("gstack");
+  });
 });
 
 describe("loading the log", () => {
   beforeEach(() => {
+    useVcs.setState({ root: "/w", roots: [], repo: null });
+    useGitLog.setState({ filters: emptyFilters(), commits: [], rows: [] });
     vcsLog.mockReset().mockResolvedValue({ status: "ok", data: [] });
     vcsConfigGet.mockReset().mockImplementation(async (_repo: unknown, key: string) => ({
       status: "ok",
@@ -78,6 +135,51 @@ describe("loading the log", () => {
     expect(page.branches).toEqual(["main", "dev"]);
     expect(page.authors).toEqual(["me@corp.test", "bob"]);
   });
+
+  it("fetches and merges commits newest-first across all repositories in a multi-repo project", async () => {
+    const roots = ["/w/repo-a", "/w/repo-b"];
+    useVcs.setState({ root: "/w", roots, repo: "/w/repo-a" });
+    vcsLog.mockImplementation(async (repo: string | null) => ({
+      status: "ok",
+      data:
+        repo === "/w/repo-a"
+          ? [
+              {
+                id: "a1".repeat(20),
+                shortId: "a1a1a1a1",
+                parents: [],
+                author: "Alice",
+                email: "a@test",
+                timeMs: 1000,
+                commitTimeMs: 1000,
+                summary: "Commit in A",
+                message: "Commit in A",
+                refs: ["HEAD -> main"],
+              },
+            ]
+          : [
+              {
+                id: "b1".repeat(20),
+                shortId: "b1b1b1b1",
+                parents: [],
+                author: "Bob",
+                email: "b@test",
+                timeMs: 2000,
+                commitTimeMs: 2000,
+                summary: "Commit in B",
+                message: "Commit in B",
+                refs: ["HEAD -> main"],
+              },
+            ],
+    }));
+
+    await reloadLog();
+    const commits = useGitLog.getState().commits;
+    expect(commits.map((c) => ({ summary: c.summary, repo: c.repo }))).toEqual([
+      { summary: "Commit in B", repo: "/w/repo-b" },
+      { summary: "Commit in A", repo: "/w/repo-a" },
+    ]);
+  });
 });
 
 describe("unstash", () => {
@@ -88,3 +190,4 @@ describe("unstash", () => {
     expect(unstashTitles({ ...base, branch: "fix" }).title).toBe("Unstash stash@{2} as branch fix");
   });
 });
+

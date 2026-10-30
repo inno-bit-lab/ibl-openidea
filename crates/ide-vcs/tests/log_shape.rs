@@ -73,6 +73,17 @@ fn date_order_follows_commit_time_and_reports_it() {
     let out = log(&h, LogQuery { order: LogOrder::Date, ..Default::default() });
     assert_eq!(ids(&out), vec![h.c3.clone(), h.m.clone(), h.c2.clone(), h.s1.clone(), h.c1.clone()]);
     assert_eq!(out[0].commit_time_ms, 5_000_000.0);
+
+    // Multi-repo branch selection may pass branches where only a subset exists in this repo.
+    let subset = h
+        .repo
+        .log(&LogQuery {
+            branches: vec!["nonexistent-in-this-repo".into(), "side".into()],
+            order: LogOrder::Date,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(ids(&subset), vec![h.s1.clone(), h.c1.clone()]);
 }
 
 #[test]

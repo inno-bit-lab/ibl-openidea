@@ -89,6 +89,23 @@
 .small {
   width: 64px;
 }
+.rules {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-small);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  background: var(--bg-input);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  outline: none;
+}
+.rules:focus {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 
 /* Editable tables / lists. */
 .tableBox {

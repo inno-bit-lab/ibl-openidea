@@ -4,11 +4,28 @@ import type { AgentEntry, AgentStatus, AgentTask } from "@/bindings";
 export const SESSION_KIND = "agent-session";
 export const HOME_KIND = "agent-home";
 export const HOME_KEY = "agent:new";
+export const CATALOG_KIND = "agent-catalog";
+export const CATALOG_KEY = "agent:catalog";
 export const TOOL_WINDOW = "agents";
 
 export const sessionKey = (task: string) => `agent:${task}`;
 
-const PROVIDER_ICONS = new Set(["claude", "codex", "gemini", "copilot", "cursor", "opencode", "qwen", "kimi", "goose", "auggie", "kiro", "vibe"]);
+const PROVIDER_ICONS = new Set([
+  "agy",
+  "pi",
+  "claude",
+  "codex",
+  "gemini",
+  "copilot",
+  "cursor",
+  "opencode",
+  "qwen",
+  "kimi",
+  "goose",
+  "auggie",
+  "kiro",
+  "vibe",
+]);
 
 /** The agent's logo; custom agents get the generic agents icon. */
 export const providerIcon = (provider: string) =>

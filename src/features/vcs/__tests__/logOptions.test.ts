@@ -103,6 +103,15 @@ describe("reference labels", () => {
     const labels = refLabels(refs, { compact: false, tagNames: true }, remotes);
     expect(labels.map((l) => l.text)).toEqual(["HEAD", "main", "feat/x", "origin/main", "v1", "v2"]);
   });
+
+  it("recognizes origin/* and known remote prefixes on secondary repos not in remoteNames", () => {
+    const secondaryRefs = ["feature/CDXCALL-1", "origin/feature/CDXCALL-1", "origin/release/2026-PI5"];
+    const compact = refLabels(secondaryRefs, { compact: true, tagNames: true }, new Set(["origin/master"]));
+    expect(compact.map((l) => [l.kind, l.text])).toEqual([
+      ["local", "origin & feature/CDXCALL-1"],
+      ["remote", "origin/release/2026-PI5"],
+    ]);
+  });
 });
 
 describe("log options", () => {

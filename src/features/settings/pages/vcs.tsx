@@ -4,11 +4,13 @@
  * feature, which reads `vcs.*` through `platform/workflowSettings`.
  */
 import { useEffect, useId, useState } from "react";
+import type { AgentProvider } from "@/bindings";
 import { call, commands, isTauri } from "@/platform/ipc";
 import { useProject } from "@/platform/project";
+import { useVcs } from "@/features/vcs/store";
 import { WORKFLOW_LIMITS, type IssueLinkValid } from "@/platform/workflowSettings";
 import { Button, Icon, Input, type SelectOption, T } from "@/ui";
-import { Row, SettingSelect } from "../components/Form";
+import { Row, Select, SettingSelect } from "../components/Form";
 import { useSetting } from "../components/context";
 import type { PageSpec } from "./spec";
 import { BoundToggle, Grid, Indented, RadioRow, TableEditor, ToggleNumber } from "./workflowControls";
@@ -34,6 +36,7 @@ function HistoryLimitRow() {
 
 function MappingsTable() {
   const project = useProject((s) => s.project);
+  const roots = useVcs((s) => s.roots);
   return (
     <div className={styles.tableBox}>
       <table className={styles.table} aria-label={tx("Directory mappings")}>
@@ -54,6 +57,16 @@ function MappingsTable() {
                 <T>No project is open</T>
               </td>
             </tr>
+          ) : roots.length > 1 || (roots.length === 1 && roots[0] !== project.root) ? (
+            roots.map((r) => (
+              <tr key={r}>
+                <td title={r}>
+                  <Icon name="folder" size={16} className={styles.mappingIcon} />
+                  {r === project.root ? `${tx("<Project>")} ${r}` : r}
+                </td>
+                <td>Git</td>
+              </tr>
+            ))
           ) : (
             <tr>
               <td title={project.root}>
@@ -197,6 +210,120 @@ function CommitChecks() {
   );
 }
 
+/** The agent that writes suggested commit messages, its model/thinking effort, and the rules it is given. */
+function MessageSuggestion() {
+  const [agent, setAgent] = useSetting<string>("vcs.commit.suggestAgent");
+  const [model, setModel] = useSetting<string>("vcs.commit.suggestModel");
+  const [thinking, setThinking] = useSetting<string>("vcs.commit.suggestThinking");
+  const [rules, setRules] = useSetting<string>("vcs.commit.suggestRules");
+  const [providers, setProviders] = useState<AgentProvider[]>([]);
+  const rulesId = useId();
+  useEffect(() => {
+    if (!isTauri()) return;
+    void call(commands.agentProviders()).then(setProviders, () => undefined);
+  }, []);
+  const options: SelectOption[] = [
+    { value: "", label: "None" },
+    ...providers
+      .filter((p) => p.installed || p.id === agent)
+      .map((p) => ({ value: p.id, label: p.installed ? p.name : tx`${p.name} (not installed)` })),
+  ];
+  if (agent && !options.some((o) => o.value === agent)) options.push({ value: agent, label: agent });
+
+  const selectedProvider = providers.find((p) => p.id === agent);
+  const modelOpt = selectedProvider?.config.find((c) => c.category === "model" || c.id === "model");
+  const thinkingOpt = selectedProvider?.config.find((c) => c.category === "thought_level" || c.id === "thought_level");
+
+  const modelOptions: SelectOption[] = [
+    {
+      value: "",
+      label: modelOpt?.current
+        ? tx`Default (${modelOpt.values.find((v) => v.value === modelOpt.current)?.name ?? modelOpt.current})`
+        : "Default",
+    },
+    ...(modelOpt?.values ?? []).map((v) => ({ value: v.value, label: v.name || v.value })),
+  ];
+  if (model && !modelOptions.some((o) => o.value === model)) modelOptions.push({ value: model, label: model });
+
+  const fallbackThinking = [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra High" },
+  ];
+  const thinkingOptions: SelectOption[] = [
+    {
+      value: "",
+      label: thinkingOpt?.current
+        ? tx`Default (${thinkingOpt.values.find((v) => v.value === thinkingOpt.current)?.name ?? thinkingOpt.current})`
+        : "Default",
+    },
+    ...(thinkingOpt?.values.length
+      ? thinkingOpt.values.map((v) => ({ value: v.value, label: v.name || v.value }))
+      : fallbackThinking),
+  ];
+  if (thinking && !thinkingOptions.some((o) => o.value === thinking)) {
+    thinkingOptions.push({ value: thinking, label: thinking });
+  }
+
+  return (
+    <>
+      <Row
+        label="Agent"
+        hint="Writes the message from the changes about to be committed, in a one-off session that cannot change files. Agents are those of the Agents tool window."
+      >
+        <Select
+          value={agent}
+          options={options}
+          onChange={(next) => {
+            setAgent(next);
+            if (next !== agent) {
+              setModel("");
+              setThinking("");
+            }
+          }}
+          aria-label={tx("Agent that suggests commit messages")}
+        />
+      </Row>
+      <Row label="Model" hint="Model used by the selected agent when generating commit message suggestions.">
+        <Select
+          value={model}
+          options={modelOptions}
+          disabled={!agent}
+          onChange={setModel}
+          aria-label={tx("Model for commit message suggestions")}
+        />
+      </Row>
+      <Row label="Thinking" hint="Reasoning effort (thinking level) used when generating commit message suggestions.">
+        <Select
+          value={thinking}
+          options={thinkingOptions}
+          disabled={!agent}
+          onChange={setThinking}
+          aria-label={tx("Thinking effort for commit message suggestions")}
+        />
+      </Row>
+      <Row
+        label="Rules"
+        htmlFor={rulesId}
+        stacked
+        hint="Sent to the agent as they are, with the changes: naming convention, wording to avoid, language. Leave empty for a short subject in the imperative mood."
+      >
+        <textarea
+          id={rulesId}
+          className={styles.rules}
+          value={rules}
+          spellCheck={false}
+          placeholder={tx(
+            "Subject: <type>(<scope>): <summary>\nTake the ticket id from the branch name.\nNever mention tools or assistants.",
+          )}
+          onChange={(e) => setRules(e.target.value)}
+        />
+      </Row>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Issue Navigation
 
@@ -313,6 +440,17 @@ export const VCS_PAGES: PageSpec[] = [
             label: "Limit subject line",
             keywords: ["Limit body line", "Show right margin", "Wrap when typing reaches right margin"],
             component: MessageLimits,
+          },
+        ],
+      },
+      {
+        title: "Commit Message Suggestion",
+        options: [
+          {
+            kind: "custom",
+            label: "Agent",
+            keywords: ["suggest commit message", "generate", "AI", "prompt", "rules", "naming convention"],
+            component: MessageSuggestion,
           },
         ],
       },

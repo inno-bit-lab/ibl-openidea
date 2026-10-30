@@ -9,6 +9,7 @@ use tokio::io::duplex;
 struct FakeAgent {
     peer: OnceLock<Peer>,
     calls: Mutex<Vec<String>>,
+    prompts: Mutex<Vec<String>>,
 }
 
 impl FakeAgent {
@@ -49,6 +50,7 @@ impl Handler for FakeAgent {
             }
             "session/prompt" => {
                 let text = params.pointer("/prompt/0/text").and_then(Value::as_str).unwrap_or_default().to_owned();
+                self.prompts.lock().push(text.clone());
                 if text == "again" {
                     self.say(&session, "second turn");
                     return Ok(json!({"stopReason": "end_turn"}));
@@ -140,6 +142,7 @@ async fn commands_are_remembered_per_project_and_merged_with_skills_on_disk() {
             config: Vec::new(),
             isolation: Isolation::Local,
             base: None,
+            instructions: None,
         })
         .await
         .unwrap();
@@ -158,6 +161,28 @@ async fn commands_are_remembered_per_project_and_merged_with_skills_on_disk() {
     assert!(mgr_b.commands("claude", None).await.unwrap().is_empty());
     let mgr_a = manager_at(&a, &models, Arc::new(FakeAgent::default()));
     assert_eq!(names(mgr_a.providers().into_iter().find(|p| p.id == "claude").unwrap().commands), ["review"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_answers_in_a_throwaway_session_and_refuses_permissions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let mgr = manager(tmp.path(), agent.clone());
+    let choices = vec![
+        AgentConfigChoice { id: "model".into(), value: "small".into() },
+        AgentConfigChoice { id: "thought_level".into(), value: "low".into() },
+    ];
+    let answer = mgr.complete("claude", "  Name this change  ", &choices, Duration::from_secs(5)).await.unwrap();
+    // Only the agent's text is kept (not its tool calls), and the permission it asked for was refused.
+    assert_eq!(answer, "Hichose none");
+    assert_eq!(agent.calls.lock().iter().filter(|c| *c == "session/prompt").count(), 1);
+    assert!(agent.calls.lock().contains(&"session/set_config_option \"small\"".to_owned()));
+    assert!(agent.calls.lock().contains(&"session/set_config_option \"low\"".to_owned()));
+    // No task was created or saved.
+    assert!(mgr.tasks.read().is_empty());
+    assert!(!tmp.path().join("store").exists());
+    assert!(mgr.complete("claude", "   ", &[], Duration::from_secs(5)).await.is_err());
+    assert!(mgr.complete("no-such-agent", "hi", &[], Duration::from_secs(5)).await.is_err());
 }
 
 async fn wait_for(mgr: &AgentManager, id: &str, status: AgentStatus) {
@@ -186,6 +211,7 @@ async fn a_task_runs_asks_for_permission_and_survives_a_restart() {
             config: vec![AgentConfigChoice { id: "model".into(), value: "small".into() }],
             isolation: Isolation::Local,
             base: None,
+            instructions: Some("  Always run tests first.  ".into()),
         })
         .await
         .unwrap();
@@ -216,6 +242,11 @@ async fn a_task_runs_asks_for_permission_and_survives_a_restart() {
         })
         .collect();
     assert_eq!(kinds, ["Fix the lexer\nmore detail", "Hi", "Edit a.rs", "permission: Allow", "chose yes"]);
+    assert_eq!(
+        agent.prompts.lock().as_slice(),
+        ["Always run tests first.\n\nFix the lexer\nmore detail"],
+        "injected instructions are sent to the ACP agent on the first turn without polluting title or transcript"
+    );
     assert!(
         agent.calls.lock().contains(&"session/set_config_option \"small\"".to_owned()),
         "switched to the chosen model"
@@ -292,6 +323,7 @@ async fn messages_sent_while_busy_are_queued_and_send_now_interrupts() {
             config: vec![],
             isolation: Isolation::Local,
             base: None,
+            instructions: None,
         })
         .await
         .unwrap();
@@ -377,6 +409,7 @@ async fn cancelling_resolves_the_open_permission_and_delete_forgets_the_task() {
             config: vec![],
             isolation: Isolation::Local,
             base: None,
+            instructions: None,
         })
         .await
         .unwrap();
@@ -397,7 +430,8 @@ async fn cancelling_resolves_the_open_permission_and_delete_forgets_the_task() {
             provider: "codex".into(),
             config: vec![],
             isolation: Isolation::Local,
-            base: None
+            base: None,
+            instructions: None,
         })
         .await
         .is_err()
@@ -443,6 +477,7 @@ async fn real_claude_task_in_a_worktree() {
             config: vec![AgentConfigChoice { id: "model".into(), value: "haiku".into() }],
             isolation: Isolation::Worktree,
             base: None,
+            instructions: None,
         })
         .await
         .unwrap();

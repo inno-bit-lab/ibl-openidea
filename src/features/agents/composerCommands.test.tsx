@@ -23,6 +23,7 @@ vi.mock("@tauri-apps/api/webview", () => ({
 }));
 
 import { HomeEditor } from "./HomeEditor";
+import { AcpArgumentsDialog, AgentsCatalogEditor, ManagePresetsDialog } from "./AgentsCatalogEditor";
 import { HOME, updateComposer, useAgents } from "./store";
 import { emptyDraft } from "./composerModel";
 
@@ -42,6 +43,8 @@ beforeEach(() => {
   agentCreate.mockReset().mockResolvedValue({ status: "error", error: { kind: "invalid", message: "stop here" } });
   useAgents.setState({
     providers: [claude],
+    presets: [],
+    customArgs: {},
     draft: { provider: "claude", config: {}, isolation: "local", base: null },
   });
   updateComposer(HOME, emptyDraft());
@@ -85,4 +88,96 @@ describe("New Task composer commands", () => {
     fireEvent.change(box, { target: { value: "/com" } });
     expect(await screen.findByRole("option")).toHaveTextContent("/compact");
   });
+
+  it("sends preset injected instructions separately from the user prompt text", async () => {
+    agentCommands.mockResolvedValue({ status: "ok", data: [] });
+    useAgents.setState({
+      providers: [claude],
+      presets: [
+        {
+          id: "p1",
+          name: "Preset 1",
+          provider: "claude",
+          model: "",
+          effort: "",
+          mode: "",
+          instructions: "  Always reply in Italian.  ",
+        },
+      ],
+      draft: { provider: "claude", presetId: "p1", config: {}, isolation: "local", base: null },
+    });
+    render(<HomeEditor />);
+    const box = screen.getByRole("textbox");
+    fireEvent.change(box, { target: { value: "Fix the login bug" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(agentCreate).toHaveBeenCalled());
+    expect(agentCreate.mock.calls[0]![0]).toMatchObject({
+      prompt: { text: "Fix the login bug" },
+      provider: "claude",
+      instructions: "Always reply in Italian.",
+    });
+  });
+
+  it("resets AcpArgumentsDialog and ManagePresetsDialog state across open/close cycles and duplicates presets", () => {
+    useAgents.setState({
+      providers: [claude],
+      customArgs: { claude: "--model opus" },
+      presets: [
+        {
+          id: "p1",
+          name: "Base Preset",
+          provider: "claude",
+          model: "",
+          effort: "",
+          mode: "",
+          instructions: "Be concise",
+        },
+      ],
+    });
+
+    const { rerender } = render(<AcpArgumentsDialog provider={claude} onClose={() => {}} />);
+    const argInput = screen.getByLabelText("Enter command-line arguments") as HTMLInputElement;
+    expect(argInput.value).toBe("--model opus");
+    fireEvent.change(argInput, { target: { value: "--unsaved" } });
+    expect(argInput.value).toBe("--unsaved");
+
+    // Closing and reopening for the same provider resets to saved customArgs.
+    rerender(<AcpArgumentsDialog provider={null} onClose={() => {}} />);
+    rerender(<AcpArgumentsDialog provider={claude} onClose={() => {}} />);
+    expect((screen.getByLabelText("Enter command-line arguments") as HTMLInputElement).value).toBe("--model opus");
+    rerender(<AcpArgumentsDialog provider={null} onClose={() => {}} />);
+
+    // ManagePresetsDialog resets unsaved edits on reopen and duplicates with distinct IDs.
+    const { rerender: rerenderPresets } = render(<ManagePresetsDialog open={true} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate Preset" }));
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Add Preset" }));
+    expect(screen.getAllByRole("option")).toHaveLength(3);
+    rerenderPresets(<ManagePresetsDialog open={false} onClose={() => {}} />);
+    rerenderPresets(<ManagePresetsDialog open={true} onClose={() => {}} />);
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    rerenderPresets(<ManagePresetsDialog open={false} onClose={() => {}} />);
+
+    // AgentsCatalogEditor opens ManagePresetsDialog when input.data.openPresets becomes true,
+    // stays closed across local re-renders after dismissal, and reopens on a new openPresets payload.
+    const initialData = { openPresets: false };
+    const { rerender: rerenderCatalog } = render(<AgentsCatalogEditor input={{ data: initialData }} />);
+    expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
+
+    const firstOpenData = { openPresets: true };
+    rerenderCatalog(<AgentsCatalogEditor input={{ data: firstOpenData }} />);
+    expect(screen.getByRole("dialog", { name: "Manage Presets" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
+
+    // Local re-render with the same input.data reference must keep the dialog closed.
+    fireEvent.change(screen.getByLabelText("Search agents"), { target: { value: "claude" } });
+    expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
+
+    // Re-invoking openCatalog(true) passes a fresh data object with openPresets: true and reopens the dialog.
+    rerenderCatalog(<AgentsCatalogEditor input={{ data: { openPresets: true } }} />);
+    expect(screen.getByRole("dialog", { name: "Manage Presets" })).toBeTruthy();
+  });
 });
+

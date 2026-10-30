@@ -18,12 +18,14 @@ import {
   Popup,
   SearchField,
   firstSelectable,
+  showContextMenu,
   type MenuItem,
   T,
 } from "@/ui";
 import { buildBranchRows, type BranchRow, type PopupAction } from "./branches";
 import { branchMenu, commonBranchMenu, inRepo, tagMenu } from "./branchMenu";
 import { loadFavoriteBranches, recentBranches, toggleFavoriteBranch, useFavoriteBranches } from "./branchOps";
+import { showManageRemotes } from "./gitMenuDialogs";
 import { inProgress, operationTitle, type InProgress } from "./operations";
 import {
   buildMultiRepoRows,
@@ -282,7 +284,9 @@ function BranchesPanel({ onClose, actions: baseActions, root, fallback, onBack }
     if (row.type === "action") {
       onClose();
       const { id, arg } = row.action;
-      void (root ? focusRepo(root) : Promise.resolve()).then(() => executeAction(id, arg));
+      void (root ? focusRepo(root) : Promise.resolve()).then(() =>
+        executeAction(id, arg ?? (root ? { repo: root } : undefined)),
+      );
     } else if (row.type === "branch" || row.type === "tag") {
       openMenu(i);
     }
@@ -338,7 +342,29 @@ function BranchesPanel({ onClose, actions: baseActions, root, fallback, onBack }
           items={rows}
           getKey={(r) => r.key}
           isSection={isSection}
-          renderSection={(r) => <span className={styles.section}>{r.type === "section" ? tx(r.label) : ""}</span>}
+          renderSection={(r) => (
+            <span
+              className={styles.section}
+              onContextMenu={
+                r.type === "section" && r.label === "Remote"
+                  ? (e) => {
+                      e.preventDefault();
+                      showContextMenu(e, [
+                        {
+                          label: "Manage Remotes…",
+                          run: () => {
+                            closeAll();
+                            showManageRemotes(root);
+                          },
+                        },
+                      ]);
+                    }
+                  : undefined
+              }
+            >
+              {r.type === "section" ? tx(r.label) : ""}
+            </span>
+          )}
           activeIndex={activeIndex}
           onActiveChange={setActive}
           onActivate={(_r, i) => activate(i)}
@@ -625,7 +651,12 @@ function MultiRepoPanel({ onClose }: { onClose: () => void }) {
             </span>
           }
           renderItem={(r) => (
-            <RepoRowView row={r} operation={r.type === "repo" ? operations[r.repo.root] : undefined} />
+            <RepoRowView
+              row={r}
+              operation={r.type === "repo" ? operations[r.repo.root] : undefined}
+              current={current}
+              onClose={closeAll}
+            />
           )}
         />
       </div>
@@ -655,7 +686,17 @@ function MultiRepoPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function RepoRowView({ row, operation }: { row: RepoRow; operation?: string }) {
+function RepoRowView({
+  row,
+  operation,
+  current,
+  onClose,
+}: {
+  row: RepoRow;
+  operation?: string;
+  current?: string | null;
+  onClose?: () => void;
+}) {
   switch (row.type) {
     case "action":
     case "branch":
@@ -682,6 +723,22 @@ function RepoRowView({ row, operation }: { row: RepoRow; operation?: string }) {
           data-row-key={row.key}
           style={row.depth ? { paddingLeft: row.depth * INDENT } : undefined}
           aria-expanded={row.expanded}
+          onContextMenu={
+            row.key === "common:remote" || row.key === "repo:remote" || row.key.startsWith("common:folder:")
+              ? (e) => {
+                  e.preventDefault();
+                  showContextMenu(e, [
+                    {
+                      label: "Manage Remotes…",
+                      run: () => {
+                        onClose?.();
+                        showManageRemotes(row.key === "repo:remote" && current ? current : undefined);
+                      },
+                    },
+                  ]);
+                }
+              : undefined
+          }
         >
           <Icon name={row.expanded ? "chevron-down" : "chevron-right"} size={12} className={styles.rowIcon} />
           {row.depth > 0 && <Icon name="folder" size={14} className={styles.rowIcon} />}

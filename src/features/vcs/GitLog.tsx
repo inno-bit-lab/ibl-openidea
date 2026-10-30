@@ -8,17 +8,19 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import clsx from "clsx";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { ChangedFile, Commit, RevisionChange } from "@/bindings";
+import type { Branch, ChangedFile, Commit, RevisionChange } from "@/bindings";
 import { call, commands } from "@/platform/ipc";
 import {
   EmptyState,
   Icon,
   IconButton,
+  Popup,
   SearchField,
   SplitGroup,
   SplitHandle,
@@ -33,8 +35,17 @@ import {
   copyText,
 } from "@/ui";
 import { hasPrimaryModifier } from "@/platform/keymap";
+import { executeAction } from "@/platform/actions";
 import { commitFileDiffData, openDiff, revisionChangeDiffData, withChain } from "./diffInput";
-import { collapseLinear, computeGraph, hideLongEdges, laneColor, reachableFrom, type GraphRow } from "./graph";
+import {
+  collapseLinear,
+  computeGraph,
+  computeMultiRepoGraph,
+  hideLongEdges,
+  laneColor,
+  reachableFrom,
+  type GraphRow,
+} from "./graph";
 import {
   extendCommitSelection,
   goToChild,
@@ -43,23 +54,53 @@ import {
   loadMore,
   ME,
   dateRangeLabel,
+  pathsFilterLabel,
   refsSignature,
   reloadLog,
+  resolveLogTargets,
   selectCommit,
   selectedCommits,
   setLogFilters,
   toggleCommitSelection,
+  toggleRootFilter,
   updateLogOptions,
   useGitLog,
+  type LogCommit,
+  type LogFilters,
 } from "./logStore";
 import { refLabels, useLogOptions, type LogOptions } from "./logOptions";
 import { KIND_COLOR, baseName, fileCount, formatTime, relTo, type EffectiveKind } from "./model";
 import { clearConsole, useVcsConsole } from "./ops";
-import { currentRepo, loadBranches, useVcs } from "./store";
-import { loadFavoriteBranches, newBranch, useFavoriteBranches } from "./branchOps";
-import { branchMenu } from "./branchMenu";
-import { branchFolderKeys, branchGroupKeys, buildBranchTree, filterBranchTree, type BranchTreeNode } from "./branches";
-import { chooseDateRange, chooseMany, promptText } from "./dialogs";
+import { currentRepo, loadBranches, refreshNow, repoName, useVcs } from "./store";
+import { repoColorIndex } from "./repoBranches";
+import {
+  deleteBranch,
+  deleteInRepos,
+  deleteRemoteBranch,
+  deleteRemoteInRepos,
+  loadFavoriteBranches,
+  newBranch,
+  newBranchInRepos,
+  updateBranch,
+  updateInRepos,
+  useFavoriteBranches,
+} from "./branchOps";
+import { branchMenu, commonBranchMenu, inRepo } from "./branchMenu";
+import { showCompareBranches } from "./CompareBranches";
+import { showManageRemotes } from "./gitMenuDialogs";
+import { updateProject } from "./remoteUi";
+import {
+  branchDetail,
+  branchFolderKeys,
+  branchGroupKeys,
+  buildBranchTree,
+  buildMultiRepoBranchTree,
+  currentBranchFolderKeys,
+  filterBranchTree,
+  filterFavoriteBranchTree,
+  type BranchTreeNode,
+} from "./branches";
+import { chooseDateRange, chooseMany, choosePathInTree, promptText } from "./dialogs";
 import { buildFileTree, dirKeys, type FileTreeNode } from "./fileTree";
 import styles from "./GitLog.module.css";
 import { tx } from "@/platform/i18n";
@@ -120,7 +161,9 @@ function LogView() {
   const selection = useGitLog((s) => s.selection);
   const root = useVcs((s) => s.root);
   const repo = useVcs((s) => s.repo);
-  const lastRefs = useRef<string | null>(null);
+  const rootsCount = useVcs((s) => s.roots.length);
+  const lastRefs = useRef<{ repo: string | null; sig: string } | null>(null);
+  const [branchesCollapsed, setBranchesCollapsed] = useState(false);
 
   // On mount, when the window switches to another project and when another of its
   // repositories is selected (its branches are needed to notice its refs moving).
@@ -128,60 +171,221 @@ function LogView() {
     lastRefs.current = null;
     if (!useGitLog.getState().commits.length) void reloadLog();
     void loadBranches().catch(() => undefined);
-  }, [root, repo]);
+  }, [root, repo, rootsCount]);
 
   // HEAD or a branch tip moved (commit, undo, reset, rebase, fetch…): reload (keeps the selection).
   useEffect(() => {
-    const { branch, branches, branchesLoaded } = useVcs.getState();
+    const { branch, branches, heads, branchesLoaded, branchesRepo, repo: curRepo, roots } = useVcs.getState();
     if (!branchesLoaded) return;
-    const refs = refsSignature(branch, branches);
+    const targetRepo = curRepo ?? roots[0] ?? null;
+    if (branchesRepo !== null && branchesRepo !== targetRepo) return;
+    const refs = refsSignature(branch, branches, heads);
     const previous = lastRefs.current;
-    lastRefs.current = refs;
-    if (previous !== null && previous !== refs && useGitLog.getState().commits.length) void reloadLog();
+    lastRefs.current = { repo: targetRepo, sig: refs };
+    if (
+      previous !== null &&
+      previous.repo === targetRepo &&
+      previous.sig !== refs &&
+      useGitLog.getState().commits.length
+    ) {
+      void reloadLog();
+    }
   }, [version]);
 
+  if (branchesCollapsed) {
+    return (
+      <div className={styles.logWrap}>
+        <BranchesPanel collapsed onToggleCollapse={() => setBranchesCollapsed(false)} />
+        <SplitGroup orientation="horizontal" id="git-log-collapsed" className={styles.split}>
+          <SplitPanel id="commits" defaultSize="66%" minSize="25%">
+            <div className={styles.log}>
+              <FilterBar />
+              <CommitList />
+            </div>
+          </SplitPanel>
+          <SplitHandle />
+          <SplitPanel id="details" defaultSize="34%" minSize="15%">
+            <CommitDetails key={selection.join(" ") || "none"} commits={commits} />
+          </SplitPanel>
+        </SplitGroup>
+      </div>
+    );
+  }
+
   return (
-    <SplitGroup orientation="horizontal" id="git-log" className={styles.split}>
-      <SplitPanel id="branches" defaultSize="18%" minSize="120px">
-        <BranchesPanel />
-      </SplitPanel>
-      <SplitHandle />
-      <SplitPanel id="commits" defaultSize="54%" minSize="25%">
-        <div className={styles.log}>
-          <FilterBar />
-          <CommitList />
-        </div>
-      </SplitPanel>
-      <SplitHandle />
-      <SplitPanel id="details" defaultSize="28%" minSize="15%">
-        <CommitDetails key={selection.join(" ") || "none"} commits={commits} />
-      </SplitPanel>
-    </SplitGroup>
+    <div className={styles.logWrap}>
+      <SplitGroup orientation="horizontal" id="git-log" className={styles.split}>
+        <SplitPanel id="branches" defaultSize="18%" minSize="120px">
+          <BranchesPanel onToggleCollapse={() => setBranchesCollapsed(true)} />
+        </SplitPanel>
+        <SplitHandle />
+        <SplitPanel id="commits" defaultSize="54%" minSize="25%">
+          <div className={styles.log}>
+            <FilterBar />
+            <CommitList />
+          </div>
+        </SplitPanel>
+        <SplitHandle />
+        <SplitPanel id="details" defaultSize="28%" minSize="15%">
+          <CommitDetails key={selection.join(" ") || "none"} commits={commits} />
+        </SplitPanel>
+      </SplitGroup>
+    </div>
   );
 }
 
 // --- branches ---------------------------------------------------------------
 
-function branchDetail(n: BranchTreeNode): string | undefined {
-  const b = n.branch;
-  if (!b) return undefined;
-  const sync = [b.behind > 0 ? `↓${b.behind}` : "", b.ahead > 0 ? `↑${b.ahead}` : ""].filter(Boolean).join(" ");
-  return [b.current ? tx("current") : "", sync].filter(Boolean).join("  ") || undefined;
-}
-
-export function BranchesPanel() {
+export function BranchesPanel({
+  collapsed: collapsedProp,
+  onToggleCollapse,
+}: {
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
+} = {}) {
   const branches = useVcs((s) => s.branches);
   const root = useVcs((s) => s.root);
+  const vcsRoots = useVcs((s) => s.roots);
+  const heads = useVcs((s) => s.heads);
+  const repo = useVcs((s) => s.repo);
+  const version = useVcs((s) => s.version);
   const branchesLoaded = useVcs((s) => s.branchesLoaded);
-  const current = useVcs((s) => s.branch?.head ?? null);
+  const branchesRepo = useVcs((s) => s.branchesRepo);
+  const filters = useGitLog((s) => s.filters);
+  const filterBranches = filters.branches;
   const favorites = useFavoriteBranches((s) => s.names);
-  const filterBranches = useGitLog((s) => s.filters.branches);
   const [query, setQuery] = useState("");
+  const [onlyFavorites, setOnlyFavorites] = useState(false);
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const mainRef = useRef<HTMLDivElement>(null);
+
+  const collapsed = collapsedProp ?? internalCollapsed;
+  const toggleCollapse = onToggleCollapse ?? (() => setInternalCollapsed((c) => !c));
+
+  const validRoots = useMemo(() => (vcsRoots.length > 1 ? vcsRoots : []), [vcsRoots]);
+  const activeRoots = useMemo(() => {
+    if (validRoots.length <= 1) return [];
+    const targets = resolveLogTargets(validRoots, repo, filters);
+    const fromTargets = [...new Set(targets.map((t) => t.repo).filter((r): r is string => !!r))];
+    return fromTargets.length ? fromTargets : validRoots;
+  }, [validRoots, repo, filters]);
+  const multiRepo = activeRoots.length > 1;
+  const singleTargetRepo = activeRoots.length === 1 ? activeRoots[0]! : null;
+
+  const knownRepo =
+    branchesRepo && (!validRoots.length || validRoots.includes(branchesRepo))
+      ? branchesRepo
+      : branchesLoaded && (!validRoots.length || (repo && validRoots.includes(repo)))
+        ? repo
+        : null;
+  const [seenRoot, setSeenRoot] = useState(root);
+  const [byRepo, setByRepo] = useState<Record<string, readonly Branch[]>>(() =>
+    knownRepo && branches.length ? { [knownRepo]: branches } : {},
+  );
+  const loadSeq = useRef(0);
+
+  const loadAllBranches = useCallback(() => {
+    if (validRoots.length <= 1) return;
+    const seq = ++loadSeq.current;
+    const rootAtStart = useVcs.getState().root;
+    void Promise.all(
+      validRoots.map((r) =>
+        call(commands.vcsBranches(r)).then(
+          (list) => [r, list] as const,
+          () => [r, null] as const,
+        ),
+      ),
+    ).then((entries) => {
+      if (loadSeq.current !== seq || useVcs.getState().root !== rootAtStart) return;
+      setByRepo((prev) => {
+        const next = { ...prev };
+        for (const [r, list] of entries) {
+          if (Array.isArray(list)) next[r] = list;
+        }
+        return next;
+      });
+    });
+  }, [validRoots]);
+
+  useEffect(() => {
+    loadAllBranches();
+  }, [loadAllBranches, version]);
+
   useEffect(() => loadFavoriteBranches(), [root]);
-  const allRoots = useMemo(() => buildBranchTree(branches, favorites), [branches, favorites]);
-  const roots = useMemo(() => filterBranchTree(allRoots, query), [allRoots, query]);
-  // While searching every match is shown expanded.
-  const searchExpanded = useMemo(() => (query.trim() ? new Set(branchGroupKeys(roots)) : undefined), [roots, query]);
+
+  const current = useVcs((s) => {
+    const targetRepo = singleTargetRepo ?? (s.branchesRepo ?? s.repo);
+    if (targetRepo && s.heads[targetRepo]) return s.heads[targetRepo]!.head;
+    if (singleTargetRepo) return byRepo[singleTargetRepo]?.find((b) => !b.remote && b.current)?.name ?? null;
+    return s.branch?.head ?? s.branches.find((b) => b.current)?.name ?? null;
+  });
+
+  const allRoots = useMemo(() => {
+    if (multiRepo) {
+      return buildMultiRepoBranchTree(
+        activeRoots.map((r) => ({
+          root: r,
+          name: repoName(r),
+          head: heads[r]?.head,
+          branches: byRepo[r] ?? [],
+        })),
+        favorites,
+      );
+    }
+    const list = singleTargetRepo
+      ? (byRepo[singleTargetRepo] ?? (knownRepo === singleTargetRepo ? branches : []))
+      : branches;
+    const headName = singleTargetRepo && heads[singleTargetRepo] ? heads[singleTargetRepo]!.head : undefined;
+    const adjusted =
+      headName !== undefined ? list.map((b) => (b.remote ? b : { ...b, current: b.name === headName })) : list;
+    return buildBranchTree(adjusted, favorites);
+  }, [multiRepo, activeRoots, heads, byRepo, favorites, singleTargetRepo, knownRepo, branches]);
+
+  const baseRoots = useMemo(
+    () => (onlyFavorites ? filterFavoriteBranchTree(allRoots) : allRoots),
+    [allRoots, onlyFavorites],
+  );
+  const roots = useMemo(() => filterBranchTree(baseRoots, query), [baseRoots, query]);
+  const autoExpandKeys = useMemo(
+    () => [
+      "g:local",
+      "g:remote",
+      ...allRoots.flatMap((r) => r.children?.filter((c) => c.kind === "remote").map((c) => c.key) ?? []),
+      ...currentBranchFolderKeys(allRoots),
+      ...(!multiRepo && current ? branchFolderKeys(allRoots, current) : []),
+    ],
+    [allRoots, multiRepo, current],
+  );
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set(autoExpandKeys));
+  const [seenAuto, setSeenAuto] = useState<ReadonlySet<string>>(() => new Set(autoExpandKeys));
+  if (seenRoot !== root) {
+    setSeenRoot(root);
+    setByRepo(knownRepo && branches.length ? { [knownRepo]: branches } : {});
+    setQuery("");
+    setSeenAuto(new Set(autoExpandKeys));
+    setExpanded(new Set(autoExpandKeys));
+  } else {
+    if (knownRepo && branches.length && byRepo[knownRepo] !== branches) {
+      setByRepo((prev) => ({ ...prev, [knownRepo]: branches }));
+    }
+    if (autoExpandKeys.some((k) => !seenAuto.has(k))) {
+      const nextSeen = new Set(seenAuto);
+      const nextExpanded = new Set(expanded);
+      for (const k of autoExpandKeys) {
+        if (!nextSeen.has(k)) {
+          nextSeen.add(k);
+          nextExpanded.add(k);
+        }
+      }
+      setSeenAuto(nextSeen);
+      setExpanded(nextExpanded);
+    }
+  }
+  // While searching or filtering by favorites, matching groups are shown expanded.
+  const searchExpanded = useMemo(
+    () => (query.trim() || onlyFavorites ? new Set(branchGroupKeys(roots)) : undefined),
+    [roots, query, onlyFavorites],
+  );
   // Highlighted rows: a click only selects (IDEA), and only a double click or
   // Enter switches the log, so the selection is the pane's own state. It still
   // follows the filter when something else changes it (Show Log, the filter bar).
@@ -194,19 +398,117 @@ export function BranchesPanel() {
     setShownKey(filterKey);
     setSelected(new Set(filterKeys));
   }
-  // Branches in tree order, for Copy: full refs, so the folder path comes along
-  // (`feat/x`, `origin/main`).
-  const refs = useMemo(() => {
-    const out: { key: string; ref: string }[] = [];
+  // Branches in tree order, for Copy and toolbar actions.
+  const { refs, nodeByKey, currentBranchKeys } = useMemo(() => {
+    const outRefs: { key: string; ref: string }[] = [];
+    const map = new Map<string, BranchTreeNode>();
+    const curKeys: string[] = [];
     const walk = (nodes: readonly BranchTreeNode[]) => {
       for (const n of nodes) {
-        if (n.ref) out.push({ key: n.key, ref: n.ref });
+        map.set(n.key, n);
+        if (n.ref) outRefs.push({ key: n.key, ref: n.ref });
+        if (n.kind === "branch" && (n.branch?.current || (n.currentRoots?.length ?? 0) > 0)) {
+          curKeys.push(n.key);
+        }
         walk(n.children ?? []);
       }
     };
     walk(allRoots);
-    return out;
+    return { refs: outRefs, nodeByKey: map, currentBranchKeys: curKeys };
   }, [allRoots]);
+
+  const selectedNodes = useMemo(
+    () => [...selected].map((k) => nodeByKey.get(k)).filter((n): n is BranchTreeNode => !!n),
+    [selected, nodeByKey],
+  );
+  const selectedLocalBranches = useMemo(
+    () => selectedNodes.filter((n) => n.kind === "branch" && n.branch && !n.branch.remote),
+    [selectedNodes],
+  );
+  const headSelected = selected.has("head");
+  const canUpdateSelected = selectedLocalBranches.length > 0 || headSelected;
+
+  const deletableBranches = useMemo(
+    () =>
+      selectedNodes.filter(
+        (n) =>
+          n.kind === "branch" &&
+          n.branch &&
+          (multiRepo && n.repoRoots && n.repoRoots.length > 1
+            ? (n.currentRoots?.length ?? 0) === 0
+            : !n.branch.current),
+      ),
+    [selectedNodes, multiRepo],
+  );
+  const canDeleteSelected = deletableBranches.length > 0;
+
+  const compareTarget = useMemo(() => {
+    const branchesOnly = selectedNodes.filter((n) => n.kind === "branch" && n.branch);
+    if (branchesOnly.length !== 1) return null;
+    const target = branchesOnly[0]!;
+    if (target.branch!.current) return null;
+    return target;
+  }, [selectedNodes]);
+
+  const handleNewBranch = () => {
+    void (multiRepo
+      ? newBranchInRepos(activeRoots)
+      : singleTargetRepo
+        ? newBranchInRepos([singleTargetRepo])
+        : newBranch());
+  };
+
+  const handleUpdateSelected = async () => {
+    if (selectedLocalBranches.length > 0) {
+      for (const n of selectedLocalBranches) {
+        const b = n.branch!;
+        if (multiRepo && n.repoRoots && n.repoRoots.length > 1) {
+          await updateInRepos(b.name, n.repoRoots, n.currentRoots ?? []);
+        } else {
+          const targetRepo =
+            (multiRepo && n.repoRoots?.length === 1 ? n.repoRoots[0]! : singleTargetRepo) ?? undefined;
+          await updateBranch(b.name, targetRepo);
+        }
+      }
+      return;
+    }
+    if (headSelected) {
+      await updateProject(multiRepo ? activeRoots : singleTargetRepo ? [singleTargetRepo] : {});
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    for (const n of deletableBranches) {
+      const b = n.branch!;
+      if (multiRepo && n.repoRoots && n.repoRoots.length > 1) {
+        await (b.remote ? deleteRemoteInRepos(b.name, n.repoRoots) : deleteInRepos(b.name, n.repoRoots));
+      } else {
+        const targetRepo =
+          (multiRepo && n.repoRoots?.length === 1 ? n.repoRoots[0]! : singleTargetRepo) ?? undefined;
+        await (b.remote ? deleteRemoteBranch(b.name, targetRepo) : deleteBranch(b.name, targetRepo));
+      }
+    }
+  };
+
+  const handleFind = () => {
+    if (collapsed) toggleCollapse();
+    requestAnimationFrame(() => {
+      const input = mainRef.current?.querySelector<HTMLInputElement>("input");
+      input?.focus();
+      input?.select();
+    });
+  };
+
+  const handleSelectCurrent = () => {
+    const expandKeys = [
+      "g:local",
+      ...currentBranchFolderKeys(allRoots),
+      ...(!multiRepo && current ? branchFolderKeys(allRoots, current) : []),
+    ];
+    setExpanded((prev) => new Set([...prev, ...expandKeys]));
+    setSelected(new Set(currentBranchKeys.length ? currentBranchKeys : ["head"]));
+  };
+
   const onKeyDownCapture = (e: KeyboardEvent<HTMLDivElement>) => {
     if ((e.key !== "c" && e.key !== "C") || !hasPrimaryModifier(e) || e.altKey || e.shiftKey) return;
     // The branch search keeps the browser's own copy.
@@ -217,71 +519,228 @@ export function BranchesPanel() {
     e.stopPropagation();
     void copyText(names.join("\n"));
   };
+
   return (
-    <div className={styles.branches} onKeyDownCapture={onKeyDownCapture}>
-      <div className={styles.branchesBar} role="toolbar" aria-label={tx("Branches")}>
-        <SearchField
-          className={styles.branchSearch}
-          value={query}
-          onChange={setQuery}
-          placeholder="Branch"
-          aria-label="Filter branches"
+    <div className={clsx(styles.branches, collapsed && styles.branchesCollapsed)} onKeyDownCapture={onKeyDownCapture}>
+      <div className={styles.branchesSideBar} role="toolbar" aria-label={tx("Branch Actions")}>
+        <IconButton
+          icon={collapsed ? "chevron-right" : "chevron-left"}
+          title={collapsed ? "Show Branches" : "Hide Branches"}
+          size="small"
+          onClick={toggleCollapse}
         />
-        <IconButton icon="plus" title="New Branch…" size="small" onClick={() => void newBranch()} />
-        <IconButton icon="git-fetch" title="Fetch" size="small" action="vcs.fetch" />
-        <IconButton icon="refresh" title="Refresh" size="small" onClick={() => void loadBranches()} />
+        {!collapsed && (
+          <>
+            <div className={styles.branchesSideSep} role="separator" />
+            <IconButton icon="plus" title="New Branch…" size="small" onClick={handleNewBranch} />
+            <IconButton
+              icon="git-pull"
+              title="Update Selected"
+              size="small"
+              disabled={!canUpdateSelected}
+              onClick={() => void handleUpdateSelected()}
+            />
+            <IconButton
+              icon="trash"
+              title="Delete"
+              size="small"
+              disabled={!canDeleteSelected}
+              onClick={() => void handleDeleteSelected()}
+            />
+            <IconButton
+              icon="diff"
+              title="Compare with Current"
+              size="small"
+              disabled={!compareTarget}
+              onClick={() => {
+                if (!compareTarget) return;
+                const curRepo = currentRepo();
+                const targetRepo =
+                  compareTarget.repoRoots?.find((r) => r === curRepo) ??
+                  compareTarget.repoRoots?.[0] ??
+                  singleTargetRepo ??
+                  undefined;
+                void showCompareBranches(compareTarget.branch!.name, targetRepo);
+              }}
+            />
+            <IconButton icon="search" title="Find" size="small" onClick={handleFind} />
+            <IconButton
+              icon="git-fetch"
+              title="Fetch"
+              size="small"
+              onClick={() =>
+                void executeAction(
+                  "vcs.fetch",
+                  multiRepo ? { repos: activeRoots } : singleTargetRepo ? { repo: singleTargetRepo } : undefined,
+                )
+              }
+            />
+            <IconButton
+              icon="star"
+              title="Show Only Favorites"
+              size="small"
+              pressed={onlyFavorites}
+              onClick={() => setOnlyFavorites((v) => !v)}
+            />
+            <IconButton icon="locate" title="Select Current" size="small" onClick={handleSelectCurrent} />
+            <IconButton
+              icon="settings"
+              title="Branch Settings"
+              size="small"
+              onClick={(e) =>
+                menuBelow(e, [
+                  {
+                    label: "Manage Remotes…",
+                    run: () => showManageRemotes(singleTargetRepo ?? undefined),
+                  },
+                  { kind: "separator" },
+                  {
+                    label: "Git Settings…",
+                    run: () => void executeAction("file.settings", "vcs.git"),
+                  },
+                ])
+              }
+            />
+            <div className={styles.branchesSideSep} role="separator" />
+            <IconButton
+              icon="expand-all"
+              title="Expand All"
+              size="small"
+              onClick={() => setExpanded(new Set(branchGroupKeys(allRoots)))}
+            />
+            <IconButton
+              icon="collapse-all"
+              title="Collapse All"
+              size="small"
+              onClick={() => setExpanded(new Set())}
+            />
+          </>
+        )}
       </div>
-      <Tree<BranchTreeNode>
-        key={`${root ?? ""}:${branchesLoaded}`}
-        roots={roots}
-        getKey={(n) => n.key}
-        getLabel={(n) => (n.kind === "head" || n.kind === "group" ? tx(n.label) : n.label)}
-        getChildren={(n) => n.children}
-        isExpandable={(n) => !!n.children}
-        defaultExpanded={[
-          "g:local",
-          "g:remote",
-          ...roots.flatMap((r) => r.children?.filter((c) => c.kind === "remote").map((c) => c.key) ?? []),
-          ...(current ? branchFolderKeys(roots, current) : []),
-        ]}
-        expanded={searchExpanded}
-        getIcon={(n) =>
-          n.kind === "head"
-            ? "commit"
-            : n.branch?.current
-              ? "current-branch"
-              : n.kind === "branch"
-                ? n.favorite
-                  ? "star"
-                  : "branch"
-                : "folder"
-        }
-        getDetail={branchDetail}
-        selected={selected}
-        onSelectionChange={(sel) => setSelected(sel)}
-        onActivate={(n) => {
-          // IDEA: double click (or Enter) switches the log to that ref, or to every
-          // selected one when it is part of a multi-selection; checking out stays in the context menu.
-          if (!n.ref) return;
-          const sel = selected.has(n.key) ? refs.filter((r) => selected.has(r.key)).map((r) => r.ref) : [n.ref];
-          setLogFilters({ branches: sel });
-        }}
-        onContextMenu={(n, _s, e) => {
-          const items = n?.branch ? branchMenu(n.branch, current) : [];
-          if (!items.length) return;
-          e.preventDefault();
-          showContextMenu(e, items);
-        }}
-        empty={
-          query.trim() ? (
-            <span className={styles.muted}>
-              <T>No matching branches</T>
-            </span>
-          ) : undefined
-        }
-        aria-label="Branches"
-        className={styles.branchTree}
-      />
+      {!collapsed && (
+        <div ref={mainRef} className={styles.branchesMain}>
+          <div className={styles.branchesBar} role="toolbar" aria-label={tx("Branches")}>
+            <SearchField
+              className={styles.branchSearch}
+              value={query}
+              onChange={setQuery}
+              placeholder="Branch"
+              aria-label="Filter branches"
+            />
+            <IconButton
+              icon="refresh"
+              title="Refresh"
+              size="small"
+              onClick={() => {
+                void refreshNow();
+                void loadBranches();
+                loadAllBranches();
+              }}
+            />
+          </div>
+          <Tree<BranchTreeNode>
+            key={root ?? ""}
+            roots={roots}
+            getKey={(n) => n.key}
+            getLabel={(n) => (n.kind === "head" || n.kind === "group" ? tx(n.label) : n.label)}
+            getChildren={(n) => n.children}
+            isExpandable={(n) => !!n.children}
+            expanded={searchExpanded ?? expanded}
+            onExpandedChange={(next) => {
+              if (!searchExpanded) setExpanded(next);
+            }}
+            getIcon={(n) =>
+              n.kind === "head"
+                ? "commit"
+                : n.branch?.current
+                  ? "current-branch"
+                  : n.kind === "branch"
+                    ? n.favorite
+                      ? "star"
+                      : "branch"
+                    : "folder"
+            }
+            getDetail={branchDetail}
+            selected={selected}
+            onSelectionChange={(sel) => setSelected(sel)}
+            onActivate={(n) => {
+              // IDEA: double click (or Enter) switches the log to that ref, or to every
+              // selected one when it is part of a multi-selection; checking out stays in the context menu.
+              if (!n.ref) return;
+              const sel = selected.has(n.key) ? refs.filter((r) => selected.has(r.key)).map((r) => r.ref) : [n.ref];
+              setLogFilters({ branches: sel });
+            }}
+            onContextMenu={(n, _s, e) => {
+              if (!n) return;
+              if (n.key === "g:remote" || n.kind === "remote") {
+                e.preventDefault();
+                showContextMenu(e, [
+                  {
+                    label: "Manage Remotes…",
+                    run: () => showManageRemotes(singleTargetRepo ?? undefined),
+                  },
+                ]);
+                return;
+              }
+              if (n.key === "g:local") {
+                e.preventDefault();
+                showContextMenu(e, [{ label: "New Branch…", icon: "plus", run: handleNewBranch }]);
+                return;
+              }
+              if (n.kind === "head") {
+                e.preventDefault();
+                showContextMenu(e, [
+                  {
+                    label: "Update",
+                    icon: "git-pull",
+                    run: () =>
+                      void updateProject(multiRepo ? activeRoots : singleTargetRepo ? [singleTargetRepo] : {}),
+                  },
+                  { label: "New Branch…", icon: "plus", run: handleNewBranch },
+                ]);
+                return;
+              }
+              if (!n.branch) return;
+              const singleRoot = multiRepo && n.repoRoots?.length === 1 ? n.repoRoots[0]! : null;
+              const singleRootHead = singleRoot
+                ? heads[singleRoot]
+                  ? heads[singleRoot]!.head
+                  : (byRepo[singleRoot]?.find((b) => !b.remote && b.current)?.name ?? null)
+                : null;
+              const items =
+                multiRepo && n.repoRoots && n.repoRoots.length > 1
+                  ? commonBranchMenu(
+                      {
+                        name: n.branch.name,
+                        remote: n.branch.remote,
+                        current: (n.currentRoots?.length ?? 0) === n.repoRoots.length,
+                        favorite: !!n.favorite,
+                      },
+                      n.repoRoots,
+                      undefined,
+                      n.currentRoots ?? [],
+                    )
+                  : singleRoot
+                    ? inRepo(singleRoot, branchMenu(n.branch, singleRootHead))
+                    : singleTargetRepo
+                      ? inRepo(singleTargetRepo, branchMenu(n.branch, current))
+                      : branchMenu(n.branch, current);
+              if (!items.length) return;
+              e.preventDefault();
+              showContextMenu(e, items);
+            }}
+            empty={
+              query.trim() || onlyFavorites ? (
+                <span className={styles.muted}>
+                  <T>No matching branches</T>
+                </span>
+              ) : undefined
+            }
+            aria-label="Branches"
+            className={styles.branchTree}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -333,12 +792,14 @@ function FilterButton({
   );
 }
 
-function FilterBar() {
+export function FilterBar() {
   const filters = useGitLog((s) => s.filters);
   const commits = useGitLog((s) => s.commits);
   const branches = useVcs((s) => s.branches);
   const root = useVcs((s) => s.root);
+  const roots = useVcs((s) => s.roots);
   const [text, setText] = useState(filters.text);
+  const [pathsAnchor, setPathsAnchor] = useState<HTMLElement | null>(null);
 
   // Keep the field in sync when filters change elsewhere (Show History, reveal).
   const [seen, setSeen] = useState(filters);
@@ -428,19 +889,10 @@ function FilterBar() {
       },
     ]);
 
-  const openPaths = (e: ReactMouseEvent<HTMLElement>) =>
-    menuBelow(e, [
-      {
-        label: "Select Folders…",
-        run: async () => {
-          const cur = filters.path && root ? relTo(root, filters.path) : (filters.path ?? "");
-          const r = await promptText({ title: "Filter by Path", label: "File or folder", initial: cur, mono: true });
-          if (!r) return;
-          const v = r.value.trim();
-          setLogFilters({ path: v ? (v.startsWith("/") || !root ? v : `${root}/${v}`) : null });
-        },
-      },
-    ]);
+  const openPaths = (e: ReactMouseEvent<HTMLElement>) => {
+    const target = e.currentTarget;
+    setPathsAnchor((cur) => (cur ? null : target));
+  };
 
   return (
     <div className={styles.filters} role="toolbar" aria-label={tx("Log filters")}>
@@ -487,10 +939,20 @@ function FilterBar() {
       />
       <FilterButton
         label="Paths"
-        value={filters.path ? (root ? relTo(root, filters.path) : filters.path) || "." : null}
+        value={pathsFilterLabel(filters, root, roots)}
         onOpen={openPaths}
-        onClear={() => setLogFilters({ path: null })}
+        onClear={() => setLogFilters({ path: null, roots: [] })}
       />
+      {pathsAnchor && (
+        <PathsFilterPopup
+          open
+          anchor={pathsAnchor}
+          filters={filters}
+          root={root}
+          roots={roots}
+          onClose={() => setPathsAnchor(null)}
+        />
+      )}
       <span className={styles.grow} />
       <IconButton icon="refresh" title="Refresh" size="small" onClick={() => void reloadLog()} />
       <IconButton
@@ -509,6 +971,199 @@ function FilterBar() {
       />
       <IconButton icon="search" title="Go to Hash/Branch/Tag" size="small" action="vcs.log.goToRef" />
     </div>
+  );
+}
+
+/**
+ * IDEA's Git Log › Paths filter popup:
+ * - `Select…` (type/paste a path relative to project root)
+ * - `Select in Tree…` (pick folders / roots in a tree dialog)
+ * - `Roots` section with colored checkboxes for each repository in a multi-repo project
+ * - `Press Delete to clear the filter` footer
+ */
+function PathsFilterPopup({
+  open,
+  anchor,
+  filters,
+  root,
+  roots,
+  onClose,
+}: {
+  open: boolean;
+  anchor: HTMLElement | null;
+  filters: LogFilters;
+  root: string | null;
+  roots: readonly string[];
+  onClose: () => void;
+}) {
+  const showRoots =
+    roots.length > 1 || (roots.length === 1 && roots[0] !== root) || filters.roots.length > 0;
+  const totalItems = 2 + (showRoots ? roots.length : 0);
+  const [active, setActive] = useState(0);
+
+  const selectByPrompt = async () => {
+    onClose();
+    const cur =
+      filters.path && root
+        ? relTo(root, filters.path)
+        : filters.path
+          ? filters.path
+          : filters.roots.length === 1 && root
+            ? relTo(root, filters.roots[0]!)
+            : (filters.roots[0] ?? "");
+    const r = await promptText({ title: "Filter by Path", label: "File or folder", initial: cur, mono: true });
+    if (!r) return;
+    const v = r.value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+    if (!v) {
+      setLogFilters({ path: null, roots: [] });
+      return;
+    }
+    const full = v.startsWith("/") || /^[A-Za-z]:\//.test(v) || !root ? v : `${root}/${v}`;
+    if (roots.includes(full)) {
+      setLogFilters({ roots: [full], path: null });
+    } else {
+      setLogFilters({ path: full, roots: [] });
+    }
+  };
+
+  const selectInTree = async () => {
+    onClose();
+    const choice = await choosePathInTree({
+      projectRoot: root,
+      roots,
+      initialPath: filters.path,
+      initialRoots: filters.roots,
+    });
+    if (choice) setLogFilters(choice);
+  };
+
+  const toggleRoot = (r: string) => {
+    const nextRoots = filters.path ? [r] : toggleRootFilter(filters.roots, roots, r);
+    setLogFilters({ roots: nextRoots, path: null });
+  };
+
+  const selectOnlyRoot = (r: string) => {
+    setLogFilters({ roots: [r], path: null });
+    onClose();
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((i) => (i + 1) % totalItems);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((i) => (i - 1 + totalItems) % totalItems);
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setActive(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setActive(totalItems - 1);
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      setLogFilters({ path: null, roots: [] });
+      onClose();
+    } else if (e.key === " ") {
+      e.preventDefault();
+      if (active === 0) void selectByPrompt();
+      else if (active === 1) void selectInTree();
+      else if (showRoots && roots[active - 2]) toggleRoot(roots[active - 2]!);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (active === 0) void selectByPrompt();
+      else if (active === 1) void selectInTree();
+      else if (showRoots && roots[active - 2]) selectOnlyRoot(roots[active - 2]!);
+    }
+  };
+
+  return (
+    <Popup
+      open={open}
+      anchor={anchor}
+      placement="bottom-start"
+      offset={2}
+      role="menu"
+      aria-label={tx("Paths")}
+      onClose={onClose}
+      className={styles.pathsPopup}
+    >
+      <div className={styles.pathsMenu} tabIndex={-1} data-autofocus onKeyDown={onKeyDown}>
+        <button
+          type="button"
+          role="menuitem"
+          className={clsx(styles.pathsItem, active === 0 && styles.pathsItemActive)}
+          onMouseEnter={() => setActive(0)}
+          onClick={() => void selectByPrompt()}
+        >
+          <span className={styles.pathsItemText}>
+            <T>Select…</T>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className={clsx(styles.pathsItem, active === 1 && styles.pathsItemActive)}
+          onMouseEnter={() => setActive(1)}
+          onClick={() => void selectInTree()}
+        >
+          <span className={styles.pathsItemText}>
+            <T>Select in Tree…</T>
+          </span>
+        </button>
+        {showRoots && (
+          <>
+            <div className={styles.pathsSection} role="presentation">
+              <span className={styles.pathsSectionLabel}>
+                <T>Roots</T>
+              </span>
+              <span className={styles.pathsSectionLine} />
+            </div>
+            <div className={styles.pathsRoots} role="group" aria-label={tx("Roots")}>
+              {roots.map((r, idx) => {
+                const itemIdx = idx + 2;
+                const name = repoName(r);
+                const checked = !filters.path && (filters.roots.length === 0 || filters.roots.includes(r));
+                const color = `var(--project-color-${repoColorIndex(idx)})`;
+                return (
+                  <div
+                    key={r}
+                    role="menuitemcheckbox"
+                    aria-checked={checked}
+                    className={clsx(styles.pathsItem, active === itemIdx && styles.pathsItemActive)}
+                    onMouseEnter={() => setActive(itemIdx)}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey) toggleRoot(r);
+                      else selectOnlyRoot(r);
+                    }}
+                  >
+                    <span
+                      role="checkbox"
+                      aria-checked={checked}
+                      aria-label={tx`Toggle ${name}`}
+                      className={clsx(styles.rootCheckbox, checked && styles.rootCheckboxChecked)}
+                      style={{ "--root-color": color } as CSSProperties}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleRoot(r);
+                      }}
+                    >
+                      {checked && <Icon name="check" size={10} className={styles.rootCheckboxMark} />}
+                    </span>
+                    <span className={styles.pathsItemText} title={r}>
+                      {name}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+        <div className={styles.pathsFooter}>
+          <T>Press Delete to clear the filter</T>
+        </div>
+      </div>
+    </Popup>
   );
 }
 
@@ -632,19 +1287,35 @@ function CommitList() {
   const opts = useLogOptions();
   const user = useGitLog((s) => s.user);
   const headCommit = useVcs((s) => s.branch?.headCommit ?? null);
+  const roots = useVcs((s) => s.roots);
+  const heads = useVcs((s) => s.heads);
   const branches = useVcs((s) => s.branches);
+  const multiRepo = roots.length > 1;
   const remoteNames = useMemo(() => new Set(branches.filter((b) => b.remote).map((b) => b.name)), [branches]);
+  const headSet = useMemo(() => {
+    const set = new Set<string>();
+    if (headCommit) set.add(headCommit);
+    for (const h of Object.values(heads)) {
+      if (h.headCommit) set.add(h.headCommit);
+    }
+    return set;
+  }, [headCommit, heads]);
   // Date, No Merges and First Parent are applied by the backend with parent rewriting,
   // so the graph stays connected under them.
   const collapsed = useMemo(
-    () => (opts.collapseLinear ? collapseLinear(all, new Set(headCommit ? [headCommit] : [])) : null),
-    [all, opts.collapseLinear, headCommit],
+    () => (opts.collapseLinear ? collapseLinear(all, headSet) : null),
+    [all, opts.collapseLinear, headSet],
   );
   const commits = collapsed ? collapsed.commits : all;
   const rows = useMemo(() => {
-    const laid = collapsed ? computeGraph(collapsed.graph).rows : allRows;
+    const hasMultiRepo = collapsed && new Set(collapsed.graph.map((g) => g.repo ?? "")).size > 1;
+    const laid = collapsed
+      ? hasMultiRepo
+        ? computeMultiRepoGraph(collapsed.graph, roots)
+        : computeGraph(collapsed.graph).rows
+      : allRows;
     return opts.longEdges ? laid : hideLongEdges(laid);
-  }, [collapsed, allRows, opts.longEdges]);
+  }, [collapsed, allRows, opts.longEdges, roots]);
   const onBranch = useMemo(() => {
     if (!opts.highlightCurrentBranch) return null;
     const reach = reachableFrom(all, headCommit);
@@ -655,6 +1326,7 @@ function CommitList() {
   const done = useGitLog((s) => s.done);
   const error = useGitLog((s) => s.error);
   const selected = useGitLog((s) => s.selected);
+  const selectedRepo = useGitLog((s) => s.selectedRepo);
   const selection = useGitLog((s) => s.selection);
   const selectedSet = useMemo(() => new Set(selection), [selection]);
   const revealTick = useGitLog((s) => s.revealTick);
@@ -673,7 +1345,9 @@ function CommitList() {
     if (!finished && !loading && last && last.index >= commits.length - 40) void loadMore();
   }, [last, commits.length, finished, loading]);
 
-  const selectedIndex = selected ? commits.findIndex((c) => c.id === selected) : -1;
+  const selectedIndex = selected
+    ? commits.findIndex((c) => c.id === selected && (!selectedRepo || !c.repo || c.repo === selectedRepo))
+    : -1;
   useLayoutEffect(() => {
     if (selectedIndex >= 0) virtualizer.scrollToIndex(selectedIndex, { align: "center" });
     // Only on explicit reveal requests.
@@ -682,13 +1356,13 @@ function CommitList() {
 
   const visible = useRef(commits);
   visible.current = commits;
-  const pick = useCallback((id: string, e: ReactMouseEvent) => {
+  const pick = useCallback((id: string, repo: string | undefined, e: ReactMouseEvent) => {
     if (e.button === 2) {
-      if (!useGitLog.getState().selection.includes(id)) selectCommit(id);
+      if (!useGitLog.getState().selection.includes(id)) selectCommit(id, false, repo);
     } else if (e.button !== 0) return;
-    else if (e.shiftKey) extendCommitSelection(id, visible.current);
-    else if (e.metaKey || e.ctrlKey) toggleCommitSelection(id);
-    else selectCommit(id);
+    else if (e.shiftKey) extendCommitSelection(id, visible.current, repo);
+    else if (e.metaKey || e.ctrlKey) toggleCommitSelection(id, repo);
+    else selectCommit(id, false, repo);
   }, []);
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -710,8 +1384,8 @@ function CommitList() {
     e.preventDefault();
     const c = commits[next];
     if (c) {
-      if (e.shiftKey) extendCommitSelection(c.id, commits);
-      else selectCommit(c.id);
+      if (e.shiftKey) extendCommitSelection(c.id, commits, c.repo);
+      else selectCommit(c.id, false, c.repo);
       virtualizer.scrollToIndex(next, { align: "auto" });
     }
   };
@@ -731,7 +1405,9 @@ function CommitList() {
         onKeyDown={onKeyDown}
       >
         {!commits.length && !loading && finished && (
-          <div className={styles.message}>{headCommit ? tx("No commits match the filters") : tx("No commits yet")}</div>
+          <div className={styles.message}>
+            {headSet.size > 0 ? tx("No commits match the filters") : tx("No commits yet")}
+          </div>
         )}
         <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {items.map((v) => {
@@ -745,19 +1421,28 @@ function CommitList() {
                   </span>
                 </div>
               );
+            const repoIdx = multiRepo && c.repo ? roots.indexOf(c.repo) : -1;
+            const repoColor = repoIdx >= 0 ? repoColorIndex(repoIdx) : null;
+            const repoTitle = multiRepo && c.repo ? repoName(c.repo) : undefined;
+            const isHead = c.repo && heads[c.repo] ? c.id === heads[c.repo]!.headCommit : c.id === headCommit;
+            const isSelected =
+              selectedSet.has(c.id) &&
+              (selection.length > 1 || !selectedRepo || !c.repo || c.repo === selectedRepo);
             return (
               <CommitRow
-                key={c.id}
+                key={c.repo ? `${c.repo}:${c.id}` : c.id}
                 id={`commit-${v.index}`}
                 commit={c}
                 graph={rows[v.index]}
                 top={v.start}
-                selected={selectedSet.has(c.id)}
-                head={c.id === headCommit}
+                selected={isSelected}
+                head={isHead}
                 mine={opts.highlightMine && isMine(c, user)}
                 onBranch={!!onBranch?.has(c.id)}
                 opts={opts}
                 remoteNames={remoteNames}
+                repoColor={repoColor}
+                repoTitle={repoTitle}
                 onPick={pick}
               />
             );
@@ -779,10 +1464,12 @@ const CommitRow = memo(function CommitRow({
   onBranch,
   opts,
   remoteNames,
+  repoColor,
+  repoTitle,
   onPick,
 }: {
   id: string;
-  commit: Commit;
+  commit: LogCommit;
   graph: GraphRow | undefined;
   top: number;
   selected: boolean;
@@ -791,7 +1478,9 @@ const CommitRow = memo(function CommitRow({
   onBranch: boolean;
   opts: LogOptions;
   remoteNames: ReadonlySet<string>;
-  onPick: (id: string, e: ReactMouseEvent) => void;
+  repoColor: number | null;
+  repoTitle?: string;
+  onPick: (id: string, repo: string | undefined, e: ReactMouseEvent) => void;
 }) {
   const merge = opts.highlightMerges && c.parents.length > 1;
   const refs = c.refs.length > 0 && (
@@ -809,17 +1498,30 @@ const CommitRow = memo(function CommitRow({
       id={id}
       role="option"
       aria-selected={selected}
-      className={clsx(styles.row, onBranch && styles.currentBranch, selected && styles.selected)}
+      className={clsx(
+        styles.row,
+        repoColor !== null && styles.rowMultiRepo,
+        onBranch && styles.currentBranch,
+        selected && styles.selected,
+      )}
       style={{ transform: `translateY(${top}px)` }}
       onMouseDown={(e) => {
         if (e.shiftKey) e.preventDefault(); // no text selection on range clicks
-        onPick(c.id, e);
+        onPick(c.id, c.repo, e);
       }}
       onContextMenu={(e) => {
         e.preventDefault();
         showContextMenu(e, commitMenu(c, selectedCommits()));
       }}
     >
+      {repoColor !== null && (
+        <span
+          className={styles.repoStripe}
+          style={{ background: `var(--project-color-${repoColor})` }}
+          title={repoTitle}
+          aria-hidden
+        />
+      )}
       <span className={styles.colSubject}>
         {graph && <GraphCell row={graph} head={head} />}
         {opts.refsOnLeft && refs}
@@ -925,41 +1627,80 @@ export function RefLabels({
   );
 }
 
+type DetailFile = (ChangedFile | RevisionChange) & { _repo?: string | null };
+
 /**
  * The selected commits' changes: one commit's files against its first parent, or, for several
  * (IDEA), their combined changes with every selected commit listed below.
  */
-export function CommitDetails({ commits }: { commits: Commit[] }) {
+export function CommitDetails({ commits }: { commits: LogCommit[] }) {
   const selected = useGitLog((s) => s.selected);
+  const selectedRepo = useGitLog((s) => s.selectedRepo);
   const selection = useGitLog((s) => s.selection);
   // Newest first (log order).
   const chosen = useMemo(() => {
     const ids = new Set(selection);
-    return commits.filter((c) => ids.has(c.id));
-  }, [commits, selection]);
-  const commit = selected ? commits.find((c) => c.id === selected) : undefined;
+    return commits.filter(
+      (c) => ids.has(c.id) && (selection.length > 1 || !selectedRepo || !c.repo || c.repo === selectedRepo),
+    );
+  }, [commits, selection, selectedRepo]);
+  const commit = selected
+    ? (commits.find((c) => c.id === selected && (!selectedRepo || !c.repo || c.repo === selectedRepo)) ??
+      commits.find((c) => c.id === selected))
+    : undefined;
   const many = chosen.length > 1;
-  const idsKey = many ? chosen.map((c) => c.id).join(" ") : (selected ?? "");
   const root = useVcs((s) => s.root) ?? "";
-  const [files, setFiles] = useState<(ChangedFile | RevisionChange)[] | null>(null);
+  const commitRepo = commit?.repo ?? currentRepo();
+  const repoGroups = useMemo(() => {
+    const groups = new Map<string | null, LogCommit[]>();
+    for (const c of chosen) {
+      const r = c.repo ?? currentRepo();
+      const list = groups.get(r) ?? [];
+      list.push(c);
+      groups.set(r, list);
+    }
+    return groups;
+  }, [chosen]);
+  const multiRepoSelection = repoGroups.size > 1;
+  const detailRoot = multiRepoSelection ? root : (commit?.repo ?? root);
+  const idsKey = many
+    ? chosen.map((c) => (c.repo ? `${c.repo}:${c.id}` : c.id)).join(" ")
+    : commit
+      ? (commit.repo ? `${commit.repo}:${commit.id}` : commit.id)
+      : "";
+  const [files, setFiles] = useState<DetailFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     if (!idsKey) return;
-    const ids = idsKey.split(" ");
     let alive = true;
-    const load =
-      ids.length > 1
-        ? call(commands.vcsCommitsChanges(currentRepo(), ids.reverse()))
-        : call(commands.vcsCommitFiles(currentRepo(), ids[0]!));
+    const load: Promise<DetailFile[]> = multiRepoSelection
+      ? Promise.all(
+          [...repoGroups.entries()].map(async ([repo, list]) => {
+            const ids = list.map((c) => c.id).reverse();
+            const changes = await call(commands.vcsCommitsChanges(repo, ids));
+            return changes.map((f) => ({ ...f, _repo: repo }));
+          }),
+        ).then((batches) => batches.flat())
+      : many
+        ? call(commands.vcsCommitsChanges(commitRepo, chosen.map((c) => c.id).reverse()))
+        : call(commands.vcsCommitFiles(commitRepo, commit!.id));
     load.then((f) => alive && setFiles(f)).catch((e) => alive && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       alive = false;
     };
-  }, [idsKey]);
+  }, [idsKey, commitRepo, multiRepoSelection, many, repoGroups, chosen, commit]);
 
-  const tree = useMemo(() => buildFileTree(files ?? [], (f) => relTo(root, f.path)), [files, root]);
+  const tree = useMemo(
+    () =>
+      buildFileTree(files ?? [], (f) => {
+        const d = f as DetailFile;
+        if (multiRepoSelection && d._repo) return relTo(detailRoot, `${d._repo}/${d.path}`);
+        return relTo(detailRoot, d.path);
+      }),
+    [files, detailRoot, multiRepoSelection],
+  );
   const allDirs = useMemo(() => dirKeys(tree), [tree]);
 
   if (!commit)
@@ -971,11 +1712,15 @@ export function CommitDetails({ commits }: { commits: Commit[] }) {
       </div>
     );
 
-  const open = (f: ChangedFile) => {
+  const open = (f: DetailFile) => {
     const all = files ?? [f];
     void openDiff(
       withChain(
-        all.map((x) => (many ? revisionChangeDiffData(x as RevisionChange) : commitFileDiffData(commit, x))),
+        all.map((x) =>
+          many
+            ? revisionChangeDiffData(x as RevisionChange, x._repo ?? commit?.repo)
+            : commitFileDiffData(commit, x),
+        ),
         Math.max(0, all.indexOf(f)),
       ),
     );
@@ -1033,7 +1778,7 @@ export function CommitDetails({ commits }: { commits: Commit[] }) {
         <SplitPanel id="message" minSize="60px">
           <div className={styles.messageBox}>
             {many ? (
-              chosen.map((c) => <CommitMessage key={c.id} commit={c} compact />)
+              chosen.map((c) => <CommitMessage key={c.repo ? `${c.repo}:${c.id}` : c.id} commit={c} compact />)
             ) : (
               <CommitMessage commit={commit} />
             )}

@@ -2,7 +2,8 @@
 
 use crate::state::AppState;
 use ide_agent::{
-    AgentChange, AgentCommand, AgentEntry, AgentEvent, AgentPrompt, AgentProvider, AgentQueued, AgentTask, NewAgentTask,
+    AgentChange, AgentCommand, AgentConfigChoice, AgentEntry, AgentEvent, AgentPrompt, AgentProvider, AgentQueued,
+    AgentTask, NewAgentTask,
 };
 use ide_core::{IdeResult, IpcPath};
 use ide_host::ops::agent;
@@ -33,6 +34,18 @@ pub fn agent_providers(window: Window, state: State<'_, AppState>) -> IdeResult<
     agent::providers(&state.host, window.label())
 }
 
+/// Saves or resets custom CLI arguments for `provider` in `<config>/agents/<provider>.toml`.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_set_args(
+    window: Window,
+    state: State<'_, AppState>,
+    provider: String,
+    args: Vec<String>,
+) -> IdeResult<Vec<AgentProvider>> {
+    agent::set_args(&state.host, window.label(), provider, args)
+}
+
 /// Slash commands to complete for `provider` in `task`'s directory, or in the project
 /// before a task exists (skills and custom commands on disk included).
 #[tauri::command]
@@ -44,6 +57,19 @@ pub async fn agent_commands(
     task: Option<String>,
 ) -> IdeResult<Vec<AgentCommand>> {
     agent::commands(&state.host, window.label(), provider, task).await
+}
+
+/// One question to `provider`, answered in a throwaway session that is not a task.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_complete(
+    window: Window,
+    state: State<'_, AppState>,
+    provider: String,
+    prompt: String,
+    config: Vec<AgentConfigChoice>,
+) -> IdeResult<String> {
+    agent::complete(&state.host, window.label(), provider, prompt, config).await
 }
 
 #[tauri::command]

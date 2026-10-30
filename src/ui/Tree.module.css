@@ -86,6 +86,8 @@
   color: var(--fg-muted);
 }
 .label {
+  flex-shrink: 0;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

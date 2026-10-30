@@ -9,7 +9,16 @@ import { Composer } from "./Composer";
 import { canSend, emptyDraft } from "./composerModel";
 import { ConfigPickers } from "./ConfigPickers";
 import { providerIcon } from "./model";
-import { HOME, NO_COMMANDS, startTask, updateDraft, useAgentCommands, useAgents } from "./store";
+import {
+  HOME,
+  NO_COMMANDS,
+  applyPreset,
+  openCatalog,
+  startTask,
+  updateDraft,
+  useAgentCommands,
+  useAgents,
+} from "./store";
 import styles from "./Home.module.css";
 
 export function HomeEditor() {
@@ -17,6 +26,8 @@ export function HomeEditor() {
   const txTemplate = useTxTemplate();
   const draft = useAgents((s) => s.draft);
   const providers = useAgents((s) => s.providers);
+  const presets = useAgents((s) => s.presets);
+  const disabledProviders = useAgents((s) => s.disabledProviders);
   const history = useAgents((s) => s.history);
   const composer = useAgents((s) => s.composers.get(HOME)) ?? emptyDraft();
   const project = useProject((s) => s.project);
@@ -37,14 +48,27 @@ export function HomeEditor() {
 
   const provider = providers.find((p) => p.id === draft.provider) ?? providers[0];
   const agentCommands = useAgentCommands(provider?.id, null, provider?.commands ?? NO_COMMANDS);
-  // Installed agents first; the rest under a "Not installed" title, with the command they need.
-  const installed = providers.filter((p) => p.installed);
+  // Installed & enabled agents first; the rest under a "Not installed" title, with the command they need.
+  const installed = providers.filter(
+    (p) => p.installed && (!disabledProviders.includes(p.id) || p.id === provider?.id),
+  );
   const missing = providers.filter((p) => !p.installed);
   const providerOptions: SelectOption[] = [
     ...installed.map((p) => ({ value: p.id, label: p.name, icon: providerIcon(p.id) })),
+    ...(presets.length ? [{ value: "__presets__", label: tx("Presets"), disabled: true }] : []),
+    ...presets.map((pr) => ({
+      value: `preset:${pr.id}`,
+      label: pr.name,
+      icon: providerIcon(pr.provider),
+    })),
     ...(missing.length ? [{ value: "__missing__", label: tx("Not installed"), disabled: true }] : []),
     ...missing.map((p) => ({ value: p.id, label: p.name, icon: providerIcon(p.id), detail: p.command })),
+    { value: "__manage__", label: tx("Manage Agents..."), icon: "plus" },
   ];
+  const selectedAgentValue =
+    draft.presetId && presets.some((pr) => pr.id === draft.presetId)
+      ? `preset:${draft.presetId}`
+      : (provider?.id ?? null);
   const base = draft.base ?? current;
   const canStart = canSend(composer) && !!provider?.installed && !starting;
   const root = project?.root ?? "";
@@ -82,9 +106,17 @@ export function HomeEditor() {
               <Select
                 variant="ghost"
                 aria-label="Agent"
-                value={provider?.id ?? null}
+                value={selectedAgentValue}
                 options={providerOptions}
-                onChange={(id) => updateDraft({ provider: id, config: {} })}
+                onChange={(val) => {
+                  if (val === "__manage__") {
+                    openCatalog();
+                  } else if (val.startsWith("preset:")) {
+                    applyPreset(val.slice("preset:".length));
+                  } else {
+                    updateDraft({ provider: val, presetId: null, config: {} });
+                  }
+                }}
               />
               <ConfigPickers config={provider?.config ?? []} values={draft.config} onChange={setOption} />
             </>

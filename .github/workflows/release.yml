@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.release.outputs.id }}
+      already_published: ${{ steps.release.outputs.already_published }}
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ env.TAG }}" }
@@ -44,18 +45,23 @@ jobs:
             const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo });
             const existing = releases.find((r) => r.tag_name === tag);
             if (existing) {
-              if (!existing.draft) core.setFailed(`release ${tag} is already published`);
+              if (!existing.draft) {
+                core.info(`release ${tag} is already published; skipping CI build`);
+                core.setOutput("already_published", "true");
+                return;
+              }
               core.setOutput("id", existing.id);
               return;
             }
             const { data } = await github.rest.repos.createRelease({
-              owner, repo, tag_name: tag, name: `OpenIDEA ${tag}`,
+              owner, repo, tag_name: tag, name: `IBLOpenIdea ${tag}`,
               draft: true, prerelease: tag.includes("-"), generate_release_notes: true,
             });
             core.setOutput("id", data.id);
 
   build:
     needs: create-release
+    if: needs.create-release.outputs.already_published != 'true'
     name: Build (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -136,6 +142,7 @@ jobs:
   # Linux builds are static (musl), so they run whatever the host's glibc.
   server:
     needs: create-release
+    if: needs.create-release.outputs.already_published != 'true'
     name: Server (${{ matrix.os }}-${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -174,6 +181,7 @@ jobs:
 
   publish:
     needs: [create-release, build, server]
+    if: needs.create-release.outputs.already_published != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7

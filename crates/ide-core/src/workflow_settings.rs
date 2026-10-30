@@ -86,6 +86,14 @@ pub struct CommitSettings {
     pub body_limit: u32,
     pub show_right_margin: bool,
     pub wrap_at_margin: bool,
+    /// Agent that suggests the commit message (an id of `agent_providers`); empty = none chosen.
+    pub suggest_agent: String,
+    /// Model option value for commit message suggestion; empty = agent default.
+    pub suggest_model: String,
+    /// Thinking effort (`thought_level`) option value for commit message suggestion; empty = agent default.
+    pub suggest_thinking: String,
+    /// Rules the suggested message must follow, passed to that agent as written.
+    pub suggest_rules: String,
 }
 
 impl Default for CommitSettings {
@@ -103,6 +111,10 @@ impl Default for CommitSettings {
             body_limit: 72,
             show_right_margin: true,
             wrap_at_margin: false,
+            suggest_agent: String::new(),
+            suggest_model: String::new(),
+            suggest_thinking: String::new(),
+            suggest_rules: String::new(),
         }
     }
 }

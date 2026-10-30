@@ -6,7 +6,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { create } from "zustand";
 import type { GitOperation, RemoteOp } from "@/bindings";
 import { tx } from "@/platform/i18n";
-import { call, commands, emitLocalIdeEvent, isCancelled, nextRequestId } from "@/platform/ipc";
+import { call, commands, emitLocalIdeEvent, isCancelled, isTauri, nextRequestId } from "@/platform/ipc";
 import { editorsFor } from "@/editor/api";
 import { maybeEditorService, notifications } from "@/workbench/contributions";
 import { progressFraction } from "./model";
@@ -170,7 +170,7 @@ export async function runRemote(
     actions: [{ label: "Cancel", run: cancelRemote }],
   });
   logConsole("cmd", `git ${op.op}${detail ? ` (${detail})` : ""}`);
-  const channel = new Channel<string>();
+  const channel = isTauri() ? new Channel<string>() : ({ onmessage: () => {} } as unknown as Channel<string>);
   let lastLine = "";
   channel.onmessage = (line) => {
     logConsole("out", line);

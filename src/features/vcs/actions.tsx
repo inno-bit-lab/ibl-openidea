@@ -25,7 +25,7 @@ import { gotoChange, rollbackSelectedLines } from "./gutter";
 import { openLocalHistory } from "./localHistoryKind";
 import { revealCommit, setLogFilters, useGitLog, emptyFilters } from "./logStore";
 import { allRepos, runRemote } from "./ops";
-import { showPushDialog, showUpdateDialog, type PushTarget } from "./remoteUi";
+import { showPushDialog, updateProject, type PushTarget } from "./remoteUi";
 import { chooseRevision } from "./RevisionChooser";
 import { showCloneDialog } from "./clone";
 import {
@@ -36,7 +36,8 @@ import {
   showRebaseDialog,
   showWorktrees,
 } from "./gitMenuDialogs";
-import { refreshNow, repoName } from "./store";
+import { stripSlash } from "./model";
+import { focusRepo, refreshNow, repoName, repoOf, useVcs } from "./store";
 import { tx } from "@/platform/i18n";
 
 const VCS = "vcsAvailable";
@@ -53,6 +54,42 @@ function argPaths(arg: unknown): string[] | undefined {
   if (Array.isArray(arg)) return arg.filter((x): x is string => typeof x === "string");
   const p = argPath(arg);
   return p ? [p] : undefined;
+}
+
+/** Resolves repository root(s) from an action argument (`{ repo }`, `{ repos }`, or file/folder path(s)). */
+export function argRepos(arg: unknown): string[] | undefined {
+  if (arg && typeof arg === "object") {
+    if ("repos" in arg && Array.isArray((arg as { repos: unknown }).repos)) {
+      const list = (arg as { repos: unknown[] }).repos.filter((x): x is string => typeof x === "string");
+      if (list.length) return list;
+    }
+    if ("repo" in arg && typeof (arg as { repo: unknown }).repo === "string") {
+      return [(arg as { repo: string }).repo];
+    }
+  }
+  const paths = argPaths(arg);
+  const roots = useVcs.getState().roots;
+  if (!paths?.length || roots.length <= 1) return undefined;
+  const matched = new Set<string>();
+  for (const raw of paths) {
+    const p = stripSlash(raw);
+    let direct = false;
+    for (const r of roots) {
+      if (r === p || r.startsWith(`${p}/`)) {
+        matched.add(r);
+        direct = true;
+      }
+    }
+    if (!direct) {
+      const enclosing = repoOf(p, roots);
+      if (enclosing) matched.add(enclosing);
+    }
+  }
+  return matched.size ? [...matched] : undefined;
+}
+
+export function argRepo(arg: unknown): string | undefined {
+  return argRepos(arg)?.[0];
 }
 
 const commitWindowFocused = () => getContext().activeToolWindow === "commit";
@@ -112,6 +149,7 @@ const OPERATIONS: MenuItem[] = [
   { kind: "action", action: "vcs.stash" },
   { kind: "action", action: "vcs.unstash" },
   { kind: "action", action: "vcs.resolveConflicts" },
+  { kind: "action", action: "vcs.manageRemotes" },
 ];
 
 function showOperations() {
@@ -191,7 +229,16 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "git-push",
       when: VCS,
-      run: ({ arg }) => void showPushDialog(arg && typeof arg === "object" ? (arg as PushTarget) : {}),
+      run: ({ arg }) => {
+        const target: PushTarget =
+          arg &&
+          typeof arg === "object" &&
+          !Array.isArray(arg) &&
+          ("branch" in arg || "revision" in arg || "repo" in arg || "repos" in arg)
+            ? (arg as PushTarget)
+            : { repos: argRepos(arg) };
+        void showPushDialog(target);
+      },
     },
     {
       id: "vcs.update",
@@ -199,8 +246,8 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "git-pull",
       when: VCS,
-      keywords: ["pull"],
-      run: showUpdateDialog,
+      keywords: ["pull", "update project"],
+      run: ({ arg }) => void updateProject({ repos: argRepos(arg) }),
     },
     {
       id: "vcs.pull",
@@ -208,7 +255,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "git-pull",
       when: VCS,
-      run: showPullDialog,
+      run: ({ arg }) => showPullDialog(argRepo(arg)),
     },
     {
       id: "vcs.merge",
@@ -216,7 +263,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["merge branch"],
-      run: showMergeDialog,
+      run: ({ arg }) => showMergeDialog(argRepo(arg)),
     },
     {
       id: "vcs.rebase",
@@ -224,7 +271,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["rebase branch"],
-      run: showRebaseDialog,
+      run: ({ arg }) => showRebaseDialog(argRepo(arg)),
     },
     {
       id: "vcs.manageRemotes",
@@ -232,7 +279,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["remote", "origin", "url"],
-      run: showManageRemotes,
+      run: ({ arg }) => showManageRemotes(argRepo(arg)),
     },
     {
       id: "vcs.newWorktree",
@@ -240,7 +287,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["worktree"],
-      run: () => showNewWorktree(),
+      run: ({ arg }) => showNewWorktree(undefined, argRepo(arg)),
     },
     {
       id: "vcs.worktrees",
@@ -248,7 +295,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["worktree"],
-      run: showWorktrees,
+      run: ({ arg }) => showWorktrees(argRepo(arg)),
     },
     {
       id: "vcs.fetch",
@@ -256,7 +303,16 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "git-fetch",
       when: VCS,
-      run: () => void runRemote({ op: "fetch" }, undefined, allRepos()),
+      run: ({ arg }) => {
+        const repos = argRepos(arg) ?? allRepos();
+        const detail =
+          repos.length > 1
+            ? `${repos.length} repositories`
+            : repos[0] && useVcs.getState().roots.length > 1
+              ? repoName(repos[0])
+              : undefined;
+        void runRemote({ op: "fetch" }, detail, repos);
+      },
     },
     {
       id: "vcs.refresh",
@@ -404,8 +460,10 @@ export function registerVcsActions(): () => void {
       when: VCS,
       // `{ repos }` (Branches popup with several repositories): in each of them.
       run: ({ arg }) => {
-        const repos = (arg as { repos?: unknown } | undefined)?.repos;
-        void (Array.isArray(repos) && repos.length ? newBranchInRepos(repos as string[]) : newBranch());
+        const repos = argRepos(arg);
+        if (repos && repos.length > 1) return void newBranchInRepos(repos);
+        if (repos?.length === 1) return void focusRepo(repos[0]!).then(() => newBranch());
+        void newBranch();
       },
     },
     {
@@ -471,14 +529,14 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "stash",
       when: VCS,
-      run: () => void stashChanges(),
+      run: ({ arg }) => void stashChanges(argRepo(arg)),
     },
     {
       id: "vcs.unstash",
       title: "Unstash Changes…",
       category: "Git",
       when: VCS,
-      run: () => showUnstashDialog(),
+      run: ({ arg }) => showUnstashDialog(0, argRepo(arg)),
     },
     {
       id: "vcs.resolveConflicts",

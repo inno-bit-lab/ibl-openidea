@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Branch, BranchInfo, Commit, FileStatus } from "@/bindings";
 
 const vcsStatus = vi.fn();
+const vcsBranches = vi.fn();
+const vcsRoots = vi.fn();
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -10,8 +12,9 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
     commands: {
       ...real.commands,
       vcsStatus: () => vcsStatus(),
+      vcsBranches: (repo: string | null) => vcsBranches(repo),
       vcsBranchInfo: async () => ({ status: "ok", data: info() }),
-      vcsRoots: async () => ({ status: "ok", data: [{ root: "/p", operation: null }] }),
+      vcsRoots: () => vcsRoots(),
     },
   };
 });
@@ -32,7 +35,7 @@ import {
   toEntries,
   undoCommitProblem,
 } from "../rebasePlan";
-import { refreshNow, useVcs } from "../store";
+import { loadBranches, refreshNow, selectRepo, useVcs } from "../store";
 
 const info = (patch: Partial<BranchInfo> = {}): BranchInfo => ({
   head: "main",
@@ -234,7 +237,9 @@ describe("log ordering and staleness", () => {
 describe("status refresh", () => {
   beforeEach(() => {
     vcsStatus.mockReset();
-    useVcs.setState({ available: true, branchesLoaded: false, stashesLoaded: false, status: [] });
+    vcsBranches.mockReset();
+    vcsRoots.mockReset().mockResolvedValue({ status: "ok", data: [{ root: "/p", operation: null, head: "main", headCommit: "c3" }] });
+    useVcs.setState({ root: "/p", roots: ["/p"], repo: "/p", available: true, branches: [], branchesLoaded: false, stashesLoaded: false, status: [] });
   });
 
   it("a refresh requested while one is running resolves only after a newer refresh", async () => {
@@ -253,5 +258,108 @@ describe("status refresh", () => {
     await second;
     expect(useVcs.getState().status.map((f) => f.relPath)).toEqual(["after.ts"]);
     expect(vcsStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not overwrite loaded branches when selectRepo + loadBranches finish before a slow vcsStatus refresh", async () => {
+    let releaseStatus: (v: unknown) => void = () => {};
+    vcsRoots.mockResolvedValue({
+      status: "ok",
+      data: [
+        { root: "/p/repo-a", operation: null, head: "main", headCommit: "a1" },
+        { root: "/p/repo-b", operation: null, head: "develop", headCommit: "b1" },
+      ],
+    });
+    vcsStatus.mockImplementationOnce(() => new Promise((r) => (releaseStatus = r)));
+    const repoBBranches = [branch("develop", "b1"), branch("origin/develop", "b1", true)];
+    vcsBranches.mockImplementation(async (repo: string | null) => ({
+      status: "ok",
+      data: repo === "/p/repo-b" ? repoBBranches : [branch("main", "a1")],
+    }));
+
+    useVcs.setState({
+      root: "/p",
+      roots: ["/p/repo-a", "/p/repo-b"],
+      repo: "/p/repo-a",
+      branches: [branch("main", "a1")],
+      branchesLoaded: true,
+    });
+
+    // Selecting repo-b starts refreshNow() (blocked on slow vcsStatus) and loads repo-b's branches quickly.
+    const selecting = selectRepo("/p/repo-b");
+    await loadBranches();
+    expect(useVcs.getState().branches).toEqual(repoBBranches);
+    expect(useVcs.getState().branchesLoaded).toBe(true);
+
+    // When the slow multi-repo vcsStatus finally settles, it must not wipe branches back to [].
+    releaseStatus({ status: "ok", data: [] });
+    await selecting;
+    expect(useVcs.getState().repo).toBe("/p/repo-b");
+    expect(useVcs.getState().branches).toEqual(repoBBranches);
+    expect(useVcs.getState().branchesLoaded).toBe(true);
+    expect(useVcs.getState().branchesRepo).toBe("/p/repo-b");
+  });
+
+  it("loads final repository branches across rapid repo-a -> repo-b -> repo-c switches while repo-b is still in flight", async () => {
+    let releaseRepoBBranches: (v: unknown) => void = () => {};
+    const repoABranches = [branch("main", "a1")];
+    const repoBBranches = [branch("develop", "b1")];
+    const repoCBranches = [branch("release/pi5", "c1"), branch("origin/release/pi5", "c1", true)];
+    vcsRoots.mockResolvedValue({
+      status: "ok",
+      data: [
+        { root: "/p/repo-a", operation: null, head: "main", headCommit: "a1" },
+        { root: "/p/repo-b", operation: null, head: "develop", headCommit: "b1" },
+        { root: "/p/repo-c", operation: null, head: "release/pi5", headCommit: "c1" },
+      ],
+    });
+    vcsBranches.mockImplementation((repo: string | null) => {
+      if (repo === "/p/repo-b") return new Promise((r) => (releaseRepoBBranches = r));
+      if (repo === "/p/repo-c") return Promise.resolve({ status: "ok", data: repoCBranches });
+      return Promise.resolve({ status: "ok", data: repoABranches });
+    });
+
+    useVcs.setState({
+      root: "/p",
+      roots: ["/p/repo-a", "/p/repo-b", "/p/repo-c"],
+      repo: "/p/repo-a",
+      heads: {
+        "/p/repo-a": { head: "main", headCommit: "a1" },
+        "/p/repo-b": { head: "develop", headCommit: "b1" },
+        "/p/repo-c": { head: "release/pi5", headCommit: "c1" },
+      },
+      operations: { "/p/repo-a": "merge" },
+      branch: {
+        head: "main",
+        headCommit: "a1",
+        upstream: "origin/main",
+        ahead: 3,
+        behind: 2,
+        operation: "merge",
+      },
+      branches: repoABranches,
+      branchesLoaded: true,
+      branchesRepo: "/p/repo-a",
+    });
+
+    // Switch to repo-b (its vcsBranches stays pending), then immediately switch to repo-c.
+    const p1 = selectRepo("/p/repo-b");
+    expect(useVcs.getState().branch).toEqual({
+      head: "develop",
+      headCommit: "b1",
+      upstream: null,
+      ahead: 0,
+      behind: 0,
+      operation: null,
+    });
+    const p2 = selectRepo("/p/repo-c");
+
+    // Resolve repo-b's stale vcsBranches after repo-c has already been selected.
+    releaseRepoBBranches({ status: "ok", data: repoBBranches });
+    await Promise.all([p1, p2]);
+
+    expect(useVcs.getState().repo).toBe("/p/repo-c");
+    expect(useVcs.getState().branches).toEqual(repoCBranches);
+    expect(useVcs.getState().branchesLoaded).toBe(true);
+    expect(useVcs.getState().branchesRepo).toBe("/p/repo-c");
   });
 });

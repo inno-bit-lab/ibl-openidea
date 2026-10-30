@@ -101,7 +101,12 @@ impl Shared {
     }
 
     fn known_config(&self, provider: &str) -> Vec<AgentConfigOption> {
-        self.known.lock().get(provider).map(|k| k.config.clone()).unwrap_or_default()
+        let cached = self.known.lock().get(provider).map(|k| k.config.clone()).unwrap_or_default();
+        if cached.is_empty() {
+            default_known_config(provider)
+        } else {
+            cached
+        }
     }
 
     /// The commands the agent offered last time in this project.
@@ -141,6 +146,44 @@ impl Shared {
             tracing::warn!("saving agent settings: {e}");
         }
     }
+}
+
+/// Lists agents and their known/default settings without requiring an open project.
+pub fn providers_from(custom_agents_dir: Option<&Path>, models_file: &Path) -> Vec<AgentProvider> {
+    let known: HashMap<String, Known> =
+        std::fs::read(models_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    provider::load(custom_agents_dir)
+        .into_iter()
+        .map(|p| {
+            let config = known
+                .get(&p.id)
+                .map(|k| k.config.clone())
+                .filter(|c| !c.is_empty())
+                .unwrap_or_else(|| default_known_config(&p.id));
+            AgentProvider {
+                id: p.id,
+                name: p.name,
+                command: std::iter::once(p.command.as_str())
+                    .chain(p.args.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                installed: provider::installed(&p.command),
+                config,
+                commands: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// Saves or resets custom CLI arguments for `provider` in `<custom_agents_dir>/<provider>.toml`.
+pub fn set_custom_args_in(
+    custom_agents_dir: &Path,
+    models_file: &Path,
+    provider: &str,
+    args: &[String],
+) -> IdeResult<Vec<AgentProvider>> {
+    provider::set_custom_args(custom_agents_dir, provider, args).map_err(|e| IdeError::internal(e.to_string()))?;
+    Ok(providers_from(Some(custom_agents_dir), models_file))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -203,7 +246,8 @@ impl AgentManager {
     /// Loads the project's saved tasks. Spawned work runs on `runtime`.
     pub fn new(paths: AgentPaths, runtime: tokio::runtime::Handle) -> Self {
         let connector: Connector = Arc::new(|spec, cwd, client, on_stderr| {
-            Peer::spawn_framed(&spec.command, &spec.args, cwd, &spec.env, client, on_stderr, Framing::Lines)
+            let (command, args) = provider::resolve_spawn(spec);
+            Peer::spawn_framed(&command, &args, cwd, &spec.env, client, on_stderr, Framing::Lines)
         });
         Self::with_connector(paths, runtime, connector)
     }
@@ -277,6 +321,83 @@ impl AgentManager {
         list
     }
 
+    /// Saves or resets custom CLI arguments for `provider` and returns the updated provider list.
+    pub fn set_custom_args(&self, provider: &str, args: &[String]) -> IdeResult<Vec<AgentProvider>> {
+        let dir = self
+            .shared
+            .paths
+            .custom_agents_dir
+            .as_deref()
+            .ok_or_else(|| IdeError::unavailable("custom agents directory is not configured"))?;
+        provider::set_custom_args(dir, provider, args).map_err(|e| IdeError::internal(e.to_string()))?;
+        Ok(self.providers())
+    }
+
+    /// Asks `provider` one question and returns its answer. The agent runs in a throwaway
+    /// session in the project directory, which is not kept as a task, and can only answer in
+    /// text: every permission it asks for is refused.
+    pub async fn complete(
+        &self,
+        provider: &str,
+        prompt: &str,
+        config: &[AgentConfigChoice],
+        timeout: Duration,
+    ) -> IdeResult<String> {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return Err(IdeError::invalid("nothing to ask"));
+        }
+        let spec = provider::load(self.shared.paths.custom_agents_dir.as_deref())
+            .into_iter()
+            .find(|p| p.id == provider)
+            .ok_or_else(|| IdeError::invalid(format!("unknown agent {provider}")))?;
+        let collector = Arc::new(Collector::default());
+        let stderr: Arc<Mutex<VecDeque<String>>> = Arc::default();
+        let on_stderr: Box<dyn Fn(String) + Send + Sync> = {
+            let stderr = stderr.clone();
+            Box::new(move |line| {
+                let mut buf = stderr.lock();
+                if buf.len() == STDERR_LINES {
+                    buf.pop_front();
+                }
+                buf.push_back(line);
+            })
+        };
+        let cwd = self.shared.paths.project_root.clone();
+        let fallback_config = self.shared.known_config(&spec.id);
+        let peer = (self.shared.connector)(&spec, &cwd, collector.clone(), on_stderr)
+            .map_err(|e| IdeError::unavailable(format!("Couldn't start {} (`{}`): {e}", spec.name, spec.command)))?;
+        let outcome =
+            match tokio::time::timeout(timeout, ask(&peer, &cwd, prompt, config, &fallback_config, &collector)).await {
+                Ok(Ok((stop, options))) => {
+                    if !options.is_empty() {
+                        self.shared.remember(&spec.id, Some(&options), None);
+                    }
+                    if stop == "refusal" {
+                        Err(format!("{} refused to answer.", spec.name))
+                    } else if stop == "cancelled" {
+                        Err(format!("{} stopped before answering.", spec.name))
+                    } else {
+                        // The last updates of a turn can trail its response.
+                        tokio::time::sleep(TURN_GRACE).await;
+                        Ok(collector.text.lock().trim().to_owned())
+                    }
+                }
+                // Signed out, or the account was refused (Claude Code: "API Error: 403").
+                Ok(Err(RpcError::Server { message, .. })) if message.to_lowercase().contains("auth") => {
+                    Err(format!("{} needs you to sign in. {}", spec.name, spec.login_hint))
+                }
+                Ok(Err(e)) => Err(describe_error(e, &stderr.lock())),
+                Err(_) => Err(format!("{} didn't answer within {} seconds.", spec.name, timeout.as_secs())),
+            };
+        peer.kill();
+        match outcome {
+            Ok(text) if !text.is_empty() => Ok(text),
+            Ok(_) => Err(IdeError::unavailable(format!("{} returned no text.", spec.name))),
+            Err(message) => Err(IdeError::unavailable(message)),
+        }
+    }
+
     /// The slash commands to complete for `provider`, in `task`'s directory or (without one)
     /// in the project: what the agent offered last time there, plus, for Claude Code, the
     /// skills and custom commands on disk it has not listed.
@@ -333,7 +454,10 @@ impl AgentManager {
         // Until the session reports its own, show what the agent offered last time with the choices applied.
         let mut config = self.shared.known_config(&spec.id);
         for choice in &req.config {
-            if let Some(o) = config.iter_mut().find(|o| o.id == choice.id) {
+            if let Some(o) = config
+                .iter_mut()
+                .find(|o| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str()))
+            {
                 o.current = Some(choice.value.clone());
             }
         }
@@ -357,13 +481,14 @@ impl AgentManager {
             usage: None,
             queue: Vec::new(),
         };
+        let instructions = req.instructions.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
         let file = TaskFile { task: task.clone(), session_id: None, entries: Vec::new(), wanted: req.config, before };
         let handle = Task::restore(file, self.shared.clone());
         handle.state.lock().busy = true;
         self.tasks.write().insert(task.id.clone(), handle.clone());
         handle.emit_task();
         handle.persist();
-        self.shared.runtime.spawn(async move { handle.run(prompt).await });
+        self.shared.runtime.spawn(async move { handle.run(prompt, instructions).await });
         Ok(task)
     }
 
@@ -392,7 +517,7 @@ impl AgentManager {
         };
         match start {
             Some(prompt) => {
-                self.shared.runtime.spawn(async move { task.run(prompt).await });
+                self.shared.runtime.spawn(async move { task.run(prompt, None).await });
             }
             None => {
                 task.persist();
@@ -440,7 +565,7 @@ impl AgentManager {
         task.emit_task();
         match idle {
             Some(item) => {
-                self.shared.runtime.spawn(async move { task.run(item.prompt).await });
+                self.shared.runtime.spawn(async move { task.run(item.prompt, None).await });
             }
             None => {
                 task.send_now.store(true, Ordering::Release);
@@ -671,9 +796,9 @@ impl Task {
 
     /// Runs `prompt`, then the queued messages, until the queue is empty, a turn fails, or
     /// the user stops one. The caller set `busy`.
-    async fn run(self: Arc<Self>, mut prompt: AgentPrompt) {
+    async fn run(self: Arc<Self>, mut prompt: AgentPrompt, mut instructions: Option<String>) {
         loop {
-            let result = self.turn(&prompt).await;
+            let result = self.turn(&prompt, instructions.take().as_deref()).await;
             tokio::time::sleep(TURN_GRACE).await;
             let changed = self.state.lock().timeline.end_turn(Some(now_ms()));
             self.mark_dirty(changed);
@@ -712,7 +837,7 @@ impl Task {
     }
 
     /// Sends one prompt, starting the agent first if needed; returns the stop reason.
-    async fn turn(self: &Arc<Self>, prompt: &AgentPrompt) -> Result<String, String> {
+    async fn turn(self: &Arc<Self>, prompt: &AgentPrompt, instructions: Option<&str>) -> Result<String, String> {
         let attachments = prompt
             .files
             .iter()
@@ -739,9 +864,29 @@ impl Task {
         } else {
             Vec::new()
         };
+        let wire_prompt;
+        let outgoing = match instructions.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(inst) if prompt.text.is_empty() => {
+                wire_prompt = AgentPrompt {
+                    text: inst.to_owned(),
+                    files: prompt.files.clone(),
+                    images: prompt.images.clone(),
+                };
+                &wire_prompt
+            }
+            Some(inst) => {
+                wire_prompt = AgentPrompt {
+                    text: format!("{inst}\n\n{}", prompt.text),
+                    files: prompt.files.clone(),
+                    images: prompt.images.clone(),
+                };
+                &wire_prompt
+            }
+            None => prompt,
+        };
         let result: Result<Value, RpcError> = live
             .peer
-            .request("session/prompt", json!({ "sessionId": live.session, "prompt": blocks(prompt, &contents) }), None)
+            .request("session/prompt", json!({ "sessionId": live.session, "prompt": blocks(outgoing, &contents) }), None)
             .await;
         match result {
             Ok(v) => Ok(v.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned()),
@@ -842,7 +987,13 @@ impl Task {
         };
         self.shared.remember(&provider_id, Some(&options), None);
         for choice in &wanted {
-            let Some(o) = options.iter().find(|o| o.id == choice.id).cloned() else { continue };
+            let Some(o) = options
+                .iter()
+                .find(|o| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str()))
+                .cloned()
+            else {
+                continue;
+            };
             let already = known && o.current.as_deref() == Some(choice.value.as_str());
             if already || !o.values.iter().any(|v| v.value == choice.value) {
                 continue;
@@ -854,8 +1005,8 @@ impl Task {
                     if let Some(fresh) = reply.get("configOptions") {
                         config::merge_update(&mut options, fresh);
                     }
-                    if let Some(o) = options.iter_mut().find(|o| o.id == choice.id) {
-                        o.current = Some(choice.value.clone());
+                    if let Some(target) = options.iter_mut().find(|opt| opt.id == o.id) {
+                        target.current = Some(choice.value.clone());
                     }
                 }
                 Err(e) => tracing::warn!("agent task {}: setting {} to {} failed: {e}", self.id, o.id, choice.value),
@@ -876,18 +1027,7 @@ impl Task {
 
     /// A user-facing message for a failed request, with the agent's last stderr lines when it died.
     fn describe(&self, e: RpcError) -> String {
-        match e {
-            RpcError::Closed => {
-                let tail: Vec<String> = self.stderr.lock().iter().cloned().collect();
-                if tail.is_empty() {
-                    "The agent process exited.".into()
-                } else {
-                    format!("The agent process exited:\n{}", tail.join("\n"))
-                }
-            }
-            RpcError::Server { message, .. } => message,
-            e => e.to_string(),
-        }
+        describe_error(e, &self.stderr.lock())
     }
 
     fn on_update(self: &Arc<Self>, update: &Value) {
@@ -1042,6 +1182,341 @@ impl Handler for Client {
             "session/request_permission" => Ok(task.ask_permission(&params)),
             _ => Err((codes::METHOD_NOT_FOUND, format!("unsupported method {method}"))),
         }
+    }
+}
+
+/// Gathers what an agent says in a throwaway session and refuses whatever it asks for.
+#[derive(Default)]
+struct Collector {
+    text: Mutex<String>,
+    config_updates: Mutex<Vec<Value>>,
+}
+
+impl Handler for Collector {
+    fn on_notification(&self, method: &str, params: Value) {
+        let Some(update) = params.get("update").filter(|_| method == "session/update") else { return };
+        match update.get("sessionUpdate").and_then(Value::as_str) {
+            Some("agent_message_chunk") => {
+                if let Some(text) = update.pointer("/content/text").and_then(Value::as_str) {
+                    self.text.lock().push_str(text);
+                }
+            }
+            Some("config_option_update") => {
+                if let Some(opts) = update.get("configOptions") {
+                    self.config_updates.lock().push(opts.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_request(&self, method: &str, _: Value) -> Result<Value, (i64, String)> {
+        match method {
+            "session/request_permission" => Ok(json!({ "outcome": { "outcome": "cancelled" } })),
+            _ => Err((codes::METHOD_NOT_FOUND, format!("unsupported method {method}"))),
+        }
+    }
+}
+
+/// One question in a new session (`initialize`, `session/new`, optional `session/set_*`, `session/prompt`).
+async fn ask(
+    peer: &Peer,
+    cwd: &Path,
+    prompt: &str,
+    config: &[AgentConfigChoice],
+    fallback_config: &[AgentConfigOption],
+    collector: &Collector,
+) -> Result<(String, Vec<AgentConfigOption>), RpcError> {
+    peer.request::<_, Value>(
+        "initialize",
+        json!({
+            "protocolVersion": 1,
+            "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false },
+            "clientInfo": { "name": "OpenIDEA", "version": env!("CARGO_PKG_VERSION") },
+        }),
+        None,
+    )
+    .await?;
+    let cwd = cwd.to_string_lossy().into_owned();
+    let session: Value = peer.request("session/new", json!({ "cwd": cwd, "mcpServers": [] }), None).await?;
+    let id = session
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::Protocol("the agent returned no session".into()))?;
+    let mut options = config::options_of(&session);
+    for update in collector.config_updates.lock().drain(..) {
+        config::merge_update(&mut options, &update);
+    }
+    let has_reported = !options.is_empty();
+    for choice in config {
+        let value = choice.value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let matches = |o: &AgentConfigOption| {
+            o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str())
+        };
+        let target = options
+            .iter()
+            .find(|o| matches(o))
+            .cloned()
+            .or_else(|| fallback_config.iter().find(|o| matches(o)).cloned())
+            .unwrap_or_else(|| AgentConfigOption {
+                id: choice.id.clone(),
+                name: choice.id.clone(),
+                description: None,
+                category: Some(choice.id.clone()),
+                current: None,
+                values: Vec::new(),
+                via: AgentConfigVia::Option,
+            });
+        if has_reported && target.current.as_deref() == Some(value) {
+            continue;
+        }
+        let (method, mut params) = config::set_request(&target, value);
+        params["sessionId"] = json!(id);
+        match peer.request::<_, Value>(method, params, None).await {
+            Ok(reply) => {
+                if let Some(fresh) = reply.get("configOptions") {
+                    config::merge_update(&mut options, fresh);
+                }
+                if let Some(o) = options.iter_mut().find(|o| o.id == target.id) {
+                    o.current = Some(value.to_owned());
+                }
+            }
+            Err(e) => tracing::warn!("complete: setting {} to {} failed: {e}", target.id, value),
+        }
+    }
+    let reply: Value = peer
+        .request("session/prompt", json!({ "sessionId": id, "prompt": [{ "type": "text", "text": prompt }] }), None)
+        .await?;
+    let stop = reply.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned();
+    Ok((stop, options))
+}
+
+fn opt_value(value: &str, name: &str, description: Option<&str>) -> AgentConfigValue {
+    AgentConfigValue { value: value.into(), name: name.into(), description: description.map(Into::into) }
+}
+
+fn default_known_config(provider: &str) -> Vec<AgentConfigOption> {
+    match provider {
+        "agy" => vec![
+            AgentConfigOption {
+                id: "model".into(),
+                name: "Model".into(),
+                description: None,
+                category: Some("model".into()),
+                current: Some("gemini-4-argon".into()),
+                values: vec![
+                    opt_value("gemini-4-argon", "Gemini 4 Argon", None),
+                    opt_value("gemini-3.8-flash", "Gemini 3.8 Flash", None),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "thinking_level".into(),
+                name: "Thinking Level".into(),
+                description: None,
+                category: Some("thought_level".into()),
+                current: Some("high".into()),
+                values: vec![
+                    opt_value("low", "Low", None),
+                    opt_value("medium", "Medium", None),
+                    opt_value("high", "High", None),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "mode".into(),
+                name: "Session Mode".into(),
+                description: None,
+                category: Some("mode".into()),
+                current: Some("yolo".into()),
+                values: vec![
+                    opt_value("default", "Default", Some("Default permission prompt flow")),
+                    opt_value("auto_edit", "Auto Edit", Some("Auto-approve file edit tools")),
+                    opt_value("yolo", "YOLO", Some("Auto-approve all tools")),
+                ],
+                via: AgentConfigVia::Option,
+            },
+        ],
+        "pi" => vec![
+            AgentConfigOption {
+                id: "model".into(),
+                name: "Model".into(),
+                description: None,
+                category: Some("model".into()),
+                current: Some("anthropic/claude-sonnet-4-6".into()),
+                values: vec![
+                    opt_value("anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6", None),
+                    opt_value("anthropic/claude-opus-4-7", "Claude Opus 4.7", None),
+                    opt_value("anthropic/claude-haiku-4-5", "Claude Haiku 4.5", None),
+                    opt_value("openai-codex/gpt-5.4", "GPT-5.4 (Codex)", None),
+                    opt_value("openai-codex/gpt-5.4-mini", "GPT-5.4 mini (Codex)", None),
+                    opt_value("google/gemini-2.5-pro", "Gemini 2.5 Pro", None),
+                    opt_value("google/gemini-2.5-flash", "Gemini 2.5 Flash", None),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "thought_level".into(),
+                name: "Thinking Level".into(),
+                description: None,
+                category: Some("thought_level".into()),
+                current: Some("medium".into()),
+                values: vec![
+                    opt_value("low", "Low", None),
+                    opt_value("medium", "Medium", None),
+                    opt_value("high", "High", None),
+                    opt_value("max", "Max", None),
+                ],
+                via: AgentConfigVia::Option,
+            },
+        ],
+        "codex" => vec![
+            AgentConfigOption {
+                id: "mode".into(),
+                name: "Approval Preset".into(),
+                description: Some("Choose an approval and sandboxing preset for your session".into()),
+                category: Some("mode".into()),
+                current: Some("auto".into()),
+                values: vec![
+                    opt_value("read-only", "Read Only", Some("Codex can read files in the current workspace.")),
+                    opt_value("auto", "Default", Some("Codex can read and edit files, and run commands.")),
+                    opt_value("full-access", "Full Access", Some("Codex can edit files and run commands without asking.")),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "model".into(),
+                name: "Model".into(),
+                description: Some("Choose which model Codex should use".into()),
+                category: Some("model".into()),
+                current: Some("gpt-5.4".into()),
+                values: vec![
+                    opt_value("gpt-5.4", "gpt-5.4", Some("Latest frontier agentic coding model.")),
+                    opt_value("gpt-5.4-mini", "gpt-5.4-mini", Some("Smaller frontier agentic coding model.")),
+                    opt_value("gpt-5.3-codex", "gpt-5.3-codex", Some("Frontier Codex-optimized agentic coding model.")),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "reasoning_effort".into(),
+                name: "Reasoning Effort".into(),
+                description: Some("Choose how much reasoning effort the model should use".into()),
+                category: Some("thought_level".into()),
+                current: Some("medium".into()),
+                values: vec![
+                    opt_value("low", "Low", Some("Fast responses with lighter reasoning")),
+                    opt_value("medium", "Medium", Some("Balances speed and reasoning depth")),
+                    opt_value("high", "High", Some("Greater reasoning depth for complex problems")),
+                    opt_value("xhigh", "Extra High", Some("Extra high reasoning depth for complex problems")),
+                ],
+                via: AgentConfigVia::Option,
+            },
+        ],
+        "claude" => vec![
+            AgentConfigOption {
+                id: "mode".into(),
+                name: "Mode".into(),
+                description: Some("The permission mode of the session".into()),
+                category: Some("mode".into()),
+                current: Some("default".into()),
+                values: vec![
+                    opt_value("default", "Default", Some("Prompts for permission on first use of each tool")),
+                    opt_value("acceptEdits", "Accept Edits", Some("Automatically accepts file edit permissions")),
+                    opt_value("plan", "Plan Mode", Some("Claude can analyze and plan but not modify files")),
+                    opt_value("dontAsk", "Don't Ask", Some("Skips permission prompts for allowed tools")),
+                    opt_value("bypassPermissions", "Bypass Permissions", Some("Bypasses all permission checks")),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "model".into(),
+                name: "Model".into(),
+                description: None,
+                category: Some("model".into()),
+                current: Some("default".into()),
+                values: vec![
+                    opt_value("default", "Default (recommended)", Some("Opus 4.7 for complex work")),
+                    opt_value("sonnet", "Sonnet", Some("Sonnet 4.6 for everyday tasks")),
+                    opt_value("haiku", "Haiku", Some("Haiku 4.5 for quick answers")),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "thought_level".into(),
+                name: "Thinking".into(),
+                description: Some("Controls how deeply Claude reasons".into()),
+                category: Some("thought_level".into()),
+                current: Some("high".into()),
+                values: vec![
+                    opt_value("low", "Low", Some("Fast responses with minimal thinking")),
+                    opt_value("medium", "Medium", Some("Moderate thinking for everyday tasks")),
+                    opt_value("high", "High", Some("Deep thinking for complex tasks")),
+                    opt_value("xhigh", "xHigh", Some("Extra deep thinking for demanding tasks")),
+                    opt_value("max", "Max", Some("Maximum thinking depth")),
+                ],
+                via: AgentConfigVia::Option,
+            },
+        ],
+        "copilot" => vec![
+            AgentConfigOption {
+                id: "mode".into(),
+                name: "Mode".into(),
+                description: None,
+                category: Some("mode".into()),
+                current: Some("https://agentclientprotocol.com/protocol/session-modes#agent".into()),
+                values: vec![
+                    opt_value("https://agentclientprotocol.com/protocol/session-modes#agent", "Agent", None),
+                    opt_value("https://agentclientprotocol.com/protocol/session-modes#plan", "Plan", None),
+                    opt_value("https://agentclientprotocol.com/protocol/session-modes#autopilot", "Autopilot", None),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "model".into(),
+                name: "Model".into(),
+                description: None,
+                category: Some("model".into()),
+                current: Some("auto".into()),
+                values: vec![
+                    opt_value("auto", "Auto", None),
+                    opt_value("claude-sonnet-4.6", "Claude Sonnet 4.6", None),
+                    opt_value("claude-opus-4.6", "Claude Opus 4.6", None),
+                    opt_value("gpt-5.4", "GPT-5.4", None),
+                    opt_value("gpt-5.4-mini", "GPT-5.4 mini", None),
+                ],
+                via: AgentConfigVia::Option,
+            },
+            AgentConfigOption {
+                id: "thought_level".into(),
+                name: "Reasoning Effort".into(),
+                description: None,
+                category: Some("thought_level".into()),
+                current: Some("medium".into()),
+                values: vec![
+                    opt_value("low", "Low", None),
+                    opt_value("medium", "Medium", None),
+                    opt_value("high", "High", None),
+                    opt_value("xhigh", "Extra High", None),
+                ],
+                via: AgentConfigVia::Option,
+            },
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// A user-facing message for a failed request, with the agent's last stderr lines when it died.
+fn describe_error(e: RpcError, stderr: &VecDeque<String>) -> String {
+    match e {
+        RpcError::Closed if stderr.is_empty() => "The agent process exited.".into(),
+        RpcError::Closed => {
+            format!("The agent process exited:\n{}", stderr.iter().map(String::as_str).collect::<Vec<_>>().join("\n"))
+        }
+        RpcError::Server { message, .. } => message,
+        e => e.to_string(),
     }
 }
 

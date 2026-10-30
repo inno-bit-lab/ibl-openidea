@@ -12,6 +12,7 @@ import {
   IconButton,
   List,
   Menu,
+  Select,
   SplitGroup,
   SplitHandle,
   SplitPanel,
@@ -35,9 +36,12 @@ import {
   planCommit,
   toggledCheck,
   type ChangeNode,
+  type CheckState,
+  type CommitPlan,
 } from "./changes";
 import { applyStash, commitChanges, dropStash, showUnstashDialog, stashChanges } from "./changeOps";
 import { CommitOptionsPopup } from "./CommitOptions";
+import { suggestCommitMessage } from "./commitSuggest";
 import { DEFAULT_LIST_NAME, useChangelists, withListDefaults } from "./changelists";
 import { moveToChangelist } from "./changelistsUi";
 import { messageHistory, setAmend, setGroupByDir, useCommit, type CommitTab } from "./commitStore";
@@ -46,7 +50,7 @@ import { KIND_COLOR, KIND_LABEL, fileCount, formatTime, stashLabel, stripSlash }
 import { call, commands } from "@/platform/ipc";
 import { OperationBanner } from "./operations";
 import { ShelfPanel, loadShelves, useShelf } from "./shelf";
-import { loadStashes, refreshNow, useVcs } from "./store";
+import { loadStashes, refreshNow, repoName, selectRepo, useVcs } from "./store";
 import styles from "./CommitView.module.css";
 
 /** MIME type of changed files dragged between change lists (absolute paths, newline-separated). */
@@ -501,7 +505,7 @@ function ChangesPanel() {
       </SplitPanel>
       <SplitHandle />
       <SplitPanel defaultSize="38%" minSize="120px">
-        <CommitMessage included={plan.included.length} />
+        <CommitMessage plan={plan} checks={checks} />
       </SplitPanel>
     </SplitGroup>
   );
@@ -543,7 +547,8 @@ export function wrapAtMargin(text: string, caret: number, limit: number): { text
   return { text: `${text.slice(0, at)}\n${text.slice(at + 1)}`, caret };
 }
 
-function CommitMessage({ included }: { included: number }) {
+function CommitMessage({ plan, checks }: { plan: CommitPlan; checks: ReadonlyMap<string, CheckState> }) {
+  const included = plan.included.length;
   const message = useCommit((s) => s.message);
   const amend = useCommit((s) => s.amend);
   const focusTick = useCommit((s) => s.focusTick);
@@ -556,6 +561,8 @@ function CommitMessage({ included }: { included: number }) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [emptyError, setEmptyError] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
   const historyTick = useCommit((s) => s.historyTick);
   const checkProblems = useCommit((s) => s.checkProblems);
 
@@ -598,6 +605,34 @@ function CommitMessage({ included }: { included: number }) {
     }
   };
 
+  /** Asks the agent chosen in Settings › Version Control › Commit for a message for the included changes. */
+  const suggest = async () => {
+    if (suggesting) return;
+    if (!cfg.suggestAgent) {
+      setSuggestError(tx("Choose an agent to suggest commit messages in the Commit settings."));
+      return;
+    }
+    setSuggesting(true);
+    setSuggestError(null);
+    try {
+      const text = await suggestCommitMessage({
+        agent: cfg.suggestAgent,
+        model: cfg.suggestModel,
+        thinking: cfg.suggestThinking,
+        rules: cfg.suggestRules,
+        subjectLimit: cfg.limitSubject ? cfg.subjectLimit : null,
+        included: plan.included,
+        checks,
+      });
+      useCommit.setState({ message: text });
+      setEmptyError(false);
+    } catch (e) {
+      setSuggestError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
   const history = messageHistory();
   const canCommit = (included > 0 || amend || merging) && !busy;
 
@@ -630,6 +665,13 @@ function CommitMessage({ included }: { included: number }) {
             },
           }))}
         />
+        <IconButton
+          icon="toolwindow-agents"
+          title={suggesting ? "Suggesting a commit message…" : "Suggest Commit Message"}
+          size="small"
+          disabled={!included || suggesting}
+          onClick={() => void suggest()}
+        />
         <span className={styles.grow} />
         {tooLong && (
           <span className={clsx(styles.lineLen, styles.lineLenWarn)} title={tx("Subject line length")}>
@@ -652,6 +694,7 @@ function CommitMessage({ included }: { included: number }) {
             cfg.limitBody && cfg.wrapAtMargin ? wrapAtMargin(el.value, el.selectionStart, cfg.bodyLimit) : null;
           useCommit.setState({ message: wrapped?.text ?? el.value });
           setEmptyError(false);
+          setSuggestError(null);
           if (wrapped) requestAnimationFrame(() => el.setSelectionRange(wrapped.caret, wrapped.caret));
         }}
         onKeyDown={(e) => {
@@ -666,6 +709,23 @@ function CommitMessage({ included }: { included: number }) {
       {emptyError && (
         <div className={clsx(styles.inspections, styles.inspectionError)} role="alert">
           <T>Specify commit message</T>
+        </div>
+      )}
+      {suggestError && (
+        <div className={clsx(styles.inspections, styles.inspectionError)} role="alert">
+          {suggestError}
+          {!cfg.suggestAgent && (
+            <>
+              {" "}
+              <button
+                type="button"
+                className={styles.checkProblemLink}
+                onClick={() => void executeAction("file.settings", "vcs.commit")}
+              >
+                <T>Open Settings</T>
+              </button>
+            </>
+          )}
         </div>
       )}
       {problems.length > 0 && (
@@ -729,37 +789,55 @@ function CommitMessage({ included }: { included: number }) {
 function StashesPanel() {
   const stashes = useVcs((s) => s.stashes);
   const loaded = useVcs((s) => s.stashesLoaded);
+  const roots = useVcs((s) => s.roots);
+  const repo = useVcs((s) => s.repo);
   const [active, setActive] = useState(0);
   useEffect(() => {
     void loadStashes().catch(() => undefined);
-  }, []);
+  }, [repo]);
   const current = stashes[active];
   return (
     <div className={styles.changes}>
       <div className={styles.toolbar} role="toolbar" aria-label={tx("Stashes")}>
+        {roots.length > 1 && (
+          <Select
+            aria-label="Repository"
+            value={repo ?? roots[0] ?? null}
+            options={roots.map((r) => ({ value: r, label: repoName(r), icon: "folder" }))}
+            onChange={(r) => {
+              selectRepo(r);
+              void loadStashes().catch(() => undefined);
+            }}
+          />
+        )}
         <IconButton icon="refresh" title="Refresh" size="small" onClick={() => void loadStashes()} />
-        <IconButton icon="plus" title="Stash Changes…" size="small" onClick={() => void stashChanges()} />
+        <IconButton
+          icon="plus"
+          title="Stash Changes…"
+          size="small"
+          onClick={() => void stashChanges(repo ?? undefined)}
+        />
         <span className={styles.sep} />
         <IconButton
           icon="check"
           title="Apply Stash"
           size="small"
           disabled={!current}
-          onClick={() => current && void applyStash(current.index, false)}
+          onClick={() => current && void applyStash(current.index, false, repo)}
         />
         <IconButton
           icon="undo"
           title="Pop Stash (Apply and Drop)"
           size="small"
           disabled={!current}
-          onClick={() => current && void applyStash(current.index, true)}
+          onClick={() => current && void applyStash(current.index, true, repo)}
         />
         <IconButton
           icon="trash"
           title="Drop Stash"
           size="small"
           disabled={!current}
-          onClick={() => current && void dropStash(current.index, current.message)}
+          onClick={() => current && void dropStash(current.index, current.message, repo)}
         />
       </div>
       <List
@@ -773,17 +851,17 @@ function StashesPanel() {
         empty={<span className={styles.empty}>{loaded ? tx("No stashes") : tx("Loading…")}</span>}
         onActivate={(s, _i, e) => {
           if (e.type === "click" && (e as MouseEvent).detail < 2) return;
-          void applyStash(s.index, false);
+          void applyStash(s.index, false, repo);
         }}
         onContextMenu={(s, i, e) => {
           e.preventDefault();
           setActive(i);
           showContextMenu(e, [
-            { label: "Apply Stash", icon: "check", run: () => void applyStash(s.index, false) },
-            { label: "Pop Stash", icon: "undo", run: () => void applyStash(s.index, true) },
-            { label: "Unstash…", run: () => showUnstashDialog(s.index) },
+            { label: "Apply Stash", icon: "check", run: () => void applyStash(s.index, false, repo) },
+            { label: "Pop Stash", icon: "undo", run: () => void applyStash(s.index, true, repo) },
+            { label: "Unstash…", run: () => showUnstashDialog(s.index, repo ?? undefined) },
             { kind: "separator" },
-            { label: "Drop Stash", icon: "trash", run: () => void dropStash(s.index, s.message) },
+            { label: "Drop Stash", icon: "trash", run: () => void dropStash(s.index, s.message, repo) },
           ]);
         }}
         renderItem={(s) => {

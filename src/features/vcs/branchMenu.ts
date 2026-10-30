@@ -11,6 +11,7 @@ import {
   deleteBranch,
   deleteInRepos,
   deleteRemoteBranch,
+  deleteRemoteInRepos,
   mergeInRepos,
   newBranchInRepos,
   rebaseInRepos,
@@ -21,12 +22,13 @@ import {
   renameBranch,
   toggleFavoriteBranch,
   updateBranch,
+  updateInRepos,
   useFavoriteBranches,
 } from "./branchOps";
 import { showCompareBranches } from "./CompareBranches";
 import { showDiffWithWorkingTree } from "./operations";
 import type { CommonBranch } from "./repoBranches";
-import { focusRepo } from "./store";
+import { currentRepo, focusRepo } from "./store";
 import { tx } from "@/platform/i18n";
 
 export function branchMenu(b: Branch, current: string | null, done: () => void = () => {}): MenuItem[] {
@@ -51,8 +53,8 @@ export function branchMenu(b: Branch, current: string | null, done: () => void =
     return [
       { label: tx`New Branch from '${b.name}'…`, icon: "branch", run: run(() => newBranch()) },
       { kind: "separator" },
-      { label: "Update", icon: "git-pull", run: run(() => executeAction("vcs.update")) },
-      { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push")) },
+      { label: "Update", icon: "git-pull", run: run(() => updateBranch(b.name)) },
+      { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push", { branch: b.name, repo: currentRepo() })) },
       { kind: "separator" },
       { label: "Rename…", run: run(() => renameBranch(b.name)) },
       favoriteItem,
@@ -75,7 +77,7 @@ export function branchMenu(b: Branch, current: string | null, done: () => void =
     items.push(
       { kind: "separator" },
       { label: "Update", icon: "git-pull", disabled: !b.upstream, run: run(() => updateBranch(b.name)) },
-      { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push", { branch: b.name })) },
+      { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push", { branch: b.name, repo: currentRepo() })) },
     );
   items.push(
     { kind: "separator" },
@@ -107,35 +109,84 @@ export function tagMenu(tag: string, done: () => void = () => {}): MenuItem[] {
   ];
 }
 
-/** Entries for a branch common to all repositories: each acts in every one of `roots`. */
-export function commonBranchMenu(b: CommonBranch, roots: readonly string[], done: () => void = () => {}): MenuItem[] {
+/** Entries for a branch across multiple repositories: each acts in the relevant `roots`. */
+export function commonBranchMenu(
+  b: CommonBranch,
+  roots: readonly string[],
+  done: () => void = () => {},
+  currentRoots: readonly string[] = b.current ? roots : [],
+): MenuItem[] {
   const run = (fn: () => unknown) => () => {
     done();
     void fn();
+  };
+  loadFavoriteBranches();
+  const favorite = isFavoriteBranch(b, useFavoriteBranches.getState().names);
+  const favoriteItem: MenuItem = {
+    label: favorite ? "Remove from Favorites" : "Add to Favorites",
+    icon: "star",
+    run: run(() =>
+      toggleFavoriteBranch({
+        name: b.name,
+        remote: b.remote,
+        current: b.current,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        lastCommitMs: 0,
+        commit: "",
+      }),
+    ),
+  };
+  const history: MenuItem = {
+    label: "Show History",
+    icon: "history",
+    run: run(() => executeAction("vcs.showLog", { branch: b.name })),
   };
   const newFrom: MenuItem = {
     label: tx`New Branch from '${b.name}'…`,
     icon: "branch",
     run: run(() => newBranchInRepos(roots, b.name)),
   };
-  if (b.current)
+  const nonCurrentRoots = currentRoots.length ? roots.filter((r) => !currentRoots.includes(r)) : roots;
+  const anyCurrent = b.current || currentRoots.length > 0;
+  const pushRoots = currentRoots.length ? currentRoots : roots;
+  if (b.current || !nonCurrentRoots.length)
     return [
       newFrom,
       { kind: "separator" },
-      { label: "Update", icon: "git-pull", run: run(() => executeAction("vcs.update")) },
-      { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push")) },
+      { label: "Update", icon: "git-pull", run: run(() => updateInRepos(b.name, roots, currentRoots.length ? currentRoots : roots)) },
+      { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push", { branch: b.name, repos: pushRoots })) },
+      { kind: "separator" },
+      favoriteItem,
+      history,
     ];
   const items: MenuItem[] = [
-    { label: "Checkout", run: run(() => checkoutInRepos(b.name, roots)) },
+    { label: "Checkout", run: run(() => checkoutInRepos(b.name, nonCurrentRoots)) },
     newFrom,
+    ...(!b.remote
+      ? [
+          { kind: "separator" as const },
+          { label: "Update", icon: "git-pull", run: run(() => updateInRepos(b.name, roots, currentRoots)) },
+          { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push", { branch: b.name, repos: pushRoots })) },
+        ]
+      : []),
     { kind: "separator" },
-    { label: tx`Rebase Current onto '${b.name}'`, run: run(() => rebaseInRepos(b.name, roots)) },
-    { label: tx`Merge '${b.name}' into Current`, run: run(() => mergeInRepos(b.name, roots)) },
+    { label: tx`Rebase Current onto '${b.name}'`, run: run(() => rebaseInRepos(b.name, nonCurrentRoots)) },
+    { label: tx`Merge '${b.name}' into Current`, run: run(() => mergeInRepos(b.name, nonCurrentRoots)) },
+    { kind: "separator" },
+    favoriteItem,
+    history,
   ];
-  if (!b.remote)
+  if (!anyCurrent)
     items.push(
       { kind: "separator" },
-      { label: "Delete", danger: true, icon: "trash", run: run(() => deleteInRepos(b.name, roots)) },
+      {
+        label: "Delete",
+        danger: true,
+        icon: "trash",
+        run: run(() => (b.remote ? deleteRemoteInRepos(b.name, nonCurrentRoots) : deleteInRepos(b.name, nonCurrentRoots))),
+      },
     );
   return items;
 }
@@ -149,7 +200,7 @@ export function inRepo(root: string, items: MenuItem[]): MenuItem[] {
         label: item.label ?? item.action,
         icon: item.icon,
         disabled: item.disabled,
-        run: () => void focusRepo(root).then(() => executeAction(item.action, item.arg)),
+        run: () => void focusRepo(root).then(() => executeAction(item.action, item.arg ?? { repo: root })),
       };
     const run = item.run;
     return {

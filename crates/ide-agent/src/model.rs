@@ -255,6 +255,10 @@ pub struct NewAgentTask {
     pub isolation: Isolation,
     /// Branch to start the worktree from; the current branch when `None`.
     pub base: Option<String>,
+    /// Optional preset instructions prepended to the first prompt sent to the agent,
+    /// while hidden from the session title, branch name, and user transcript entry.
+    #[serde(default)]
+    pub instructions: Option<String>,
 }
 
 /// A file the task changed, relative to [`AgentTask::base_commit`].

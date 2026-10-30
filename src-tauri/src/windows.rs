@@ -59,6 +59,9 @@ pub struct WindowsState {
     launches: Mutex<HashMap<String, Launch>>,
     /// Most recently focused window label (menu events go there).
     last_focused: Mutex<Option<String>>,
+    /// WebView user-data directory chosen for this process when the default
+    /// directory is overridden (dev builds) or busy (`ERROR_BUSY` fallback).
+    webview_data_dir: Mutex<Option<PathBuf>>,
     /// Set by Quit while windows close one by one.
     quitting: AtomicBool,
     /// Relaunch once the quit completes (after installing an update).
@@ -88,6 +91,14 @@ impl WindowsState {
 
     pub fn last_focused(&self) -> Option<String> {
         self.last_focused.lock().clone()
+    }
+
+    pub fn webview_data_dir(&self) -> Option<PathBuf> {
+        self.webview_data_dir.lock().clone()
+    }
+
+    pub fn set_webview_data_dir(&self, dir: PathBuf) {
+        *self.webview_data_dir.lock() = Some(dir);
     }
 
     pub fn set_quitting(&self, on: bool) {
@@ -239,6 +250,102 @@ fn hex_color(hex: &str) -> Option<Color> {
     serde_json::from_value(serde_json::Value::String(hex.to_owned())).ok()
 }
 
+/// Default WebView user-data directory override.
+///
+/// Debug builds disable `tauri_plugin_single_instance` so a dev build can run
+/// alongside an installed release (`lib.rs`). On Windows, WebView2 locks its
+/// `EBWebView` user-data directory per executable/environment and fails with
+/// `HRESULT(0x800700AA)` (`ERROR_BUSY`) when two incompatible instances share
+/// the same directory. Keeping dev builds in `webview-dev` avoids colliding
+/// with a running release build.
+fn default_webview_data_dir(base: Option<PathBuf>, identifier: &str, debug_build: bool) -> Option<PathBuf> {
+    if debug_build {
+        base.map(|d| d.join(identifier).join("webview-dev"))
+    } else {
+        None
+    }
+}
+
+/// Process-isolated WebView user-data directory used when the primary directory
+/// is locked by another instance (e.g. `HRESULT(0x800700AA)` / `ERROR_BUSY`).
+fn fallback_webview_data_dir(base: Option<PathBuf>, identifier: &str, pid: u32) -> PathBuf {
+    base.unwrap_or_else(std::env::temp_dir).join(identifier).join(format!("webview-{pid}"))
+}
+
+/// Removes `webview-<pid>` fallback directories left behind by exited processes.
+/// Active WebView2 instances hold an exclusive lock on `EBWebView/Default/LOCK`,
+/// so `remove_file` fails immediately with `ERROR_SHARING_VIOLATION` without
+/// touching live files.
+fn prune_stale_fallback_dirs(base: Option<&Path>, identifier: &str, current_pid: u32) {
+    let Some(root) = base.map(|d| d.join(identifier)) else { return };
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|s| s.strip_prefix("webview-")).and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == current_pid {
+            continue;
+        }
+        let path = entry.path();
+        let lock = path.join("EBWebView").join("Default").join("LOCK");
+        if lock.exists() && std::fs::remove_file(&lock).is_ok() {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
+fn resolve_webview_data_dir(app: &AppHandle) -> Option<PathBuf> {
+    if let Some(dir) = app.try_state::<WindowsState>().and_then(|s| s.webview_data_dir()) {
+        return Some(dir);
+    }
+    let base = dirs::data_local_dir();
+    prune_stale_fallback_dirs(base.as_deref(), &app.config().identifier, std::process::id());
+    default_webview_data_dir(base, &app.config().identifier, cfg!(debug_assertions))
+}
+
+fn build_webview_window(
+    app: &AppHandle,
+    config: &WindowConfig,
+    parent: Option<&WebviewWindow>,
+) -> tauri::Result<WebviewWindow> {
+    let attempt = |data_dir: Option<PathBuf>| -> tauri::Result<WebviewWindow> {
+        let mut builder = WebviewWindowBuilder::from_config(app, config)?;
+        if let Some(dir) = data_dir {
+            builder = builder.data_directory(dir);
+        }
+        if let Some(p) = parent {
+            builder = builder.parent(p)?;
+        }
+        builder.build()
+    };
+
+    let primary = resolve_webview_data_dir(app);
+    match attempt(primary.clone()) {
+        Ok(window) => Ok(window),
+        Err(first_err) => {
+            let fallback = fallback_webview_data_dir(dirs::data_local_dir(), &app.config().identifier, std::process::id());
+            if primary.as_ref() == Some(&fallback) {
+                return Err(first_err);
+            }
+            tracing::warn!(
+                "webview build failed ({first_err}); retrying with fallback data_directory {}",
+                fallback.display()
+            );
+            match attempt(Some(fallback.clone())) {
+                Ok(window) => {
+                    if let Some(state) = app.try_state::<WindowsState>() {
+                        state.set_webview_data_dir(fallback);
+                    }
+                    Ok(window)
+                }
+                Err(_) => Err(first_err),
+            }
+        }
+    }
+}
+
 /// Builds a project window painted in the saved theme's frame colour, so it
 /// doesn't flash the light default before its page (and splash) loads.
 fn build_project_window(app: &AppHandle, mut config: WindowConfig) -> IdeResult<WebviewWindow> {
@@ -251,9 +358,8 @@ fn build_project_window(app: &AppHandle, mut config: WindowConfig) -> IdeResult<
     } else if let Some(a) = &appearance {
         config.background_color = Some(frame_color(a, false));
     }
-    let window = WebviewWindowBuilder::from_config(app, &config)
-        .and_then(|b| b.build())
-        .map_err(|e| IdeError::internal(format!("cannot create window: {e}")))?;
+    let window =
+        build_webview_window(app, &config, None).map_err(|e| IdeError::internal(format!("cannot create window: {e}")))?;
     apply_zoom(app, &window);
     // "Sync with OS" needs the OS mode, known once the window exists.
     if let Some(a) = appearance.filter(|a| plugin_frame.is_none() && (a.sync_with_os || a.theme == "system"))
@@ -460,9 +566,7 @@ pub fn open_settings_window(
         config.background_color = Some(color);
     }
     windows.set_launch(&label, Launch { settings_page: page, new_projects, ..Default::default() });
-    let window = WebviewWindowBuilder::from_config(app, &config)
-        .and_then(|b| b.parent(&parent))
-        .and_then(|b| b.build())
+    let window = build_webview_window(app, &config, Some(&parent))
         .map_err(|e| IdeError::internal(format!("cannot create settings window: {e}")))?;
     apply_zoom(app, &window);
     // window-state restores the remembered size; the position always follows the parent.
@@ -590,5 +694,44 @@ mod tests {
         assert_eq!(centered(100.0, 50.0, 1440.0, 900.0, 980.0, 720.0), (330.0, 140.0));
         // Taller than the parent: aligned with its top edge.
         assert_eq!(centered(0.0, 50.0, 800.0, 500.0, 600.0, 720.0), (100.0, 50.0));
+    }
+
+    #[test]
+    fn webview_data_dir_isolates_debug_builds_and_fallbacks() {
+        let base = Some(PathBuf::from("/local/data"));
+        assert_eq!(
+            default_webview_data_dir(base.clone(), "ai.l0ng.openidea", true),
+            Some(PathBuf::from("/local/data/ai.l0ng.openidea/webview-dev"))
+        );
+        assert_eq!(default_webview_data_dir(base.clone(), "ai.l0ng.openidea", false), None);
+        assert_eq!(default_webview_data_dir(None, "ai.l0ng.openidea", true), None);
+
+        assert_eq!(
+            fallback_webview_data_dir(base, "ai.l0ng.openidea", 4242),
+            PathBuf::from("/local/data/ai.l0ng.openidea/webview-4242")
+        );
+
+        let st = WindowsState::default();
+        assert_eq!(st.webview_data_dir(), None);
+        st.set_webview_data_dir(PathBuf::from("/local/data/ai.l0ng.openidea/webview-4242"));
+        assert_eq!(st.webview_data_dir(), Some(PathBuf::from("/local/data/ai.l0ng.openidea/webview-4242")));
+    }
+
+    #[test]
+    fn prune_stale_fallback_dirs_removes_unlocked_old_pids_only() {
+        let root = std::env::temp_dir().join(format!("openidea-webview-prune-{}", std::process::id()));
+        let app_dir = root.join("ai.l0ng.openidea");
+        let stale_lock = app_dir.join("webview-1111").join("EBWebView").join("Default").join("LOCK");
+        let current_lock = app_dir.join("webview-2222").join("EBWebView").join("Default").join("LOCK");
+        let dev_lock = app_dir.join("webview-dev").join("EBWebView").join("Default").join("LOCK");
+        for lock in [&stale_lock, &current_lock, &dev_lock] {
+            std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+            std::fs::write(lock, b"").unwrap();
+        }
+        prune_stale_fallback_dirs(Some(&root), "ai.l0ng.openidea", 2222);
+        assert!(!app_dir.join("webview-1111").exists());
+        assert!(app_dir.join("webview-2222").exists());
+        assert!(app_dir.join("webview-dev").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

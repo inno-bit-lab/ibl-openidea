@@ -1,5 +1,6 @@
 /** Context menu and "New" popup of the project view. */
 import { executeAction, getAction } from "@/platform/actions";
+import { getContext } from "@/platform/context";
 import { formatBinding, hostBinding, isMacHost, shortcutLabel } from "@/platform/keymap";
 import { relativePath, useProject } from "@/platform/project";
 import { currentDetectedRoots, currentRoots } from "@/platform/projectRoots";
@@ -291,7 +292,7 @@ export function contextMenuItems(nodes: ProjectNode[]): MenuItem[] {
   );
 
   // Git ›
-  if (inProject && project?.isGit) {
+  if (inProject && (project?.isGit || getContext().vcsAvailable)) {
     const arg = vcsArg(nodes);
     const dirs = nodes.some((n) => n.dir);
     push(
@@ -308,17 +309,19 @@ export function contextMenuItems(nodes: ProjectNode[]): MenuItem[] {
           singleFile && act("vcs.showHistory", [singleFile.path], "Show History"),
           act("vcs.rollback", arg, "Rollback…"),
           { kind: "separator" },
-          act("vcs.push", undefined, "Push…"),
-          act("vcs.update", undefined, "Pull…"),
-          act("vcs.fetch", undefined, "Fetch"),
+          act("vcs.push", arg, "Push…"),
+          act("vcs.update", arg, "Pull…"),
+          act("vcs.fetch", arg, "Fetch"),
           { kind: "separator" },
           act("vcs.branches", undefined, "Branches…"),
-          act("vcs.newBranch", undefined, "New Branch…"),
-          act("vcs.newTag", undefined, "New Tag…"),
-          act("vcs.resetHead", undefined, "Reset HEAD…"),
+          act("vcs.newBranch", arg, "New Branch…"),
+          act("vcs.newTag", arg, "New Tag…"),
+          act("vcs.resetHead", arg, "Reset HEAD…"),
           { kind: "separator" },
-          act("vcs.stash", undefined, "Stash Changes…"),
-          act("vcs.unstash", undefined, "Unstash Changes…"),
+          act("vcs.stash", arg, "Stash Changes…"),
+          act("vcs.unstash", arg, "Unstash Changes…"),
+          { kind: "separator" },
+          act("vcs.manageRemotes", arg, "Manage Remotes…"),
         ],
         "branch",
       ),

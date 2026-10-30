@@ -13,70 +13,44 @@ import { allRepos, lastRemoteFailure, runRemote, saveAll } from "./ops";
 import { currentRepo, refreshNow, repoName, useVcs } from "./store";
 import styles from "./common.module.css";
 
-export function showUpdateDialog() {
-  openDialog((close) => <UpdateDialog onClose={close} />);
+export interface UpdateTarget {
+  repo?: string | null;
+  repos?: ReadonlyArray<string | null>;
 }
 
-function UpdateDialog({ onClose }: { onClose: () => void }) {
-  const branch = useVcs((s) => s.branch);
-  // Default from Settings › Version Control › Git › Update method.
-  const [rebase, setRebase] = useState(() => workflowSettings().vcs.git.updateMethod === "rebase");
-  const run = async () => {
-    onClose();
-    await saveAll();
-    const repos = allRepos();
-    const detail =
-      repos.length > 1
-        ? `${repos.length} repositories`
-        : branch?.upstream
-          ? `${branch.head} ← ${branch.upstream}`
-          : undefined;
-    await runRemote({ op: "pull", rebase }, detail, repos);
-  };
-  return (
-    <Dialog
-      open
-      title="Update Project"
-      onClose={onClose}
-      width={420}
-      buttons={[
-        { label: "OK", role: "default", autoFocus: true, onClick: () => void run() },
-        { label: "Cancel", role: "cancel" },
-      ]}
-    >
-      <div className={styles.form} role="radiogroup" aria-label={tx("Update type")}>
-        <div className={styles.hint}>
-          {branch?.upstream
-            ? `Update ${branch.head ?? "HEAD"} from ${branch.upstream}${branch.behind ? ` (${branch.behind} incoming)` : ""}`
-            : tx("The current branch has no tracked branch; git pull may fail.")}
-        </div>
-        <div className={styles.fieldLabel}>
-          <T>Update type:</T>
-        </div>
-        <label className={styles.radioRow}>
-          <input type="radio" name="update" checked={!rebase} onChange={() => setRebase(false)} />
-          <span className={styles.radioText}>
-            <T>Merge incoming changes into the current branch</T>
-            <span className={styles.hint}>
-              <T>git pull --no-rebase --ff</T>
-            </span>
-          </span>
-        </label>
-        <label className={styles.radioRow}>
-          <input type="radio" name="update" checked={rebase} onChange={() => setRebase(true)} />
-          <span className={styles.radioText}>
-            <T>Rebase the current branch on top of incoming changes</T>
-            <span className={styles.hint}>
-              <T>git pull --rebase</T>
-            </span>
-          </span>
-        </label>
-        <div className={styles.hint}>
-          <T>Uncommitted changes are stashed before the update and restored afterwards.</T>
-        </div>
-      </div>
-    </Dialog>
-  );
+/**
+ * Updates the project (or the specified `repos` / `repo`) directly using the
+ * method configured in Settings › Version Control › Git › Update method.
+ */
+export async function updateProject(target: UpdateTarget | ReadonlyArray<string | null> = {}) {
+  const list: ReadonlyArray<string | null> = Array.isArray(target)
+    ? target
+    : (target as UpdateTarget).repos?.length
+      ? (target as UpdateTarget).repos!
+      : (target as UpdateTarget).repo !== undefined
+        ? [(target as UpdateTarget).repo!]
+        : allRepos();
+  const rebase = workflowSettings().vcs.git.updateMethod === "rebase";
+  await saveAll();
+  const state = useVcs.getState();
+  let detail: string | undefined;
+  if (list.length > 1) {
+    detail = `${list.length} repositories`;
+  } else {
+    const single = list[0] ?? state.repo;
+    const branch = single === state.repo ? state.branch : null;
+    if (branch?.upstream) {
+      detail = `${branch.head} ← ${branch.upstream}`;
+    } else if (single && state.roots.length > 1) {
+      const head = state.heads[single]?.head;
+      detail = head ? `${repoName(single)}: ${head}` : repoName(single);
+    }
+  }
+  await runRemote({ op: "pull", rebase }, detail, list);
+}
+
+export function showUpdateDialog(target?: UpdateTarget | ReadonlyArray<string | null>) {
+  void updateProject(target);
 }
 
 const logOf = (branch: string, limit: number, range: string | null = null, repo = currentRepo()) =>
@@ -92,10 +66,23 @@ export interface PushTarget {
   branch?: string;
   /** Push only up to this commit of the branch (Push All up to Here). */
   revision?: Commit;
+  /** Single repository to push from. */
+  repo?: string | null;
+  /** Repositories to push from when scoped to a subset of a multi-repo project. */
+  repos?: readonly string[];
 }
 
 export async function showPushDialog(target: PushTarget = {}) {
   await refreshNow();
+  const singleRepo = target.repo ?? (target.repos?.length === 1 ? target.repos[0]! : undefined);
+  if (singleRepo !== undefined) {
+    openDialog((close) => <PushDialog target={{ ...target, repo: singleRepo }} onClose={close} />);
+    return;
+  }
+  if (target.repos && target.repos.length > 1) {
+    openDialog((close) => <MultiPushDialog roots={target.repos} onClose={close} />);
+    return;
+  }
   // Several repositories: IDEA's dialog lists each one with outgoing commits.
   const multi = useVcs.getState().roots.length > 1 && !target.branch && !target.revision;
   openDialog((close) => (multi ? <MultiPushDialog onClose={close} /> : <PushDialog target={target} onClose={close} />));
@@ -120,8 +107,9 @@ export function defaultPushChecked(repos: readonly RepoPush[], selected: string 
 
 type PushRow = { type: "repo"; repo: RepoPush } | { type: "commit"; repo: RepoPush; commit: Commit };
 
-function MultiPushDialog({ onClose }: { onClose: () => void }) {
-  const roots = useVcs((s) => s.roots);
+function MultiPushDialog({ roots: targetRoots, onClose }: { roots?: readonly string[]; onClose: () => void }) {
+  const storeRoots = useVcs((s) => s.roots);
+  const roots = targetRoots?.length ? targetRoots : storeRoots;
   const [repos, setRepos] = useState<RepoPush[] | null>(null);
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
@@ -271,6 +259,7 @@ function MultiPushDialog({ onClose }: { onClose: () => void }) {
 }
 
 function PushDialog({ target: pushTarget, onClose }: { target: PushTarget; onClose: () => void }) {
+  const repo = pushTarget.repo ?? currentRepo();
   const branch = useVcs((s) => s.branch);
   const branches = useVcs((s) => s.branches);
   const [commits, setCommits] = useState<Commit[] | null>(null);
@@ -294,17 +283,17 @@ function PushDialog({ target: pushTarget, onClose }: { target: PushTarget; onClo
       if (!head) return [];
       if (!explicit) {
         const q = outgoingQuery(upstream);
-        return logOf(q.branch, q.limit, q.range);
+        return logOf(q.branch, q.limit, q.range, repo);
       }
       const tip = revision ?? head;
-      return upstream ? logOf(tip, 1000, `${upstream}..${tip}`) : logOf(tip, 50);
+      return upstream ? logOf(tip, 1000, `${upstream}..${tip}`, repo) : logOf(tip, 50, null, repo);
     })()
       .then((c) => alive && setCommits(c))
       .catch((e) => alive && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       alive = false;
     };
-  }, [head, upstream, explicit, revision]);
+  }, [head, upstream, explicit, revision, repo]);
 
   const remote = upstream ? upstream.slice(0, upstream.indexOf("/")) : null;
   const defaultTarget = upstream ? upstream.slice(upstream.indexOf("/") + 1) : head;
@@ -328,6 +317,7 @@ function PushDialog({ target: pushTarget, onClose }: { target: PushTarget; onClo
           target: retarget ? edited : null,
         },
         `${revision ? `${head} up to ${revision.slice(0, 8)}` : head} → ${targetLabel}`,
+        [repo],
       );
       return;
     }
@@ -339,6 +329,7 @@ function PushDialog({ target: pushTarget, onClose }: { target: PushTarget; onClo
         tags: pushTags ? tagsMode : null,
       },
       upstream ? `${head} → ${upstream}` : `${head} → new remote branch`,
+      repo,
     );
   };
 
