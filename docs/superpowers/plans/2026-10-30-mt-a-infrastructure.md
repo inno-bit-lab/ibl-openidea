@@ -22,7 +22,7 @@
 ## Review Focus
 
 1. Two `pnpm dev:local` runs in different worktrees at the same time: different ports, different profiles, no `ERROR_BUSY`.
-2. A semaphore holder that crashes or is killed must release its slot. Named semaphores are released by the OS when the process exits; test it.
+2. A slot holder that crashes or is killed must release its slot. Windows semaphores have no owner and are never released on process death, so slots are named mutexes, which the OS abandons when the owner exits (lint finding, rev-agy); test it.
 3. Paths with spaces in the worktree path or user profile (`C:\Users\张 三\...` style paths already appear in repo tests).
 4. `updater-manifest` with a missing platform must fail the release, not publish a partial `latest.json`.
 5. `export_bindings` failing must turn the CI test red.
@@ -39,14 +39,22 @@ v0.2.0 was published by hand, Windows only. Actions has never run on the fork. B
 
 See spec 4.2, 4.3 and 7.2. Contracts other macro tasks rely on:
 
-- `scripts/local/env.ps1`: dot-sourced; finds Visual Studio 2022 with `vswhere -version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`, imports the `vcvars64.bat` environment into the current PowerShell session, prepends `$env:USERPROFILE\.cargo\bin` to `PATH`. Fails with a clear message when VS 2022 is missing.
-- `scripts/local/cargo-slot.ps1 [-Slots <int>=2] [-Name <string>='Local\ibl-openidea-cargo'] -- <command> [args...]`: dot-sources `env.ps1`, acquires `[System.Threading.Semaphore]::new($Slots, $Slots, $Name)`, sets `CARGO_BUILD_JOBS` to `[Environment]::ProcessorCount / $Slots` (at least 1) unless already set, runs the command, releases in `finally`, exits with the command's exit code. Prints a line while waiting.
+- `scripts/local/env.ps1`: dot-sourced.
+  - Finds Visual Studio 2022 with `"${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"` (falling back to `vswhere` on `PATH`) `-version "[17.0,18.0)" -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`, and imports the `vcvars64.bat` environment into the current PowerShell session.
+  - Prepends `$env:USERPROFILE\.cargo\bin` to `PATH`, and sets `RUSTC_WRAPPER=sccache` when `sccache` is on `PATH` and `RUSTC_WRAPPER` is unset.
+  - Bootstraps a fresh worktree: runs `pnpm install --frozen-lockfile` when `node_modules` is missing, and creates `dist/` when it is missing (`tauri::generate_context!()` needs it, as CI does with `mkdir -p dist`).
+  - Fails with a clear message when VS 2022 is missing.
+- `scripts/local/cargo-slot.ps1 [-Slots <int>] [-Name <string>] -- <command> [args...]`, default 2 slots and name `Local\ibl-openidea-cargo`:
+  - No `param()` block: it parses `$args` itself, consuming the optional `-Slots`, `-Name` and `--` and running the remaining tokens as the command. A `param()` block binds `cargo` to `-Slots`, and `pwsh -File` rejects `--` as an ambiguous parameter. It must work both as `scripts/local/cargo-slot.ps1 -- cargo ...` and as `pwsh -NoProfile -File scripts/local/cargo-slot.ps1 -- cargo ...`, which is what the `package.json` scripts use.
+  - Dot-sources `env.ps1`.
+  - Slots are named mutexes `"$Name-0"` to `"$Name-$($Slots - 1)"` (`[System.Threading.Mutex]::new($false, ...)`), acquired with `[System.Threading.WaitHandle]::WaitAny`. An `AbandonedMutexException` counts as acquired, because its previous owner died.
+  - Sets `CARGO_BUILD_JOBS` to `[Environment]::ProcessorCount / $Slots` (at least 1) unless it is already set, runs the command, calls `ReleaseMutex()` in `finally`, and exits with the command's exit code. Prints a line while waiting.
 - `scripts/local/dev.ps1 [-FullDebug] [-SeedFrom <identifier>]`, run by `pnpm dev:local`:
   - slug: the worktree folder name, or `main` for the primary checkout, lowercased, non `[a-z0-9-]` replaced by `-`;
   - port: first free TCP port from `1420 + (stable hash of the repo path mod 200) * 2`, stepping by 2; HMR uses port + 1;
   - writes `target/local/tauri.dev.<slug>.json` with `{"identifier":"it.innobitlab.iblopenidea.dev.<slug>","build":{"devUrl":"http://localhost:<port>"},"app":{"withGlobalTauri":true}}`;
   - sets `OPENIDEA_DEV_PORT`, `IBLOPENIDEA_SEED_FROM` (default: `it.innobitlab.iblopenidea` if that profile exists, else `ai.l0ng.openidea`), `CARGO_PROFILE_DEV_DEBUG=line-tables-only` unless `-FullDebug`, `RUSTC_WRAPPER=sccache` when `sccache` is on `PATH`;
-  - runs `pnpm tauri dev --config <overlay>` inside a build slot.
+  - runs `cargo build -p openidea` inside a build slot, then `pnpm tauri dev --config <overlay>` outside it. `tauri dev` lives until the window closes, so holding a slot would starve every other build on the machine.
 - `vite.config.ts`: `port: Number(process.env.OPENIDEA_DEV_PORT ?? 1420)`; HMR port `port + 1`.
 - `scripts/local/build.ps1`, run by `pnpm build:local`: `pnpm tauri build --bundles nsis --config src-tauri/tauri.local.conf.json` with `CARGO_PROFILE_RELEASE_LTO=thin`, `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`, inside a build slot; prints the installer path and size. `src-tauri/tauri.local.conf.json`: `{"bundle":{"createUpdaterArtifacts":false}}`.
 - `pnpm test:rust -- <cargo test args>` and `pnpm test:full` (full vitest) run inside a build slot.
@@ -61,7 +69,10 @@ See spec 4.2, 4.3 and 7.2. Contracts other macro tasks rely on:
 
 **Files:** Create `scripts/local/env.ps1`, `scripts/local/cargo-slot.ps1`, `scripts/local/tests/cargo-slot.tests.ps1`.
 
-- [ ] Write `cargo-slot.tests.ps1`: with `-Slots 1` and a unique `-Name`, start two background jobs that each run `cargo-slot.ps1 -- pwsh -c "Start-Sleep 3"`; assert that their run windows do not overlap. Second case: kill the first job while it holds the slot; assert the second acquires within 5 s.
+- [ ] Write `cargo-slot.tests.ps1`:
+  - with `-Slots 1` and a unique `-Name`, start two background processes that each run `cargo-slot.ps1 -- pwsh -c "Start-Sleep 3"`; assert that their run windows do not overlap;
+  - second case: kill the first process while it holds the slot; assert that the second acquires within 5 s;
+  - third case: the same invocation through `pwsh -NoProfile -File scripts/local/cargo-slot.ps1 -Slots 1 -- pwsh -c "exit 7"` returns exit code 7.
 - [ ] Run it: fails (scripts missing).
 - [ ] Implement both scripts per section 3.
 - [ ] Run it: passes. Run `pwsh -c ". scripts/local/env.ps1; cargo --version; where.exe link.exe"`: `link.exe` resolves under the VS 2022 (`\2022\`) tree.
@@ -78,10 +89,10 @@ See spec 4.2, 4.3 and 7.2. Contracts other macro tasks rely on:
 
 ### Task 3: Local installer, test wrappers, sandbox and docs
 
-**Files:** Create `scripts/local/build.ps1`, `scripts/local/acceptance.wsb`, `src-tauri/tauri.local.conf.json`, `docs/development/parallel-local-dev.md`; Modify `package.json` (scripts `build:local`, `test:rust`, `test:full`).
+**Files:** Create `scripts/local/build.ps1`, `scripts/local/acceptance.ps1`, `src-tauri/tauri.local.conf.json`, `docs/development/parallel-local-dev.md`; Modify `package.json` (scripts `build:local`, `test:rust`, `test:full`).
 
 - [ ] `pnpm build:local` produces `target\release\bundle\nsis\IBLOpenIdea_0.2.1_x64-setup.exe` and prints its size; record wall time and peak memory (Task Manager or `Get-Process` sampling) in the delivery.
-- [ ] `acceptance.wsb` maps `target\release\bundle\nsis` read-only to `C:\installers` in the sandbox and starts Explorer there.
+- [ ] `acceptance.ps1` writes `target\local\acceptance.wsb` with the absolute path of `target\release\bundle\nsis` mapped read-only to `C:\installers` in the sandbox (Windows Sandbox resolves a relative `HostFolder` against the `.wsb` location), sets Explorer to open there, and prints the `.wsb` path, or launches it when called with `-Start`.
 - [ ] The doc covers: commands, slots and how to change K, profiles and ports, `IBLOPENIDEA_SEED_FROM`, sccache setup, cleanup of `*.dev.*` profiles and of removed worktrees' `target/`, the Crew worktree rule.
 - [ ] Commit.
 
@@ -113,7 +124,7 @@ See spec 4.2, 4.3 and 7.2. Contracts other macro tasks rely on:
 pwsh -File scripts/local/tests/cargo-slot.tests.ps1
 pnpm typecheck
 pnpm lint
-pnpm exec vitest run vite.config.ts src/platform
+pnpm exec vitest run src/platform
 scripts/local/cargo-slot.ps1 -- cargo test -p openidea --test export_bindings
 git diff --exit-code src/bindings.ts
 git diff upstream/main -- .github/workflows/release.yml
