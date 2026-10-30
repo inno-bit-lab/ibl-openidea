@@ -139,7 +139,7 @@ Each fix starts from a failing test.
 
 `handleDeleteSelected` (`src/features/vcs/GitLog.tsx:497`) loops over `deleteBranch`. That deletes without confirmation and force-deletes unmerged branches, raising one Restore toast per branch. The multi-repo and remote paths instead ask once per branch.
 
-- With more than one branch selected, show one confirmation listing the branches, marked "unmerged" and "remote" where they apply. Then delete without further dialogs. `deleteInRepos` and `deleteRemoteInRepos` get an option to skip their own confirmation for this path.
+- With more than one branch selected, show one confirmation listing the branches and marking the remote ones. Then delete without further dialogs. (Delegated decision after the MT-B lint: `Branch` carries no merged flag, so the dialog cannot mark unmerged branches. The post-delete notification keeps reporting discarded unmerged commits, with Restore.) `deleteInRepos` and `deleteRemoteInRepos` get an option to skip their own confirmation for this path.
 - Deleting a single branch keeps the IDEA behaviour: no confirmation, with Restore.
 - Tests: N selected branches give one dialog; cancelling deletes nothing.
 
@@ -213,6 +213,18 @@ pub fn seed_profile(bases: &[PathBuf], from: &str, to: &str, excludes: &[&str]) 
   - `.migrated.json` in the target config directory records the source, the version, and what was copied or skipped. The report goes to the log once logging starts.
   - A copy error never blocks startup.
 - **Expected duration**: about 1 GB on this machine. From a few seconds to a few tens of seconds on an SSD, mostly spent on the many small files under `tools/node_modules`. Not measured.
+
+**Refined design.** After the MT-C plan lint, section 3 of `docs/superpowers/plans/2026-10-30-mt-c-identity.md` is the authoritative design for this section, approved by the coordinator under delegation. Where it differs from the description above, the plan wins. It adds:
+
+- a file lock held across the whole run, so concurrent first starts are safe;
+- an atomically replaced journal with the participating bases and the report, plus an exhaustive recovery table;
+- a `failed` phase written before cleanup;
+- bounded rename retries;
+- exclusions that apply only at the top level;
+- links that are never followed;
+- the WebView lock held during the copy, with `LOCK` itself excluded;
+- debug seeding only when `IBLOPENIDEA_SEED_FROM` is set;
+- a one-time notification tracked in the marker.
 
 ### 6.3 Installer upgrade path (not verified)
 
