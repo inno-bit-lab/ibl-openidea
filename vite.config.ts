@@ -22,7 +22,9 @@ export default defineConfig(() => ({
     port,
     strictPort: true,
     host: host || false,
-    hmr: host ? { protocol: "ws", host, port: port + 1 } : undefined,
+    hmr: host || process.env.OPENIDEA_DEV_PORT
+      ? { protocol: "ws", host: host || "localhost", port: port + 1 }
+      : undefined,
     watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/target/**"] },
   },
   build: {
