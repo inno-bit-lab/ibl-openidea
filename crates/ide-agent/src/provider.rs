@@ -59,15 +59,18 @@ fn builtins() -> Vec<ProviderSpec> {
 struct CustomAgent {
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
-    command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    extra_args: Vec<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     env: HashMap<String, String>,
 }
 
 /// Built-in agents, then the `*.toml` agents of `custom_dir`; a custom agent with a
-/// built-in id replaces it.
+/// built-in id replaces or extends it.
 pub(crate) fn load(custom_dir: Option<&Path>) -> Vec<ProviderSpec> {
     let mut specs = builtins();
     let mut files: Vec<PathBuf> = custom_dir
@@ -93,17 +96,38 @@ pub(crate) fn load(custom_dir: Option<&Path>) -> Vec<ProviderSpec> {
         };
         let mut env: Vec<(String, String)> = agent.env.into_iter().collect();
         env.sort();
-        let spec = ProviderSpec {
-            name: agent.name.unwrap_or_else(|| id.clone()),
-            command: agent.command,
-            args: agent.args,
-            env,
-            login_hint: "Sign in with the agent's own command line first.".into(),
-            id,
-        };
-        match specs.iter_mut().find(|s| s.id == spec.id) {
-            Some(existing) => *existing = spec,
-            None => specs.push(spec),
+        match agent.command {
+            Some(command) => {
+                let mut args = agent.args;
+                args.extend(agent.extra_args);
+                let spec = ProviderSpec {
+                    name: agent.name.unwrap_or_else(|| id.clone()),
+                    command,
+                    args,
+                    env,
+                    login_hint: "Sign in with the agent's own command line first.".into(),
+                    id,
+                };
+                match specs.iter_mut().find(|s| s.id == spec.id) {
+                    Some(existing) => *existing = spec,
+                    None => specs.push(spec),
+                }
+            }
+            None => match specs.iter_mut().find(|s| s.id == id) {
+                Some(existing) => {
+                    if let Some(name) = agent.name {
+                        existing.name = name;
+                    }
+                    let mut args = if agent.args.is_empty() { existing.args.clone() } else { agent.args };
+                    args.extend(agent.extra_args);
+                    existing.args = args;
+                    existing.env = env;
+                }
+                None => {
+                    tracing::warn!("skipping agent {}: missing command", path.display());
+                    continue;
+                }
+            },
         }
     }
     specs
@@ -120,28 +144,43 @@ pub(crate) fn set_custom_args(custom_dir: &Path, id: &str, extra_args: &[String]
 
     let custom = match (builtin, existing_file) {
         (Some(b), existing) => {
-            let has_custom_overrides = existing.as_ref().is_some_and(|e| {
-                !e.env.is_empty()
-                    || e.command != b.command
-                    || e.name.as_deref().is_some_and(|n| n != b.name)
+            let mut next = existing.unwrap_or(CustomAgent {
+                name: None,
+                command: None,
+                args: Vec::new(),
+                extra_args: Vec::new(),
+                env: HashMap::new(),
             });
-            if cleaned.is_empty() && !has_custom_overrides {
+            // Migrate v0.2 files that froze the built-in command and args prefix.
+            if next.command.as_deref() == Some(b.command.as_str()) && next.args.starts_with(&b.args) {
+                next.command = None;
+                next.args.clear();
+                if next.name.as_deref() == Some(b.name.as_str()) {
+                    next.name = None;
+                }
+            }
+            next.extra_args = cleaned;
+            if next.name.is_none()
+                && next.command.is_none()
+                && next.args.is_empty()
+                && next.extra_args.is_empty()
+                && next.env.is_empty()
+            {
                 if file.exists() {
                     let _ = std::fs::remove_file(&file);
                 }
                 return Ok(());
             }
-            let mut args = b.args;
-            args.extend(cleaned);
-            CustomAgent {
-                name: existing.as_ref().and_then(|e| e.name.clone()).or(Some(b.name)),
-                command: existing.as_ref().map_or(b.command, |e| e.command.clone()),
-                args,
-                env: existing.map_or_else(HashMap::new, |e| e.env),
-            }
+            next
         }
         (None, Some(mut existing)) => {
-            existing.args = cleaned;
+            if existing.command.is_none() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "custom agent is missing command",
+                ));
+            }
+            existing.extra_args = cleaned;
             existing
         }
         (None, None) => {
@@ -395,7 +434,7 @@ mod tests {
         assert_eq!(codex.args, ["-y", "@agentclientprotocol/codex-acp@2.3.0"]);
         assert_eq!(codex.env, vec![("OPENAI_API_KEY".to_owned(), "sk-test".to_owned())]);
 
-        // Custom non-builtin agent replaces args instead of accumulating them.
+        // Custom non-builtin agent preserves base args and replaces extra_args instead of accumulating them.
         std::fs::write(
             dir.path().join("mine.toml"),
             "name = \"Mine\"\ncommand = \"/opt/mine\"\nargs = [\"acp\"]\n[env]\nK = \"v\"\n",
@@ -404,8 +443,113 @@ mod tests {
         set_custom_args(dir.path(), "mine", &["--foo".into()]).unwrap();
         set_custom_args(dir.path(), "mine", &["--bar".into()]).unwrap();
         let mine = load(Some(dir.path())).into_iter().find(|s| s.id == "mine").unwrap();
-        assert_eq!(mine.args, ["--bar"]);
+        assert_eq!(mine.args, ["acp", "--bar"]);
         assert_eq!(mine.env, vec![("K".to_owned(), "v".to_owned())]);
+    }
+
+    #[test]
+    fn custom_agent_keeps_its_base_args_when_extra_args_change() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("mine.toml"),
+            "name = \"Mine\"\ncommand = \"/opt/mine\"\nargs = [\"acp\", \"--stdio\"]\n",
+        )
+        .unwrap();
+        set_custom_args(dir.path(), "mine", &["--foo".into()]).unwrap();
+        let mine = load(Some(dir.path())).into_iter().find(|s| s.id == "mine").unwrap();
+        assert_eq!(mine.args, ["acp", "--stdio", "--foo"]);
+
+        set_custom_args(dir.path(), "mine", &["--bar".into()]).unwrap();
+        let mine = load(Some(dir.path())).into_iter().find(|s| s.id == "mine").unwrap();
+        assert_eq!(mine.args, ["acp", "--stdio", "--bar"]);
+
+        set_custom_args(dir.path(), "mine", &[]).unwrap();
+        let mine = load(Some(dir.path())).into_iter().find(|s| s.id == "mine").unwrap();
+        assert_eq!(mine.args, ["acp", "--stdio"]);
+    }
+
+    #[test]
+    fn reset_keeps_an_override_without_extra_args() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("codex.toml"),
+            "command = \"/opt/my-codex\"\nargs = [\"serve\"]\n[env]\nK = \"v\"\n",
+        )
+        .unwrap();
+        set_custom_args(dir.path(), "codex", &["--extra".into()]).unwrap();
+        let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.command, "/opt/my-codex");
+        assert_eq!(codex.args, ["serve", "--extra"]);
+
+        set_custom_args(dir.path(), "codex", &[]).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("codex.toml")).unwrap();
+        assert!(!text.contains("extra_args"), "unexpected extra_args after reset:\n{text}");
+        let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.command, "/opt/my-codex");
+        assert_eq!(codex.args, ["serve"]);
+        assert_eq!(codex.env, vec![("K".to_owned(), "v".to_owned())]);
+    }
+
+    #[test]
+    fn builtin_extra_args_do_not_freeze_the_builtin_command() {
+        let dir = tempfile::tempdir().unwrap();
+        set_custom_args(dir.path(), "codex", &["--y".into()]).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("codex.toml")).unwrap();
+        assert!(!text.contains("command"), "builtin extra_args must not freeze command:\n{text}");
+        assert!(!text.contains("\nargs =") && !text.starts_with("args ="), "builtin extra_args must not freeze args:\n{text}");
+        assert!(text.contains("extra_args"), "expected extra_args in file:\n{text}");
+        let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.command, "npx");
+        assert_eq!(codex.args, ["-y", "@agentclientprotocol/codex-acp@2.3.0", "--y"]);
+    }
+
+    #[test]
+    fn v02_builtin_override_is_rewritten_as_extra_args() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("codex.toml"),
+            "name = \"Codex\"\ncommand = \"npx\"\nargs = [\"-y\", \"@agentclientprotocol/codex-acp@2.3.0\", \"--z\"]\n",
+        )
+        .unwrap();
+        set_custom_args(dir.path(), "codex", &["--z".into()]).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("codex.toml")).unwrap();
+        assert!(!text.contains("command"), "v0.2 builtin command should be stripped:\n{text}");
+        assert!(!text.contains("\nargs =") && !text.starts_with("args ="), "v0.2 builtin args should be stripped:\n{text}");
+        assert!(text.contains("extra_args"), "expected extra_args in rewritten file:\n{text}");
+        let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.name, "Codex");
+        assert_eq!(codex.command, "npx");
+        assert_eq!(codex.args, ["-y", "@agentclientprotocol/codex-acp@2.3.0", "--z"]);
+    }
+
+    #[test]
+    fn v02_override_with_other_args_stays_explicit() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("codex.toml"),
+            "command = \"npx\"\nargs = [\"my-custom-codex-acp\"]\n",
+        )
+        .unwrap();
+        set_custom_args(dir.path(), "codex", &["--z".into()]).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("codex.toml")).unwrap();
+        assert!(text.contains("command = \"npx\""), "explicit override must keep command:\n{text}");
+        assert!(text.contains("my-custom-codex-acp"), "explicit override must keep args:\n{text}");
+        assert!(text.contains("extra_args"), "explicit override must write extra_args:\n{text}");
+        let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
+        assert_eq!(codex.args, ["my-custom-codex-acp", "--z"]);
+    }
+
+    #[test]
+    fn custom_agent_without_command_is_skipped_with_a_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("custom_no_cmd.toml"),
+            "name = \"NoCmd\"\nextra_args = [\"--foo\"]\n",
+        )
+        .unwrap();
+        let specs = load(Some(dir.path()));
+        assert!(!specs.iter().any(|s| s.id == "custom_no_cmd"));
+        assert!(set_custom_args(dir.path(), "custom_no_cmd", &["--bar".into()]).is_err());
     }
 
     #[test]
