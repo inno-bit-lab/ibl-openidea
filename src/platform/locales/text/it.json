@@ -4579,5 +4579,8 @@
   "{dirs} directories": "{dirs} directory",
   "…and {more} more repository": "…e altro {more} repository",
   "…and {more} more repositories": "…e altri {more} repository",
-  "View in Console": "Visualizza nella console"
+  "View in Console": "Visualizza nella console",
+  "Delete Branches": "Elimina branch",
+  "Delete the following branches?\n{list}": "Eliminare i seguenti branch?\n{list}",
+  "{name} (remote)": "{name} (remoto)"
 }

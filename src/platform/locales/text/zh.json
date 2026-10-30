@@ -4579,5 +4579,8 @@
   "{dirs} directories": "{dirs} 个目录",
   "…and {more} more repository": "…以及另外 {more} 个仓库",
   "…and {more} more repositories": "…以及另外 {more} 个仓库",
-  "View in Console": "在控制台中查看"
+  "View in Console": "在控制台中查看",
+  "Delete Branches": "删除分支",
+  "Delete the following branches?\n{list}": "删除以下分支？\n{list}",
+  "{name} (remote)": "{name}（远程）"
 }

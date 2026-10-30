@@ -46,7 +46,12 @@ import { argRepos, registerVcsActions } from "../actions";
 import { BranchWidget, useBranchesPopup } from "../BranchWidget";
 import { branchMenu, inRepo } from "../branchMenu";
 import { updateBranch, useFavoriteBranches } from "../branchOps";
+import * as messagesMod from "@/workbench/messages";
 import { VcsDialogHost, closeAllDialogs } from "../dialogs";
+
+const MessageHost = Object.entries(messagesMod).find(([k, v]) => /^[A-Z]/.test(k) && typeof v === "function")?.[1] as
+  | (() => JSX.Element | null)
+  | undefined;
 import { showManageRemotes } from "../gitMenuDialogs";
 import { BranchesPanel } from "../GitLog";
 import { emptyFilters, selectCommit, useGitLog } from "../logStore";
@@ -606,5 +611,141 @@ describe("Git Log branches pane", () => {
     // Updating `main` in `/p/sub` when `state.repo` is `/p` and `heads["/p/sub"]` is unknown fast-forwards `main` instead of pulling `/p/sub` as if it were checked out.
     await updateBranch("main", "/p/sub");
     expect(vcsRemote.mock.calls).toEqual([["/p/sub", { op: "updateBranch", branch: "main" }]]);
+  });
+
+  it("asks once before deleting several selected branches", async () => {
+    const byRepo: Record<string, Branch[]> = {
+      "/p/appcall-iac": [
+        b("main", { current: true, commit: "1" }),
+        b("alpha", { commit: "2" }),
+        b("origin/gamma", { remote: true, commit: "4" }),
+      ],
+      "/p/chb": [
+        b("main", { current: true, commit: "1" }),
+        b("alpha", { commit: "2" }),
+        b("beta", { commit: "3" }),
+      ],
+    };
+    vcsBranches.mockImplementation(async (repo: string | null) => ({
+      status: "ok",
+      data: (repo && byRepo[repo]) ?? [],
+    }));
+    useVcs.setState({
+      available: true,
+      root: "/p",
+      roots: ["/p/appcall-iac", "/p/chb"],
+      repo: "/p/chb",
+      heads: {
+        "/p/appcall-iac": { head: "main", headCommit: "1" },
+        "/p/chb": { head: "main", headCommit: "1" },
+      },
+      branches: byRepo["/p/chb"]!,
+      branchesLoaded: true,
+      branchesRepo: "/p/chb",
+      branch: head,
+    });
+
+    render(
+      <>
+        <BranchesPanel />
+        <VcsDialogHost />
+        {MessageHost ? <MessageHost /> : null}
+      </>,
+    );
+    await waitFor(() => expect(screen.getByText("gamma")).toBeInTheDocument());
+
+    fireEvent.mouseDown(screen.getByText("alpha"));
+    fireEvent.mouseDown(screen.getByText("beta"), cmd());
+    fireEvent.mouseDown(screen.getByText("gamma"), cmd());
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Delete Branches" });
+    expect(dialog).toHaveTextContent("alpha");
+    expect(dialog).toHaveTextContent("beta");
+    expect(dialog).toHaveTextContent("origin/gamma (remote)");
+    expect(vcsDeleteBranch).not.toHaveBeenCalled();
+    expect(vcsRemote).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(vcsRemote.mock.calls).toEqual([
+        ["/p/appcall-iac", { op: "deleteBranch", branch: "origin/gamma" }],
+      ]),
+    );
+    expect(vcsDeleteBranch.mock.calls.map((c) => [c[0], c[1]])).toEqual([
+      ["/p/appcall-iac", "alpha"],
+      ["/p/chb", "alpha"],
+      ["/p/chb", "beta"],
+    ]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("cancelling the batch confirmation deletes nothing", async () => {
+    const byRepo: Record<string, Branch[]> = {
+      "/p/appcall-iac": [
+        b("main", { current: true, commit: "1" }),
+        b("alpha", { commit: "2" }),
+        b("origin/gamma", { remote: true, commit: "4" }),
+      ],
+      "/p/chb": [
+        b("main", { current: true, commit: "1" }),
+        b("alpha", { commit: "2" }),
+        b("beta", { commit: "3" }),
+      ],
+    };
+    vcsBranches.mockImplementation(async (repo: string | null) => ({
+      status: "ok",
+      data: (repo && byRepo[repo]) ?? [],
+    }));
+    useVcs.setState({
+      available: true,
+      root: "/p",
+      roots: ["/p/appcall-iac", "/p/chb"],
+      repo: "/p/chb",
+      heads: {
+        "/p/appcall-iac": { head: "main", headCommit: "1" },
+        "/p/chb": { head: "main", headCommit: "1" },
+      },
+      branches: byRepo["/p/chb"]!,
+      branchesLoaded: true,
+      branchesRepo: "/p/chb",
+      branch: head,
+    });
+
+    render(
+      <>
+        <BranchesPanel />
+        <VcsDialogHost />
+        {MessageHost ? <MessageHost /> : null}
+      </>,
+    );
+    await waitFor(() => expect(screen.getByText("gamma")).toBeInTheDocument());
+
+    fireEvent.mouseDown(screen.getByText("alpha"));
+    fireEvent.mouseDown(screen.getByText("beta"), cmd());
+    fireEvent.mouseDown(screen.getByText("gamma"), cmd());
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Delete Branches" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(vcsDeleteBranch).not.toHaveBeenCalled();
+    expect(vcsRemote).not.toHaveBeenCalled();
+  });
+
+  it("deleting one branch still needs no confirmation", async () => {
+    render(
+      <>
+        <BranchesPanel />
+        <VcsDialogHost />
+      </>,
+    );
+    fireEvent.mouseDown(screen.getByText("feature"));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(vcsDeleteBranch.mock.calls.map((c) => [c[0], c[1]])).toEqual([["/p", "feature"]]));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
