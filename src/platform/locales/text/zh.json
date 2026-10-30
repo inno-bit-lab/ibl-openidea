@@ -4472,7 +4472,7 @@
   "Choose an agent to suggest commit messages in the Commit settings.": "请在“提交”设置中选择用于建议提交消息的智能体。",
   "Open Settings": "打开设置",
   "Agent that suggests commit messages": "建议提交消息的智能体",
-  "Writes the message from the changes about to be committed, in a one-off session that cannot change files. Agents are those of the Agents tool window.": "根据即将提交的更改撰写提交消息，使用无法修改文件的一次性会话。可选智能体与“智能体”工具窗口中的相同。",
+  "The agent runs read-only in an empty temporary folder. Only agents with a read-only or default permission mode can be used.": "智能体在空的临时文件夹中以只读方式运行。仅可使用支持只读或默认权限模式的智能体。",
   "Rules": "规则",
   "Sent to the agent as they are, with the changes: naming convention, wording to avoid, language. Leave empty for a short subject in the imperative mood.": "原样连同更改一起发送给智能体：命名约定、应避免的措辞、语言。留空则使用祈使语气的简短标题。",
   "Subject: <type>(<scope>): <summary>\nTake the ticket id from the branch name.\nNever mention tools or assistants.": "标题：<type>(<scope>): <summary>\n从分支名称中获取工单编号。\n切勿提及工具或助手。",

@@ -10,9 +10,26 @@ struct FakeAgent {
     peer: OnceLock<Peer>,
     calls: Mutex<Vec<String>>,
     prompts: Mutex<Vec<String>>,
+    modes: Mutex<Option<(String, Vec<(&'static str, &'static str)>)>>,
+    fail_set_mode: AtomicBool,
+    cwds: Mutex<Vec<PathBuf>>,
 }
 
 impl FakeAgent {
+    fn with_modes(current: &str, available: &[(&'static str, &'static str)]) -> Self {
+        Self {
+            modes: Mutex::new(Some((current.to_owned(), available.to_vec()))),
+            ..Self::default()
+        }
+    }
+
+    fn without_modes() -> Self {
+        Self {
+            modes: Mutex::new(Some((String::new(), Vec::new()))),
+            ..Self::default()
+        }
+    }
+
     fn update(&self, session: &str, update: Value) {
         let peer = self.peer.get().unwrap();
         peer.notify("session/update", json!({ "sessionId": session, "update": update })).unwrap();
@@ -36,15 +53,42 @@ impl Handler for FakeAgent {
         let session = params.get("sessionId").and_then(Value::as_str).unwrap_or("s1").to_owned();
         match method {
             "initialize" => Ok(json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true}})),
-            "session/new" => Ok(json!({"sessionId": "s1",
-                "modes": {"currentModeId": "ask", "availableModes": [{"id": "ask", "name": "Ask"}, {"id": "code", "name": "Code"}]},
-                "configOptions": [{"id": "model", "category": "model", "type": "select", "currentValue": "big",
-                    "options": [{"value": "big", "name": "Big"}, {"value": "small", "name": "Small"}]}]})),
+            "session/new" => {
+                let mut reply = json!({
+                    "sessionId": "s1",
+                    "configOptions": [{"id": "model", "category": "model", "type": "select", "currentValue": "big",
+                        "options": [{"value": "big", "name": "Big"}, {"value": "small", "name": "Small"}]}]
+                });
+                let modes_cfg = self.modes.lock().clone();
+                match modes_cfg {
+                    None => {
+                        reply["modes"] = json!({
+                            "currentModeId": "ask",
+                            "availableModes": [{"id": "ask", "name": "Ask"}, {"id": "code", "name": "Code"}]
+                        });
+                    }
+                    Some((_, ref avail)) if avail.is_empty() => {}
+                    Some((current, avail)) => {
+                        let available: Vec<Value> =
+                            avail.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect();
+                        reply["modes"] = json!({
+                            "currentModeId": current,
+                            "availableModes": available,
+                        });
+                    }
+                }
+                Ok(reply)
+            }
             "session/load" => {
                 self.say(&session, "replayed history");
                 Ok(json!({}))
             }
             "session/set_config_option" | "session/set_mode" => {
+                let is_mode = method == "session/set_mode"
+                    || params.get("configId").and_then(Value::as_str) == Some("mode");
+                if is_mode && self.fail_set_mode.load(Ordering::Relaxed) {
+                    return Err((codes::INTERNAL_ERROR, "cannot set mode".into()));
+                }
                 self.calls.lock().push(format!("{method} {}", params.get("value").or(params.get("modeId")).unwrap()));
                 Ok(json!({}))
             }
@@ -100,7 +144,8 @@ fn manager(dir: &Path, agent: Arc<FakeAgent>) -> AgentManager {
 }
 
 fn manager_at(dir: &Path, models_file: &Path, agent: Arc<FakeAgent>) -> AgentManager {
-    let connector: Connector = Arc::new(move |_spec, _cwd, client, _stderr| {
+    let connector: Connector = Arc::new(move |_spec, cwd, client, _stderr| {
+        agent.cwds.lock().push(cwd.to_path_buf());
         let (a, b) = duplex(1 << 20);
         let (ar, aw) = tokio::io::split(a);
         let (br, bw) = tokio::io::split(b);
@@ -116,6 +161,7 @@ fn manager_at(dir: &Path, models_file: &Path, agent: Arc<FakeAgent>) -> AgentMan
             worktrees_dir: dir.join("worktrees"),
             models_file: models_file.to_path_buf(),
             custom_agents_dir: None,
+            managed_agents_dir: None,
             home_dir: None,
         },
         tokio::runtime::Handle::current(),
@@ -166,7 +212,7 @@ async fn commands_are_remembered_per_project_and_merged_with_skills_on_disk() {
 #[tokio::test(flavor = "multi_thread")]
 async fn complete_answers_in_a_throwaway_session_and_refuses_permissions() {
     let tmp = tempfile::tempdir().unwrap();
-    let agent = Arc::new(FakeAgent::default());
+    let agent = Arc::new(FakeAgent::with_modes("ask", &[("ask", "Ask"), ("default", "Default")]));
     let mgr = manager(tmp.path(), agent.clone());
     let choices = vec![
         AgentConfigChoice { id: "model".into(), value: "small".into() },
@@ -176,6 +222,7 @@ async fn complete_answers_in_a_throwaway_session_and_refuses_permissions() {
     // Only the agent's text is kept (not its tool calls), and the permission it asked for was refused.
     assert_eq!(answer, "Hichose none");
     assert_eq!(agent.calls.lock().iter().filter(|c| *c == "session/prompt").count(), 1);
+    assert!(agent.calls.lock().contains(&"session/set_mode \"default\"".to_owned()));
     assert!(agent.calls.lock().contains(&"session/set_config_option \"small\"".to_owned()));
     assert!(agent.calls.lock().contains(&"session/set_config_option \"low\"".to_owned()));
     // No task was created or saved.
@@ -183,6 +230,104 @@ async fn complete_answers_in_a_throwaway_session_and_refuses_permissions() {
     assert!(!tmp.path().join("store").exists());
     assert!(mgr.complete("claude", "   ", &[], Duration::from_secs(5)).await.is_err());
     assert!(mgr.complete("no-such-agent", "hi", &[], Duration::from_secs(5)).await.is_err());
+}
+
+#[test]
+fn restrictive_mode_prefers_read_only_variants_before_default() {
+    let make_opts = |vals: &[&str]| {
+        vec![AgentConfigOption {
+            id: "mode".into(),
+            name: "Mode".into(),
+            description: None,
+            category: Some("mode".into()),
+            current: None,
+            values: vals.iter().map(|v| opt_value(v, v, None)).collect(),
+            via: AgentConfigVia::Mode,
+        }]
+    };
+    assert_eq!(restrictive_mode(&make_opts(&["default", "read_only", "read-only"])), Ok("read-only".to_owned()));
+    assert_eq!(restrictive_mode(&make_opts(&["default", "read_only"])), Ok("read_only".to_owned()));
+    assert_eq!(restrictive_mode(&make_opts(&["yolo", "default", "plan"])), Ok("default".to_owned()));
+    assert_eq!(restrictive_mode(&make_opts(&["yolo", "auto_edit"])), Err("yolo, auto_edit".to_owned()));
+    assert_eq!(restrictive_mode(&make_opts(&[])), Err("none".to_owned()));
+    assert_eq!(restrictive_mode(&[]), Err("none".to_owned()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_picks_an_allowlisted_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("bypassPermissions", "Bypass"), ("default", "Default"), ("plan", "Plan")],
+    ));
+    let mgr = manager(tmp.path(), agent.clone());
+    let answer = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap();
+    assert_eq!(answer, "Hichose none");
+    assert!(agent.calls.lock().contains(&"session/set_mode \"default\"".to_owned()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_an_agent_with_only_permissive_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("yolo", &[("yolo", "YOLO"), ("auto_edit", "Auto Edit")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    let err = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert_eq!(
+        err.message,
+        "Claude Code cannot run read-only (modes: yolo, auto_edit). Choose Claude, Codex or Antigravity for commit suggestions."
+    );
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_an_agent_without_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::without_modes());
+    let mgr = manager(tmp.path(), agent.clone());
+    let err = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert_eq!(
+        err.message,
+        "Claude Code cannot run read-only (modes: none). Choose Claude, Codex or Antigravity for commit suggestions."
+    );
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_when_the_mode_cannot_be_set() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("ask", &[("ask", "Ask"), ("default", "Default")]));
+    agent.fail_set_mode.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let err = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert!(err.message.contains("cannot set mode"), "unexpected error: {}", err.message);
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_ignores_a_caller_mode_choice() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("yolo", &[("yolo", "YOLO"), ("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    let choices = vec![AgentConfigChoice { id: "mode".into(), value: "yolo".into() }];
+    let answer = mgr.complete("claude", "Suggest commit message", &choices, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(answer, "Hichose none");
+    let calls = agent.calls.lock().clone();
+    assert!(calls.contains(&"session/set_mode \"default\"".to_owned()), "{calls:?}");
+    assert!(!calls.iter().any(|c| c.contains("yolo")), "{calls:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_runs_outside_the_project_and_cleans_up() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("ask", &[("ask", "Ask"), ("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    let _ = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap();
+    let cwds = agent.cwds.lock().clone();
+    assert_eq!(cwds.len(), 1);
+    let cwd = &cwds[0];
+    assert_ne!(cwd, tmp.path());
+    assert!(!cwd.starts_with(tmp.path()));
+    assert!(!cwd.exists(), "temporary cwd {} should be removed after complete", cwd.display());
 }
 
 async fn wait_for(mgr: &AgentManager, id: &str, status: AgentStatus) {
@@ -466,6 +611,7 @@ async fn real_claude_task_in_a_worktree() {
             worktrees_dir: tmp.path().join("wt"),
             models_file: tmp.path().join("models.json"),
             custom_agents_dir: None,
+            managed_agents_dir: None,
             home_dir: None,
         },
         tokio::runtime::Handle::current(),
