@@ -172,11 +172,14 @@ export function commonBranchMenu(
         ]
       : []),
     { kind: "separator" },
+    { label: "Compare with Current", icon: "diff", run: run(() => showCompareBranches(b.name, roots)) },
+    { label: "Show Diff with Working Tree", run: run(() => showDiffWithWorkingTree(b.name)) },
+    history,
+    { kind: "separator" },
     { label: tx`Rebase Current onto '${b.name}'`, run: run(() => rebaseInRepos(b.name, nonCurrentRoots)) },
     { label: tx`Merge '${b.name}' into Current`, run: run(() => mergeInRepos(b.name, nonCurrentRoots)) },
     { kind: "separator" },
     favoriteItem,
-    history,
   ];
   if (!anyCurrent)
     items.push(

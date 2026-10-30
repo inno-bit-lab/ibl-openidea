@@ -32,7 +32,10 @@ import {
   buildChangeTree,
   checkOf,
   filesOf,
+  groupOf,
+  ignoredCountSummary,
   isPartiallyStaged,
+  isStatusDir,
   planCommit,
   toggledCheck,
   type ChangeNode,
@@ -44,10 +47,21 @@ import { CommitOptionsPopup } from "./CommitOptions";
 import { suggestCommitMessage } from "./commitSuggest";
 import { DEFAULT_LIST_NAME, useChangelists, withListDefaults } from "./changelists";
 import { moveToChangelist } from "./changelistsUi";
-import { messageHistory, setAmend, setGroupByDir, useCommit, type CommitTab } from "./commitStore";
+import {
+  messageHistory,
+  setAmend,
+  setGroupByDir,
+  setGroupByModule,
+  setGroupByRepo,
+  setShowIgnored,
+  useCommit,
+  type CommitTab,
+} from "./commitStore";
 import { openDiff, withChain, workingDiffData } from "./diffInput";
 import { KIND_COLOR, KIND_LABEL, fileCount, formatTime, stashLabel, stripSlash } from "./model";
 import { call, commands } from "@/platform/ipc";
+import { formatBinding, hostBinding } from "@/platform/keymap";
+import { initProjectRoots, useProjectModules } from "@/platform/projectRoots";
 import { OperationBanner } from "./operations";
 import { ShelfPanel, loadShelves, useShelf } from "./shelf";
 import { loadStashes, refreshNow, repoName, selectRepo, useVcs } from "./store";
@@ -130,6 +144,11 @@ const bottomLeft = (el: HTMLElement) => {
 /** Opens a file's diff; F7 continues through the other files of its group, in tree order. */
 function openNode(n: ChangeNode, roots: readonly ChangeNode[]) {
   if (n.type !== "file" || !n.path) return;
+  if (n.files[0] && isStatusDir(n.files[0])) return;
+  if (n.group === "ignored") {
+    void editorService().openFile(n.path, { focus: true });
+    return;
+  }
   const group = roots.find((g) => g.files.some((f) => f.path === n.files[0]?.path)) ?? null;
   const paths: string[] = [];
   const walk = (ns: readonly ChangeNode[]) =>
@@ -164,10 +183,29 @@ function listMenu(id: string, active: boolean, paths: string[]): MenuItem[] {
 
 function nodeMenu(nodes: ChangeNode[]): MenuItem[] {
   const files = filesOf(nodes);
-  const paths = files.map((f) => f.path);
-  const first = nodes.find((n) => n.type === "file");
-  const untracked = files.filter((f) => f.unstaged === "untracked");
-  const conflicted = files.filter((f) => f.unstaged === "conflicted");
+  const paths = files.map((f) => stripSlash(f.path));
+  const first = nodes.find((n) => n.type === "file" && !(n.files[0] && isStatusDir(n.files[0])));
+  if (nodes.length > 0 && nodes.every((n) => n.group === "ignored")) {
+    return [
+      {
+        label: "Jump to Source",
+        icon: "external-link",
+        shortcut: "F4",
+        disabled: !first?.path,
+        run: () => first?.path && void editorService().openFile(first.path, { focus: true }),
+      },
+      { kind: "separator" },
+      { kind: "action", action: "vcs.localHistory", arg: first?.path },
+      { kind: "separator" },
+      { label: "Copy Path", icon: "copy", run: () => void navigator.clipboard?.writeText(paths.join("\n")) },
+    ];
+  }
+  const actionable = files.filter((f) => f.unstaged !== "ignored" && f.staged !== "ignored");
+  const actionablePaths = actionable.map((f) => f.path);
+  const stageable = actionable.filter((f) => f.unstaged);
+  const unstageable = actionable.filter((f) => f.staged);
+  const untracked = actionable.filter((f) => f.unstaged === "untracked");
+  const conflicted = actionable.filter((f) => f.unstaged === "conflicted");
   const items: MenuItem[] = [
     { kind: "action", action: "vcs.showDiff", arg: first?.path },
     {
@@ -181,34 +219,41 @@ function nodeMenu(nodes: ChangeNode[]): MenuItem[] {
   ];
   if (conflicted.length) items.push({ kind: "action", action: "vcs.resolveConflicts", label: "Resolve Conflicts…" });
   items.push(
-    { kind: "action", action: "vcs.rollback", arg: paths, label: "Rollback…" },
+    { kind: "action", action: "vcs.rollback", arg: actionablePaths, label: "Rollback…" },
     ...(untracked.length
       ? [{ kind: "action" as const, action: "vcs.addToVcs", arg: untracked.map((f) => f.path) }]
       : []),
     {
       label: "Stage",
       icon: "plus",
-      disabled: !files.some((f) => f.unstaged),
-      run: () => void call(commands.vcsStage(paths)).finally(() => void refreshNow()),
+      disabled: !stageable.length,
+      run: () => void call(commands.vcsStage(stageable.map((f) => f.path))).finally(() => void refreshNow()),
     },
     {
       label: "Unstage",
       icon: "minus",
-      disabled: !files.some((f) => f.staged),
-      run: () => void call(commands.vcsUnstage(paths)).finally(() => void refreshNow()),
+      disabled: !unstageable.length,
+      run: () => void call(commands.vcsUnstage(unstageable.map((f) => f.path))).finally(() => void refreshNow()),
     },
     { kind: "separator" },
     ...(nodes.some((n) => n.changelist)
-      ? [{ kind: "action" as const, action: "vcs.changelist.move", arg: paths, label: "Move to Another Changelist…" }]
+      ? [
+          {
+            kind: "action" as const,
+            action: "vcs.changelist.move",
+            arg: actionablePaths,
+            label: "Move to Another Changelist…",
+          },
+        ]
       : []),
-    { kind: "action", action: "vcs.shelve", arg: paths },
-    { kind: "action", action: "vcs.createPatch", arg: paths },
+    { kind: "action", action: "vcs.shelve", arg: actionablePaths },
+    { kind: "action", action: "vcs.createPatch", arg: actionablePaths },
     { kind: "separator" },
     {
       label: "Show History",
       icon: "history",
       disabled: !first?.path,
-      run: () => void executeAction("vcs.showLog", { path: first?.path }),
+      run: () => first?.path && void executeAction("vcs.showHistory", [first.path]),
     },
     { kind: "action", action: "vcs.localHistory", arg: first?.path },
     { kind: "action", action: "vcs.annotate", arg: first?.path },
@@ -252,20 +297,43 @@ function ChangesPanel() {
   const status = useVcs((s) => s.status);
   const root = useVcs((s) => s.root) ?? "";
   const groupByDir = useCommit((s) => s.groupByDir);
+  const groupByRepo = useCommit((s) => s.groupByRepo);
+  const groupByModule = useCommit((s) => s.groupByModule);
+  const showIgnored = useCommit((s) => s.showIgnored);
   const userChecks = useCommit((s) => s.checks);
   const lists = useChangelists((s) => s.state);
   const checks = useMemo(() => withListDefaults(status, root, lists, userChecks), [status, root, lists, userChecks]);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  // IDEA starts with Unversioned Files collapsed.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(["group:unversioned"]));
+  // IDEA starts with Unversioned Files and Ignored Files collapsed.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(["group:unversioned", "group:ignored"]));
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const treeRef = useRef<TreeHandle>(null);
   const viewRef = useRef<HTMLButtonElement>(null);
 
+  useEffect(() => initProjectRoots(), []);
+  const modules = useProjectModules();
+
   const repos = useVcs((s) => s.roots);
+  const heads = useVcs((s) => s.heads);
+  const effectiveGroupByRepo = groupByRepo ?? repos.length > 1;
+  const repoHeads = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(heads).map(([r, h]) => [r, h.head ?? (h.headCommit ? h.headCommit.slice(0, 8) : null)]),
+      ),
+    [heads],
+  );
   const roots = useMemo(
-    () => buildChangeTree(status, root, groupByDir, lists, repos),
-    [status, root, groupByDir, lists, repos],
+    () =>
+      buildChangeTree(status, root, groupByDir, lists, repos, {
+        groupByDir,
+        groupByRepo: effectiveGroupByRepo,
+        groupByModule,
+        showIgnored,
+        modules,
+        repoHeads,
+      }),
+    [status, root, groupByDir, effectiveGroupByRepo, groupByModule, showIgnored, lists, repos, modules, repoHeads],
   );
   const [byKey, parents] = useMemo(() => {
     const m = new Map<string, ChangeNode>();
@@ -298,7 +366,7 @@ function ChangesPanel() {
 
   // Forget overrides for files that are no longer changed.
   useEffect(() => {
-    const live = new Set(status.map((f) => f.path));
+    const live = new Set(status.filter((f) => groupOf(f) !== null).map((f) => f.path));
     const cur = useCommit.getState().checks;
     if ([...cur.keys()].some((k) => !live.has(k))) {
       useCommit.setState({ checks: new Map([...cur].filter(([k]) => live.has(k))) });
@@ -306,7 +374,8 @@ function ChangesPanel() {
   }, [status]);
 
   const toggle = useCallback((nodes: ChangeNode[]) => {
-    const files = filesOf(nodes);
+    const files = filesOf(nodes).filter((f) => f.unstaged !== "ignored");
+    if (!files.length) return;
     const { status: st, root: r } = useVcs.getState();
     const cur = withListDefaults(st, r ?? "", useChangelists.getState().state, useCommit.getState().checks);
     const agg = aggregateCheck(files, cur);
@@ -338,7 +407,30 @@ function ChangesPanel() {
                 viewRef.current &&
                 showContextMenu(bottomLeft(viewRef.current), [
                   { kind: "header", label: "Group By" },
-                  { label: "Directory", checked: groupByDir, run: () => setGroupByDir(!groupByDir) },
+                  {
+                    label: "Directory",
+                    shortcut: formatBinding(hostBinding("Meta+Alt+P")),
+                    checked: groupByDir,
+                    run: () => setGroupByDir(!groupByDir),
+                  },
+                  {
+                    label: "Repository",
+                    checked: effectiveGroupByRepo,
+                    run: () => setGroupByRepo(!effectiveGroupByRepo),
+                  },
+                  {
+                    label: "Module",
+                    shortcut: formatBinding(hostBinding("Meta+Alt+M")),
+                    checked: groupByModule,
+                    run: () => setGroupByModule(!groupByModule),
+                  },
+                  { kind: "separator" },
+                  { kind: "header", label: "Show" },
+                  {
+                    label: "Ignored Files",
+                    checked: showIgnored,
+                    run: () => setShowIgnored(!showIgnored),
+                  },
                 ])
               }
             />
@@ -362,6 +454,24 @@ function ChangesPanel() {
                 e.preventDefault();
                 e.stopPropagation();
                 toggle(selectedNodes());
+              } else if (
+                (e.ctrlKey || e.metaKey) &&
+                e.altKey &&
+                !e.shiftKey &&
+                (e.key.toLowerCase() === "p" || e.code === "KeyP")
+              ) {
+                e.preventDefault();
+                e.stopPropagation();
+                setGroupByDir(!groupByDir);
+              } else if (
+                (e.ctrlKey || e.metaKey) &&
+                e.altKey &&
+                !e.shiftKey &&
+                (e.key.toLowerCase() === "m" || e.code === "KeyM")
+              ) {
+                e.preventDefault();
+                e.stopPropagation();
+                setGroupByModule(!groupByModule);
               } else if ((e.key === "Delete" || e.key === "Backspace") && !e.metaKey) {
                 const group = selectedNodes().find((x) => x.type === "group" && x.changelist);
                 if (group?.changelist) {
@@ -371,7 +481,7 @@ function ChangesPanel() {
                 }
               } else if (e.key === "F4") {
                 const n = selectedNodes().find((x) => x.type === "file");
-                if (n?.path) {
+                if (n?.path && !(n.files[0] && isStatusDir(n.files[0]))) {
                   e.preventDefault();
                   void editorService().openFile(n.path, { focus: true });
                 }
@@ -421,12 +531,18 @@ function ChangesPanel() {
                 </span>
               }
               renderNode={(n, st) => {
-                const agg = aggregateCheck(n.files, checks);
+                const isIgnored = n.group === "ignored";
+                const agg = isIgnored
+                  ? { checked: false, indeterminate: false, on: 0 }
+                  : aggregateCheck(n.files, checks);
+                const isDirEntry = n.type === "file" && n.files[0] ? isStatusDir(n.files[0]) : false;
                 const label = (
                   <span
                     className={clsx(
                       styles.label,
                       n.type === "group" && styles.groupLabel,
+                      n.type === "repo" && styles.repoLabel,
+                      n.type === "module" && styles.moduleLabel,
                       n.type === "group" && n.changelist && !n.active && styles.inactiveList,
                     )}
                     style={n.type === "file" && n.kind ? { color: KIND_COLOR[n.kind] } : undefined}
@@ -467,6 +583,12 @@ function ChangesPanel() {
                           },
                         }),
                       };
+                const summary =
+                  n.type === "group" || n.type === "repo" || n.type === "module"
+                    ? isIgnored
+                      ? ignoredCountSummary(n.files)
+                      : fileCount(n.files.length)
+                    : null;
                 return (
                   <span
                     className={clsx(
@@ -475,21 +597,44 @@ function ChangesPanel() {
                     )}
                     {...dnd}
                   >
-                    <CheckMark
-                      checked={agg.checked}
-                      indeterminate={agg.indeterminate}
-                      label={tx`Include ${n.label} in commit`}
-                      onToggle={() => toggle(selected.has(n.key) && selected.size > 1 ? selectedNodes() : [n])}
-                    />
-                    {n.type === "group" ? null : (
+                    {!isIgnored && (
+                      <CheckMark
+                        checked={agg.checked}
+                        indeterminate={agg.indeterminate}
+                        label={tx`Include ${n.label} in commit`}
+                        onToggle={() => toggle(selected.has(n.key) && selected.size > 1 ? selectedNodes() : [n])}
+                      />
+                    )}
+                    {n.type === "group" ? null : n.type === "repo" ? (
+                      <span
+                        className={styles.repoColor}
+                        style={{ background: `var(--project-color-${n.repoColor ?? 1})` }}
+                        aria-hidden="true"
+                      />
+                    ) : n.type === "module" ? (
+                      <Icon name="module" size={16} className={styles.icon} />
+                    ) : (
                       <Icon
-                        name={n.type === "dir" ? (st.expanded ? "folder-open" : "folder") : fileIconName(n.label)}
+                        name={
+                          n.type === "dir"
+                            ? st.expanded
+                              ? "folder-open"
+                              : "folder"
+                            : isDirEntry
+                              ? "folder"
+                              : fileIconName(n.label)
+                        }
                         size={16}
                         className={styles.icon}
                       />
                     )}
                     {label}
-                    {n.type === "group" && <span className={styles.detail}>{fileCount(n.files.length)}</span>}
+                    {summary && <span className={styles.detail}>{summary}</span>}
+                    {n.type === "repo" && n.branch && (
+                      <span className={styles.repoBranch} title={n.branch}>
+                        {n.branch}
+                      </span>
+                    )}
                     {n.type === "file" && n.files[0] && isPartiallyStaged(n.files[0]) && (
                       <span className={styles.partial} title={tx("Partially staged: only staged hunks are committed")}>
                         <T>partial</T>

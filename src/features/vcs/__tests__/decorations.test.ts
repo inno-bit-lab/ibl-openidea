@@ -39,9 +39,15 @@ describe("statusDecorations", () => {
     expect(d.get("/repo/src/app/Main.kt")).toMatchObject({ color: "var(--vcs-modified)", propagate: true });
     expect(d.get("/repo/src/app/New.kt")).toMatchObject({ color: "var(--vcs-untracked)", propagate: true });
     // Directory entries lose the trailing slash; ignored entries are faded and don't propagate.
-    expect(d.get("/repo/build")).toMatchObject({ color: "var(--vcs-ignored)", faded: true });
+    expect(d.get("/repo/build")).toMatchObject({ color: "var(--vcs-ignored)", faded: true, subtree: true });
     expect(d.get("/repo/build")?.propagate).toBeUndefined();
     expect(d.get("/repo/docs/Moved.md")?.tooltip).toContain("docs/Old.md");
+
+    // Backend IpcPath strips trailing slash from `path` while keeping it on `relPath`.
+    const fromIpc = statusDecorations([
+      { path: "/repo/target", relPath: "target/", staged: null, unstaged: "ignored", renamedFrom: null },
+    ]);
+    expect(fromIpc.get("/repo/target")).toMatchObject({ color: "var(--vcs-ignored)", faded: true, subtree: true });
   });
 
   it("gives folders the most significant colour (conflict > modified > untracked)", () => {

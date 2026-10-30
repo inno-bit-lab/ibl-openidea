@@ -47,12 +47,14 @@ import {
   type GraphRow,
 } from "./graph";
 import {
+  closeFileHistory,
   extendCommitSelection,
   goToChild,
   goToParent,
   isMine,
   loadMore,
   ME,
+  openFileHistory,
   dateRangeLabel,
   pathsFilterLabel,
   refsSignature,
@@ -87,6 +89,7 @@ import {
 } from "./branchOps";
 import { branchMenu, commonBranchMenu, inRepo } from "./branchMenu";
 import { showCompareBranches } from "./CompareBranches";
+import { FileHistoryView } from "./FileHistory";
 import { showManageRemotes } from "./gitMenuDialogs";
 import { updateProject } from "./remoteUi";
 import {
@@ -108,11 +111,10 @@ import { tx } from "@/platform/i18n";
 const ROW = 22;
 const LANE = 12;
 
-type GitTab = "log" | "console";
-
-/** Tool window header: Log / Console content tabs. */
+/** Tool window header: Log / Console / History: <file> content tabs. */
 export function GitTabs() {
   const tab = useGitLog((s) => s.tab);
+  const historyTabs = useGitLog((s) => s.historyTabs);
   const available = useVcs((s) => s.available);
   if (!available) return null;
   return (
@@ -120,12 +122,19 @@ export function GitTabs() {
       variant="compact"
       className={styles.headerTabs}
       activeId={tab}
-      onSelect={(id) => useGitLog.setState({ tab: id as GitTab })}
+      onSelect={(id) => useGitLog.setState({ tab: id })}
+      onClose={(id) => closeFileHistory(id)}
       aria-label="Git"
       panelIdPrefix="openidea-git"
       items={[
-        { id: "log", label: "Log" },
-        { id: "console", label: "Console" },
+        { id: "log", label: "Log", closable: false },
+        { id: "console", label: "Console", closable: false },
+        ...historyTabs.map((h) => ({
+          id: h.id,
+          label: tx`History: ${baseName(h.path)}`,
+          closable: true,
+          tooltip: h.path,
+        })),
       ]}
     />
   );
@@ -133,6 +142,7 @@ export function GitTabs() {
 
 export function GitToolWindow() {
   const tab = useGitLog((s) => s.tab);
+  const historyTabs = useGitLog((s) => s.historyTabs);
   const available = useVcs((s) => s.available);
   if (!available)
     return (
@@ -140,6 +150,7 @@ export function GitToolWindow() {
         <T>The project is not a Git repository.</T>
       </EmptyState>
     );
+  const activeHistory = historyTabs.find((h) => h.id === tab);
   return (
     <div
       className={styles.root}
@@ -147,7 +158,13 @@ export function GitToolWindow() {
       id={`openidea-git-panel-${tab}`}
       aria-labelledby={`openidea-git-tab-${tab}`}
     >
-      {tab === "log" ? <LogView /> : <ConsoleView />}
+      {activeHistory ? (
+        <FileHistoryView key={activeHistory.id} tab={activeHistory} />
+      ) : tab === "console" ? (
+        <ConsoleView />
+      ) : (
+        <LogView />
+      )}
     </div>
   );
 }
@@ -747,20 +764,20 @@ export function BranchesPanel({
 
 // --- filters ----------------------------------------------------------------
 
-const DAY = 86_400_000;
-const DATE_OPTIONS: { label: string; days: number }[] = [
+export const DAY = 86_400_000;
+export const DATE_OPTIONS: { label: string; days: number }[] = [
   { label: "Last 24 Hours", days: 1 },
   { label: "Last 7 Days", days: 7 },
   { label: "Last 30 Days", days: 30 },
   { label: "Last Year", days: 365 },
 ];
 
-function menuBelow(e: ReactMouseEvent<HTMLElement>, items: MenuItem[]) {
+export function menuBelow(e: ReactMouseEvent<HTMLElement>, items: MenuItem[]) {
   const r = e.currentTarget.getBoundingClientRect();
   showContextMenu({ x: r.left, y: r.bottom + 2 }, items);
 }
 
-function FilterButton({
+export function FilterButton({
   label,
   value,
   onOpen,
@@ -1768,6 +1785,31 @@ export function CommitDetails({ commits }: { commits: LogCommit[] }) {
                 multiSelect={false}
                 renderNode={(n) => <ChangedFileRow node={n} />}
                 onActivate={(n) => n.file && open(n.file)}
+                onContextMenu={(n, _sel, e) => {
+                  if (!n?.file) return;
+                  e.preventDefault();
+                  const file = n.file as DetailFile;
+                  const fileRepo = file._repo ?? commit.repo ?? root;
+                  const normPath = file.path.replace(/\\/g, "/");
+                  const absPath =
+                    normPath.startsWith("/") || /^[A-Za-z]:\//.test(normPath) || !fileRepo
+                      ? file.path
+                      : `${fileRepo.replace(/\/+$/, "")}/${normPath}`;
+                  showContextMenu(e, [
+                    {
+                      label: "Show Diff",
+                      icon: "diff",
+                      run: () => open(file),
+                    },
+                    {
+                      label: "Show History",
+                      icon: "history",
+                      run: () => {
+                        openFileHistory(absPath);
+                      },
+                    },
+                  ]);
+                }}
                 aria-label="Changed files"
                 className={styles.fileTree}
               />
@@ -1790,7 +1832,7 @@ export function CommitDetails({ commits }: { commits: LogCommit[] }) {
 }
 
 /** A commit's message and metadata; `compact` (one of several selected): without the body. */
-function CommitMessage({ commit, compact = false }: { commit: Commit; compact?: boolean }) {
+export function CommitMessage({ commit, compact = false }: { commit: Commit; compact?: boolean }) {
   const [subject, ...bodyLines] = commit.message.replace(/\s+$/, "").split("\n");
   const body = compact ? "" : bodyLines.join("\n").replace(/^\n+/, "");
   return (
@@ -1827,7 +1869,7 @@ function CommitMessage({ commit, compact = false }: { commit: Commit; compact?: 
   );
 }
 
-function ChangedFileRow({ node }: { node: FileTreeNode<ChangedFile> }) {
+export function ChangedFileRow({ node }: { node: FileTreeNode<ChangedFile> }) {
   if (!node.file)
     return (
       <span className={styles.fileRow}>

@@ -118,4 +118,46 @@ describe("EditorController", () => {
     dispose();
     useProject.setState({ project: null, settings: null });
   });
+
+  it("includes Show History, Show History for Selection…, and Show Current Revision in the editor Git menu", async () => {
+    useProject.setState({ project: { name: "p", root: "/p", isGit: true, settings: {} } as never, settings: {} as never });
+    const vcsIds = [
+      "vcs.commit",
+      "vcs.addToVcs",
+      "vcs.annotate",
+      "vcs.showDiff",
+      "vcs.compareWithRevision",
+      "vcs.compareWithBranch",
+      "vcs.showCurrentRevision",
+      "vcs.showHistory",
+      "vcs.showHistoryForSelection",
+      "vcs.rollback",
+    ];
+    const dispose = registerActions(vcsIds.map((id) => ({ id, title: id, run: () => undefined })));
+    ctrl = new EditorController(createMemoryBackend({ "/p/a.ts": "line1\nline2\nline3\nline4\n" }));
+    ctrl.start();
+    await ctrl.openFile("/p/a.ts", { focus: false });
+    const s = useTabs.getState();
+    const pane = s.panes[s.activePane]!;
+    const items = resolveMenuItems(ctrl.tabMenu(pane.id, pane.tabs[0]!));
+    const git = items.find((i) => i.label === "Git");
+    expect(git?.submenu).toBeDefined();
+    const gitLabels = resolveMenuItems(git!.submenu!).map((i) => (i.kind === "separator" ? "-" : i.label));
+    expect(gitLabels).toEqual([
+      "Commit File…",
+      "Add",
+      "-",
+      "Annotate with Git Blame",
+      "Show Diff",
+      "Compare with Revision…",
+      "Compare with Branch…",
+      "Show History",
+      "Show History for Selection…",
+      "Show Current Revision",
+      "Rollback…",
+    ]);
+    dispose();
+    useProject.setState({ project: null, settings: null });
+  });
 });
+

@@ -224,6 +224,16 @@ fn status_matrix() {
     let mut sorted = paths.clone();
     sorted.sort();
     assert_eq!(paths, sorted);
+
+    let st_with_ignored = repo.status_with_ignored(true).unwrap();
+    let dbg = status_of(&st_with_ignored, "debug.log");
+    assert_eq!((dbg.staged, dbg.unstaged), (None, Some(Ignored)));
+    let bld = status_of(&st_with_ignored, "build/");
+    assert_eq!((bld.staged, bld.unstaged), (None, Some(Ignored)));
+    assert!(
+        !st_with_ignored.iter().any(|s| s.rel_path.contains(".DS_Store") || s.rel_path.contains("pkg")),
+        "{st_with_ignored:#?}"
+    );
 }
 
 #[test]

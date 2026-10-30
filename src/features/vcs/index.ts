@@ -22,6 +22,7 @@ import { registerHistoryActions, trackOperationContext } from "./historyActions"
 import { controlLabel, controlOperation, inProgress } from "./operations";
 import { annotationsShown, blameSlot } from "./blame";
 import { BranchWidget, useBranchesPopup } from "./BranchWidget";
+import { COMPARE_BRANCHES_KIND, compareBranchesTitle, type CompareBranchesData } from "./CompareBranches";
 import { showConflictsDialog } from "./conflictsUi";
 import { registerCompareActions } from "./compare";
 import { DIFF_KIND, diffTitle, type DiffData } from "./diffInput";
@@ -131,7 +132,7 @@ export function activate(): () => void {
       headerContent: lazyComponent(() => import("./CommitView").then((m) => m.CommitTabs)),
       tabsReplaceTitle: true,
       useBadge: () => {
-        const n = useVcs((s) => s.status.length);
+        const n = useVcs((s) => s.status.filter((f) => f.unstaged !== "ignored" && f.staged !== "ignored").length);
         return n || null;
       },
     }),
@@ -161,6 +162,12 @@ export function activate(): () => void {
       component: lazyComponent(() => import("./LocalHistory").then((m) => m.LocalHistoryEditor)),
       title: (input) => `Local History: ${baseName((input.data as { path: string }).path)}`,
       icon: () => "clock",
+    }),
+    registerEditorKind({
+      kind: COMPARE_BRANCHES_KIND,
+      component: lazyComponent(() => import("./CompareBranches").then((m) => m.CompareBranchesEditor)),
+      title: (input) => compareBranchesTitle(input.data as CompareBranchesData),
+      icon: () => "branch",
     }),
     registerEditorContribution({
       id: "vcs.changeMarkers",

@@ -15,7 +15,7 @@ pub async fn status(host: &Host, window: &str) -> IdeResult<Vec<FileStatus>> {
         for r in repos.all() {
             r.set_ignored_names(settings.ignored_names());
         }
-        repos.status()
+        repos.status_with_ignored(true)
     })
     .await
 }

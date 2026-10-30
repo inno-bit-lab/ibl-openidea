@@ -4,6 +4,7 @@ import type { Branch, BranchInfo, Commit, FileStatus } from "@/bindings";
 const vcsStatus = vi.fn();
 const vcsBranches = vi.fn();
 const vcsRoots = vi.fn();
+const vcsRemote = vi.fn();
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -15,14 +16,24 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
       vcsBranches: (repo: string | null) => vcsBranches(repo),
       vcsBranchInfo: async () => ({ status: "ok", data: info() }),
       vcsRoots: () => vcsRoots(),
+      vcsRemote: (repo: string | null, req: number, op: unknown) => vcsRemote(repo, req, op),
     },
   };
 });
 
+import { provideNotificationService, provideToolWindowService } from "@/workbench/contributions";
 import { addToVcsTargets, rollbackPlan } from "../changeOps";
 import { planCommit, renamedFromPath } from "../changes";
-import { refsSignature } from "../logStore";
+import { refsSignature, useGitLog } from "../logStore";
 import { newestFirst } from "../operations";
+import {
+  clearConsole,
+  formatRemoteFailures,
+  lastRemoteFailure,
+  runRemote,
+  summarizeRepoError,
+  useVcsConsole,
+} from "../ops";
 import {
   headPushed,
   initialRows,
@@ -363,3 +374,105 @@ describe("status refresh", () => {
     expect(useVcs.getState().branchesRepo).toBe("/p/repo-c");
   });
 });
+
+describe("multi-repository remote failure formatting", () => {
+  it("extracts the primary error line without fatal/error prefix from multi-remote git output", () => {
+    const multiRemoteStderr = [
+      "fatal: unable to access 'https://atc-github.azure.cloud.bmw/CHB/ngtp-sr-iac.git/': The requested URL returned error: 999",
+      "error: could not fetch origin",
+      "fatal: unable to access 'https://atc-github.azure.cloud.bmw/CHB/ngtp-iac.git/': The requested URL returned error: 999",
+      "error: could not fetch upstream",
+    ].join("\n");
+    expect(summarizeRepoError(multiRemoteStderr)).toBe(
+      "unable to access 'https://atc-github.azure.cloud.bmw/CHB/ngtp-sr-iac.git/': The requested URL returned error: 999",
+    );
+    expect(summarizeRepoError("error: RPC failed; HTTP 502")).toBe("RPC failed; HTTP 502");
+    expect(summarizeRepoError("  Connection reset by peer  ")).toBe("Connection reset by peer");
+  });
+
+  it("bounds multi-repo failure balloons to 4 repositories plus a count of remaining repositories", () => {
+    const two = [
+      { name: "chb", message: "fatal: unable to access 'https://example/chb.git/': error 999" },
+      { name: "ecs", message: "fatal: unable to access 'https://example/ecs.git/': error 999" },
+    ];
+    expect(formatRemoteFailures(two)).toBe(
+      "chb: unable to access 'https://example/chb.git/': error 999\necs: unable to access 'https://example/ecs.git/': error 999",
+    );
+
+    const five = Array.from({ length: 5 }, (_, i) => ({
+      name: `repo-${i + 1}`,
+      message: `fatal: network unreachable (${i + 1})`,
+    }));
+    expect(formatRemoteFailures(five)).toBe(
+      [
+        "repo-1: network unreachable (1)",
+        "repo-2: network unreachable (2)",
+        "repo-3: network unreachable (3)",
+        "repo-4: network unreachable (4)",
+        "…and 1 more repository",
+      ].join("\n"),
+    );
+
+    const sixteen = Array.from({ length: 16 }, (_, i) => ({
+      name: `repo-${i + 1}`,
+      message: `fatal: unable to access 'https://example/repo-${i + 1}.git/': The requested URL returned error: 999\nerror: could not fetch origin`,
+    }));
+    const formatted = formatRemoteFailures(sixteen);
+    expect(formatted.split("\n")).toHaveLength(5);
+    expect(formatted).toContain("…and 12 more repositories");
+  });
+
+  it("summarizes 16-repo fetch failure in the notification balloon, logs each repo once, and opens Git Console on action", async () => {
+    clearConsole();
+    vcsStatus.mockResolvedValue({ status: "ok", data: [] });
+    vcsRoots.mockResolvedValue({ status: "ok", data: [] });
+    const repos = Array.from({ length: 16 }, (_, i) => `/p/repo-${i + 1}`);
+    useVcs.setState({ root: "/p", roots: repos, repo: repos[0]!, remoteBusy: null });
+    vcsRemote.mockImplementation(async (repo: string) => ({
+      status: "error",
+      error: {
+        code: "git",
+        message: `fatal: unable to access 'https://example/${repo.slice(3)}.git/': The requested URL returned error: 999\nerror: could not fetch origin`,
+      },
+    }));
+
+    const notified: Array<{ level: string; title: string; body?: unknown; actions?: Array<{ label: string; run: () => void }> }> = [];
+    provideNotificationService({
+      notify: (n) => notified.push(n),
+    });
+    const shownWindows: Array<{ id: string; focus?: boolean }> = [];
+    provideToolWindowService({
+      show: (id, focus) => shownWindows.push({ id, focus }),
+      hide: () => {},
+      toggle: () => {},
+      isVisible: () => false,
+    });
+    useGitLog.setState({ tab: "log" });
+
+    const ok = await runRemote({ op: "fetch" }, "16 repositories", repos);
+    expect(ok).toBe(false);
+
+    const errNote = notified.at(-1)!;
+    expect(errNote.level).toBe("error");
+    expect(errNote.title).toBe("Fetch failed");
+    expect(String(errNote.body).split("\n")).toEqual([
+      "repo-1: unable to access 'https://example/repo-1.git/': The requested URL returned error: 999",
+      "repo-2: unable to access 'https://example/repo-2.git/': The requested URL returned error: 999",
+      "repo-3: unable to access 'https://example/repo-3.git/': The requested URL returned error: 999",
+      "repo-4: unable to access 'https://example/repo-4.git/': The requested URL returned error: 999",
+      "…and 12 more repositories",
+    ]);
+
+    // Full raw failure is still preserved in lastRemoteFailure() and logged once per repo in the console.
+    expect(lastRemoteFailure()?.split("\n")).toHaveLength(32);
+    const errLines = useVcsConsole.getState().lines.filter((l) => l.kind === "err");
+    expect(errLines).toHaveLength(32);
+
+    const viewInConsole = errNote.actions?.find((a) => a.label === "View in Console");
+    expect(viewInConsole).toBeDefined();
+    viewInConsole!.run();
+    expect(useGitLog.getState().tab).toBe("console");
+    expect(shownWindows).toEqual([{ id: "git", focus: true }]);
+  });
+});
+

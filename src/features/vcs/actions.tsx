@@ -23,7 +23,8 @@ import { openDiff, workingDiffData } from "./diffInput";
 import { openDialog } from "./dialogs";
 import { gotoChange, rollbackSelectedLines } from "./gutter";
 import { openLocalHistory } from "./localHistoryKind";
-import { revealCommit, setLogFilters, useGitLog, emptyFilters } from "./logStore";
+import { openFileHistory, revealCommit, setLogFilters, useGitLog, emptyFilters } from "./logStore";
+import { chooseFileRevision, showSelectionHistory } from "./FileHistory";
 import { allRepos, runRemote } from "./ops";
 import { showPushDialog, updateProject, type PushTarget } from "./remoteUi";
 import { chooseRevision } from "./RevisionChooser";
@@ -36,8 +37,9 @@ import {
   showRebaseDialog,
   showWorktrees,
 } from "./gitMenuDialogs";
-import { stripSlash } from "./model";
-import { focusRepo, refreshNow, repoName, repoOf, useVcs } from "./store";
+import { isStatusDir } from "./changes";
+import { effectiveKind, stripSlash } from "./model";
+import { focusRepo, refreshNow, repoName, repoOf, statusOf, useVcs } from "./store";
 import { tx } from "@/platform/i18n";
 
 const VCS = "vcsAvailable";
@@ -137,11 +139,13 @@ const OPERATIONS: MenuItem[] = [
   { kind: "separator" },
   { kind: "action", action: "vcs.rollback" },
   { kind: "action", action: "vcs.showDiff" },
+  { kind: "action", action: "vcs.compareWithRevision" },
   { kind: "action", action: "vcs.compareWithBranch" },
   { kind: "action", action: "vcs.addToVcs" },
   { kind: "separator" },
   { kind: "action", action: "vcs.annotate" },
   { kind: "action", action: "vcs.showHistory" },
+  { kind: "action", action: "vcs.showHistoryForSelection" },
   { kind: "action", action: "vcs.localHistory" },
   { kind: "separator" },
   { kind: "action", action: "vcs.branches" },
@@ -364,12 +368,34 @@ export function registerVcsActions(): () => void {
       run: async ({ arg }) => {
         const line =
           arg && typeof arg === "object" && "line" in arg ? Number((arg as { line: unknown }).line) : undefined;
-        const paths = contextPaths(arg).filter((p) => !p.endsWith("/"));
+        const paths = contextPaths(arg).filter((p) => {
+          if (p.endsWith("/")) return false;
+          const st = statusOf(p);
+          return !st || (!isStatusDir(st) && effectiveKind(st) !== "ignored");
+        });
         if (!paths.length) {
           notifications().notify({ group: "vcs", level: "info", title: "Select a changed file to show its diff" });
           return;
         }
         for (const p of paths.slice(0, 5)) await openDiff(workingDiffData(p, line), { preview: paths.length === 1 });
+      },
+    },
+    {
+      id: "vcs.compareWithRevision",
+      title: "Compare with Revision…",
+      category: "Git",
+      icon: "diff",
+      when: VCS,
+      keywords: ["compare", "revision", "diff"],
+      run: async ({ arg }) => {
+        const path = contextPaths(arg)[0];
+        if (!path) {
+          notifications().notify({ group: "vcs", level: "info", title: "Open or select a file to compare" });
+          return;
+        }
+        const rev = await chooseFileRevision(path);
+        if (!rev) return;
+        await openDiff({ path, left: { type: "rev", rev: rev.id, label: rev.shortId }, right: { type: "worktree" } });
       },
     },
     {
@@ -384,9 +410,39 @@ export function registerVcsActions(): () => void {
           notifications().notify({ group: "vcs", level: "info", title: "Open or select a file to compare" });
           return;
         }
-        const rev = await chooseRevision("Compare with Branch or Revision");
+        const rev = await chooseRevision("Compare with Branch or Revision", { tags: true });
         if (!rev) return;
         await openDiff({ path, left: { type: "rev", rev, label: rev }, right: { type: "worktree" } });
+      },
+    },
+    {
+      id: "vcs.showCurrentRevision",
+      title: "Show Current Revision",
+      category: "Git",
+      icon: "commit",
+      when: VCS,
+      run: () => {
+        const { branch } = useVcs.getState();
+        if (!branch) return;
+        const headLabel = branch.headCommit
+          ? `${branch.head} (${branch.headCommit.slice(0, 8)})`
+          : branch.head;
+        notifications().notify({
+          group: "vcs",
+          level: "info",
+          title: tx`Current revision: ${headLabel}`,
+          actions: branch.headCommit
+            ? [
+                {
+                  label: "Show in Git Log",
+                  run: () => {
+                    showGitWindow();
+                    void revealCommit(branch.headCommit!);
+                  },
+                },
+              ]
+            : undefined,
+        });
       },
     },
     {
@@ -488,17 +544,29 @@ export function registerVcsActions(): () => void {
     },
     {
       id: "vcs.showHistory",
-      title: "Show History for File",
+      title: "Show History",
       category: "Git",
       icon: "history",
       when: VCS,
+      keywords: ["history", "file history", "Show History for File"],
       run: ({ arg }) => {
         const path = contextPaths(arg)[0];
-        if (!path) return;
-        useGitLog.setState({ tab: "log" });
-        setLogFilters({ ...emptyFilters(), path });
+        if (!path) {
+          notifications().notify({ group: "vcs", level: "info", title: "Open or select a file to show its history" });
+          return;
+        }
+        openFileHistory(path);
         showGitWindow();
       },
+    },
+    {
+      id: "vcs.showHistoryForSelection",
+      title: "Show History for Selection…",
+      category: "Git",
+      icon: "history",
+      when: VCS,
+      keywords: ["history", "selection", "line history"],
+      run: ({ arg }) => void showSelectionHistory(arg),
     },
     {
       id: "vcs.showCommit",

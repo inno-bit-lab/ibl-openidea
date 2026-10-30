@@ -1,6 +1,6 @@
 /** Diff viewer editor tab (side-by-side / unified) built on @codemirror/merge. */
 import { focusedDiffNavigator, setFocusedDiffNavigator, type DiffNavigator } from "./diffNavigator";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import clsx from "clsx";
 import { EditorView, keymap } from "@codemirror/view";
 import { Text, type Extension } from "@codemirror/state";
@@ -112,9 +112,11 @@ async function attachSide(side: DiffSide, path: string): Promise<DocumentAttachm
 
 const editableExtensions = (): Extension => [history(), keymap.of(historyKeymap)];
 
-export function DiffEditor({ input }: { input: EditorInput }) {
+export function DiffEditor({ input, headerContent }: { input: EditorInput; headerContent?: ReactNode }) {
   const data = input.data as DiffData;
   const { path, left, right } = data;
+  const leftFirstLine = left.type === "text" ? left.firstLine : undefined;
+  const rightFirstLine = right.type === "text" ? right.firstLine : undefined;
   const [attached, setAttached] = useState<Attached | null>(null);
   /** Text of the sides that are not live documents. */
   const [statics, setStatics] = useState<{ a: string | null; b: string | null } | null>(null);
@@ -237,7 +239,7 @@ export function DiffEditor({ input }: { input: EditorInput }) {
     const highlightChanges = opts.highlight === "words";
     const inclusion = includable ? inclusionGutter(path, textA) : [];
     const side = (att: DocumentAttachment | null, editable: boolean, notes?: "left" | "right"): Extension[] => [
-      viewerBase({ readOnly: !editable }),
+      viewerBase({ readOnly: !editable, firstLine: notes === "left" ? leftFirstLine : rightFirstLine }),
       lang,
       att?.extension ?? [],
       editable ? [editableExtensions(), embeddedEditorExtensions(path)] : [],
@@ -314,7 +316,7 @@ export function DiffEditor({ input }: { input: EditorInput }) {
     }
     viewsRef.current = views;
     requestAnimationFrame(updateChunkInfo);
-  }, [attached, statics, lang, opts.mode, opts.collapse, opts.ignore, opts.highlight, editableA, editableB, updateChunkInfo, data.annotations, includable, path]);
+  }, [attached, statics, lang, opts.mode, opts.collapse, opts.ignore, opts.highlight, editableA, editableB, updateChunkInfo, data.annotations, includable, path, leftFirstLine, rightFirstLine]);
 
   useEffect(
     () => () => {
@@ -600,28 +602,29 @@ export function DiffEditor({ input }: { input: EditorInput }) {
                   : tx`${chunkInfo.count} differences`}
         </span>
       </div>
-      {opts.mode === "split" ? (
-        <div className={styles.labels}>
-          <span className={styles.label} title={sideLabel(left)}>
-            {sideLabel(left)}
-            {editableA && <span className={styles.badge}>
-                <T>editable</T>
-              </span>}
-          </span>
-          <span className={styles.label} title={sideLabel(right)}>
-            {sideLabel(right)}
-            {editableB && (
-              <span className={styles.badge}>{left.type === "rev" ? tx("working copy") : tx("editable")}</span>
-            )}
-          </span>
-        </div>
-      ) : (
-        <div className={styles.labels}>
-          <span className={styles.label}>
-            {sideLabel(left)} → {sideLabel(right)}
-          </span>
-        </div>
-      )}
+      {headerContent ??
+        (opts.mode === "split" ? (
+          <div className={styles.labels}>
+            <span className={styles.label} title={sideLabel(left)}>
+              {sideLabel(left)}
+              {editableA && <span className={styles.badge}>
+                  <T>editable</T>
+                </span>}
+            </span>
+            <span className={styles.label} title={sideLabel(right)}>
+              {sideLabel(right)}
+              {editableB && (
+                <span className={styles.badge}>{left.type === "rev" ? tx("working copy") : tx("editable")}</span>
+              )}
+            </span>
+          </div>
+        ) : (
+          <div className={styles.labels}>
+            <span className={styles.label}>
+              {sideLabel(left)} → {sideLabel(right)}
+            </span>
+          </div>
+        ))}
       {error ? (
         <div className={styles.message}>{error}</div>
       ) : !ready ? (

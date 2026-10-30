@@ -150,6 +150,7 @@ const UNTRANSLATED = new Set<string>([
   "Windows (\\r\\n)",
   // Language names, written in their own language
   "English",
+  "Italiano (Italian)",
   "简体中文 (Chinese, Simplified)",
   // Terms, keywords and acronyms kept in English
   "DDL",

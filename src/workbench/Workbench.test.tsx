@@ -195,6 +195,28 @@ describe("notifications", () => {
     expect(useNotifications.getState().items.every((n) => n.read && !n.balloon)).toBe(true);
     dispose();
   });
+
+  it("renders multi-line error balloons with a working Dismiss close button", () => {
+    loadToolWindowLayout("/balloons-multiline");
+    const onConsole = vi.fn();
+    render(<Balloons />);
+    const longBody = Array.from({ length: 20 }, (_, i) => `repo-${i + 1}: unable to access remote`).join("\n");
+    act(() => {
+      notify({
+        group: "vcs",
+        level: "error",
+        title: "Fetch failed",
+        body: longBody,
+        actions: [{ label: "View in Console", run: onConsole }],
+      });
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Fetch failed");
+    expect(alert).toHaveTextContent("repo-1: unable to access remote");
+    const dismiss = screen.getByRole("button", { name: "Dismiss" });
+    fireEvent.click(dismiss);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });
 
 describe("tool window stripe", () => {

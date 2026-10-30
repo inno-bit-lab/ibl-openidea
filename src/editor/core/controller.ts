@@ -3,7 +3,7 @@
  * status, navigation history, autosave. The React views and actions talk to
  * this singleton; other features use the EditorService and editor/api.
  */
-import { EditorSelection } from "@codemirror/state";
+import { EditorSelection, type EditorState } from "@codemirror/state";
 import { create } from "zustand";
 import { setContext } from "@/platform/context";
 import { shortcutLabel } from "@/platform/keymap";
@@ -629,7 +629,7 @@ export class EditorController implements SlotHost {
             openInMenu(slot.model.path),
             { kind: "separator" },
             localHistoryMenu(slot.model.path),
-            gitMenu(slot.model.path),
+            gitMenu(slot.model.path, selectionLineRange(view.state)),
             { kind: "separator" },
             {
               kind: "action",
@@ -1201,8 +1201,20 @@ function localHistoryMenu(path: string): MenuItem {
   };
 }
 
+function selectionLineRange(state: EditorState): { startLine: number; endLine: number } {
+  const sel = state.selection.main;
+  const startLine = state.doc.lineAt(sel.from).number;
+  const endPos = sel.to > sel.from ? sel.to : sel.from;
+  const endLineObj = state.doc.lineAt(endPos);
+  const endLine = Math.max(
+    startLine,
+    sel.to > sel.from && endLineObj.from === endPos ? endLineObj.number - 1 : endLineObj.number,
+  );
+  return { startLine, endLine };
+}
+
 /** Git › for one file (editor and editor tab menus). */
-function gitMenu(path: string): MenuItem {
+function gitMenu(path: string, sel?: { startLine: number; endLine: number }): MenuItem {
   return {
     label: "Git",
     submenu: [
@@ -1211,15 +1223,32 @@ function gitMenu(path: string): MenuItem {
       { kind: "separator" },
       { kind: "action", action: "vcs.annotate", arg: path, label: "Annotate with Git Blame" },
       { kind: "action", action: "vcs.showDiff", arg: [path], label: "Show Diff" },
+      { kind: "action", action: "vcs.compareWithRevision", arg: { path }, label: "Compare with Revision…" },
       { kind: "action", action: "vcs.compareWithBranch", arg: { path }, label: "Compare with Branch…" },
       { kind: "action", action: "vcs.showHistory", arg: [path], label: "Show History" },
+      {
+        kind: "action",
+        action: "vcs.showHistoryForSelection",
+        arg: sel ? { path, ...sel } : { path },
+        label: "Show History for Selection…",
+      },
+      { kind: "action", action: "vcs.showCurrentRevision", arg: { path }, label: "Show Current Revision" },
       { kind: "action", action: "vcs.rollback", arg: [path], label: "Rollback…" },
       { kind: "separator" },
-      { kind: "action", action: "vcs.push", label: "Push…" },
-      { kind: "action", action: "vcs.update", label: "Pull…" },
-      { kind: "action", action: "vcs.fetch", label: "Fetch" },
-      { kind: "separator" },
       { kind: "action", action: "vcs.branches", label: "Branches…" },
+      { kind: "action", action: "vcs.newBranch", label: "New Branch…" },
+      { kind: "action", action: "vcs.newTag", label: "New Tag…" },
+      { kind: "action", action: "vcs.resetHead", label: "Reset HEAD…" },
+      { kind: "separator" },
+      { kind: "action", action: "vcs.stash", label: "Stash Changes…" },
+      { kind: "action", action: "vcs.unstash", label: "Unstash Changes…" },
+      { kind: "separator" },
+      { kind: "action", action: "vcs.manageRemotes", label: "Manage Remotes…" },
+      { kind: "action", action: "vcs.fetch", label: "Fetch" },
+      { kind: "action", action: "vcs.pull", label: "Pull…" },
+      { kind: "action", action: "vcs.push", label: "Push…" },
+      { kind: "action", action: "vcs.merge", label: "Merge…" },
+      { kind: "action", action: "vcs.rebase", label: "Rebase…" },
     ],
   };
 }

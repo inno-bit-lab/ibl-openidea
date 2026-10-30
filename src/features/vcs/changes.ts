@@ -1,15 +1,38 @@
 /** Commit tool window model: change groups, directory tree, inclusion (pure). */
 import type { ChangelistState, FileStatus } from "@/bindings";
-import { baseName, dirName, effectiveKind, relTo, repoLabel, rootOf, stripSlash, type EffectiveKind } from "./model";
+import type { ProjectModule } from "@/platform/projectRoots";
+import {
+  baseName,
+  dirName,
+  effectiveKind,
+  relTo,
+  repoLabel,
+  rootOf,
+  stripSlash,
+  type EffectiveKind,
+} from "./model";
+import { repoColorIndex } from "./repoBranches";
 import { tx } from "@/platform/i18n";
 
-export type GroupId = "conflicts" | "changes" | "unversioned";
+export type GroupId = "conflicts" | "changes" | "unversioned" | "ignored";
 
 export const GROUP_LABEL: Record<GroupId, string> = {
   conflicts: "Merge Conflicts",
   changes: "Changes",
   unversioned: "Unversioned Files",
+  ignored: "Ignored Files",
 };
+
+export interface ChangeTreeOptions {
+  groupByDir?: boolean;
+  /** Defaults to `repos.length >= 2` when undefined; when true, groups by repository even for 1 repo. */
+  groupByRepo?: boolean;
+  groupByModule?: boolean;
+  showIgnored?: boolean;
+  modules?: readonly ProjectModule[];
+  /** Root → branch / HEAD label for repository badges. */
+  repoHeads?: Readonly<Record<string, string | null | undefined>>;
+}
 
 /**
  * Inclusion of a file in the next commit:
@@ -22,7 +45,7 @@ export type CheckState = "all" | "none" | "staged" | "hunks";
 
 export interface ChangeNode {
   key: string;
-  type: "group" | "dir" | "file";
+  type: "group" | "repo" | "module" | "dir" | "file";
   label: string;
   group: GroupId;
   children?: ChangeNode[];
@@ -37,6 +60,34 @@ export interface ChangeNode {
   changelist?: string;
   /** The active change list's group. */
   active?: boolean;
+  /** Repository badge color index (1..6) for `repo` nodes. */
+  repoColor?: number;
+  /** Current branch / HEAD label for `repo` nodes. */
+  branch?: string | null;
+}
+
+export function isStatusDir(fs: FileStatus): boolean {
+  return fs.path.endsWith("/") || fs.relPath.endsWith("/");
+}
+
+/** Summary label for the Ignored Files group ("55 directories and 22 files"). */
+export function ignoredCountSummary(files: readonly FileStatus[]): string {
+  let dirs = 0;
+  let regular = 0;
+  for (const f of files) {
+    if (isStatusDir(f)) dirs++;
+    else regular++;
+  }
+  if (dirs > 0 && regular > 0) {
+    if (dirs === 1 && regular === 1) return tx`${dirs} directory and ${regular} file`;
+    if (dirs === 1) return tx`${dirs} directory and ${regular} files`;
+    if (regular === 1) return tx`${dirs} directories and ${regular} file`;
+    return tx`${dirs} directories and ${regular} files`;
+  }
+  if (dirs > 0) {
+    return dirs === 1 ? tx`${dirs} directory` : tx`${dirs} directories`;
+  }
+  return regular === 1 ? tx`${regular} file` : tx`${regular} files`;
 }
 
 export function groupOf(fs: FileStatus): GroupId | null {
@@ -165,7 +216,77 @@ function childNodes(files: readonly FileStatus[], root: string, group: GroupId, 
     .map((f) => fileNode(f, root, group, true, scope));
 }
 
-/** With several repositories, a node per repository (IDEA's "Group by Repository") above the files. */
+interface ResolvedModule {
+  name: string;
+  absPath: string;
+}
+
+function resolveModulePath(modPath: string, projectRoot: string): string {
+  const cleanRoot = stripSlash(projectRoot);
+  if (!modPath) return cleanRoot;
+  const cleanMod = stripSlash(modPath);
+  if (cleanMod.startsWith("/") || /^[A-Za-z]:\//.test(cleanMod)) return cleanMod;
+  return cleanRoot ? `${cleanRoot}/${cleanMod}` : cleanMod;
+}
+
+function matchModule(
+  filePath: string,
+  baseRoot: string,
+  projectRoot: string,
+  modules: readonly ProjectModule[],
+): ResolvedModule {
+  const cleanFile = stripSlash(filePath);
+  const cleanBase = stripSlash(baseRoot);
+  const resolved: ResolvedModule[] = modules.map((m) => ({
+    name: m.name,
+    absPath: resolveModulePath(m.path, projectRoot),
+  }));
+  let best: ResolvedModule | null = null;
+  let bestLen = -1;
+  for (const m of resolved) {
+    const insideBase = m.absPath === cleanBase || m.absPath.startsWith(`${cleanBase}/`);
+    if (!insideBase) continue;
+    if ((cleanFile === m.absPath || cleanFile.startsWith(`${m.absPath}/`)) && m.absPath.length > bestLen) {
+      best = m;
+      bestLen = m.absPath.length;
+    }
+  }
+  if (best) return best;
+  return { name: baseName(cleanBase) || cleanBase, absPath: cleanBase };
+}
+
+function moduleNodes(
+  files: readonly FileStatus[],
+  baseRoot: string,
+  projectRoot: string,
+  group: GroupId,
+  groupByDir: boolean,
+  groupByModule: boolean,
+  modules: readonly ProjectModule[],
+  scope: string,
+): ChangeNode[] {
+  if (!groupByModule) return childNodes(files, baseRoot, group, groupByDir, scope);
+  const byMod = new Map<string, { mod: ResolvedModule; files: FileStatus[] }>();
+  for (const f of files) {
+    const mod = matchModule(f.path, baseRoot, projectRoot, modules);
+    let entry = byMod.get(mod.absPath);
+    if (!entry) byMod.set(mod.absPath, (entry = { mod, files: [] }));
+    entry.files.push(f);
+  }
+  return [...byMod.values()]
+    .sort((a, b) => a.mod.name.localeCompare(b.mod.name) || a.mod.absPath.localeCompare(b.mod.absPath))
+    .map(({ mod, files: own }) => ({
+      key: `${scope}:module:${mod.absPath}`,
+      type: "module" as const,
+      label: mod.name,
+      group,
+      children: childNodes(own, mod.absPath, group, groupByDir, `${scope}@mod:${mod.absPath}`),
+      files: own,
+      path: mod.absPath,
+    }));
+}
+
+/** With Group by Repository enabled (default when several repositories exist), a node per repository above the files. */
 function repoNodes(
   files: readonly FileStatus[],
   root: string,
@@ -173,27 +294,48 @@ function repoNodes(
   groupByDir: boolean,
   scope: string,
   repos: readonly string[],
+  options?: ChangeTreeOptions,
 ): ChangeNode[] {
-  if (repos.length < 2) return childNodes(files, root, group, groupByDir, scope);
+  const effectiveGroupByRepo = options?.groupByRepo ?? repos.length >= 2;
+  const effectiveGroupByModule = options?.groupByModule ?? false;
+  const modules = options?.modules ?? [];
+  const effectiveRepos = repos.length ? repos : root ? [root] : [];
+  if (!effectiveGroupByRepo || !effectiveRepos.length) {
+    return moduleNodes(files, root, root, group, groupByDir, effectiveGroupByModule, modules, scope);
+  }
   const byRepo = new Map<string, FileStatus[]>();
   for (const f of files) {
-    const repo = rootOf(f.path, repos) ?? root;
+    const repo = rootOf(f.path, effectiveRepos) ?? root;
     let list = byRepo.get(repo);
     if (!list) byRepo.set(repo, (list = []));
     list.push(f);
   }
-  const order = (r: string) => (repos.includes(r) ? repos.indexOf(r) : repos.length);
+  const order = (r: string) => (effectiveRepos.includes(r) ? effectiveRepos.indexOf(r) : effectiveRepos.length);
   return [...byRepo]
     .sort(([a], [b]) => order(a) - order(b))
-    .map(([repo, own]) => ({
-      key: `${scope}:repo:${repo}`,
-      type: "dir" as const,
-      label: repoLabel(repo, root),
-      group,
-      children: childNodes(own, repo, group, groupByDir, `${scope}@${repo}`),
-      files: own,
-      path: repo,
-    }));
+    .map(([repo, own]) => {
+      const idx = effectiveRepos.indexOf(repo);
+      return {
+        key: `${scope}:repo:${repo}`,
+        type: "repo" as const,
+        label: repoLabel(repo, root),
+        group,
+        children: moduleNodes(
+          own,
+          repo,
+          root,
+          group,
+          groupByDir,
+          effectiveGroupByModule,
+          modules,
+          `${scope}@${repo}`,
+        ),
+        files: own,
+        path: repo,
+        repoColor: repoColorIndex(idx >= 0 ? idx : 0),
+        branch: options?.repoHeads?.[repo] ?? null,
+      };
+    });
 }
 
 function tagList(nodes: ChangeNode[], id: string): ChangeNode[] {
@@ -205,10 +347,10 @@ function tagList(nodes: ChangeNode[], id: string): ChangeNode[] {
 }
 
 /**
- * Group roots (Merge Conflicts / Changes / Unversioned Files) with flat or directory
- * children. With change lists, "Changes" is split into one group per list
- * (`ChangelistState.files` keys are project-relative paths). With several
- * repositories (`repos`), each group's files are grouped by repository first.
+ * Group roots (Merge Conflicts / Changes / Unversioned Files / Ignored Files) with
+ * combinable Repository → Module → Directory → File grouping. With change lists,
+ * "Changes" is split into one group per list (`ChangelistState.files` keys are
+ * project-relative paths).
  */
 export function buildChangeTree(
   status: readonly FileStatus[],
@@ -216,9 +358,16 @@ export function buildChangeTree(
   groupByDir: boolean,
   lists?: ChangelistState,
   repos: readonly string[] = [],
+  options?: ChangeTreeOptions,
 ): ChangeNode[] {
+  const effectiveGroupByDir = options?.groupByDir ?? groupByDir;
   const byGroup = new Map<GroupId, FileStatus[]>();
+  const ignoredFiles: FileStatus[] = [];
   for (const fs of status) {
+    if (effectiveKind(fs) === "ignored") {
+      ignoredFiles.push(fs);
+      continue;
+    }
     const g = groupOf(fs);
     if (!g) continue;
     let list = byGroup.get(g);
@@ -244,7 +393,7 @@ export function buildChangeTree(
           type: "group",
           label: l.name,
           group: g,
-          children: tagList(repoNodes(own, root, g, groupByDir, scope, repos), l.id),
+          children: tagList(repoNodes(own, root, g, effectiveGroupByDir, scope, repos, options), l.id),
           files: own,
           changelist: l.id,
           active: l.id === lists.active,
@@ -254,8 +403,19 @@ export function buildChangeTree(
       continue;
     }
     if (!files.length) continue;
-    const children = repoNodes(files, root, g, groupByDir, g, repos);
+    const children = repoNodes(files, root, g, effectiveGroupByDir, g, repos, options);
     roots.push({ key: `group:${g}`, type: "group", label: GROUP_LABEL[g], group: g, children, files });
+  }
+  if (options?.showIgnored && ignoredFiles.length > 0) {
+    const children = repoNodes(ignoredFiles, root, "ignored", effectiveGroupByDir, "ignored", repos, options);
+    roots.push({
+      key: "group:ignored",
+      type: "group",
+      label: GROUP_LABEL.ignored,
+      group: "ignored",
+      children,
+      files: ignoredFiles,
+    });
   }
   return roots;
 }

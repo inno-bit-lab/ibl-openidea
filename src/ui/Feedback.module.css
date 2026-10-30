@@ -116,14 +116,17 @@
   display: flex;
   gap: 10px;
   width: 340px;
+  max-height: min(320px, calc(100vh - var(--h-titlebar, 40px) - var(--h-statusbar, 30px) - 28px));
   padding: 14px 34px 14px 14px;
   background: var(--bg-popup);
   border: 1px solid var(--border-popup);
   border-radius: var(--radius-popup-large, 10px);
   box-shadow: var(--shadow-balloon);
   color: var(--fg);
+  overflow: hidden;
 }
 .toastIcon {
+  flex: none;
   margin-top: 0;
 }
 .level-info {
@@ -141,11 +144,13 @@
 .toastMain {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 .toastHead {
+  flex: none;
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -164,12 +169,18 @@
   font-size: var(--fs-small);
 }
 .toastBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(200px, calc(100vh - var(--h-titlebar, 40px) - var(--h-statusbar, 30px) - 120px));
+  overflow-y: auto;
+  white-space: pre-line;
   color: var(--fg-secondary);
   overflow-wrap: anywhere;
   -webkit-user-select: text;
   user-select: text;
 }
 .toastActions {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
@@ -186,6 +197,7 @@
   position: absolute;
   top: 8px;
   right: 8px;
+  z-index: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {

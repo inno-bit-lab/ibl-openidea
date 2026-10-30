@@ -44,6 +44,17 @@ export interface LogFilters {
   date: LogDateFilter | null;
 }
 
+export interface FileHistoryTab {
+  /** Tab id (`history:<path>`). */
+  id: string;
+  /** Absolute path of the file. */
+  path: string;
+  /** Enclosing repository root for this file. */
+  repo: string | null;
+  /** Branch filter (`"HEAD"` by default, `null` for all branches). */
+  branch: string | null;
+}
+
 interface LogState {
   filters: LogFilters;
   commits: LogCommit[];
@@ -60,7 +71,9 @@ interface LogState {
   selection: string[];
   /** Commits of HEAD not on its upstream (`@{u}..HEAD`); null without an upstream. */
   outgoing: Set<string> | null;
-  tab: "log" | "console";
+  tab: "log" | "console" | string;
+  /** Open `History: <filename>` tabs in the Git tool window. */
+  historyTabs: FileHistoryTab[];
   /** Bumped to ask the list to scroll the selection into view. */
   revealTick: number;
   /** The current user (`user.email`, else `user.name`), for View Options › Highlight › My Commits. */
@@ -201,11 +214,47 @@ const initialLog = (): Omit<LogState, "generation"> => ({
   selection: [],
   outgoing: null,
   tab: "log",
+  historyTabs: [],
   revealTick: 0,
   user: null,
 });
 
 export const useGitLog = create<LogState>(() => ({ ...initialLog(), generation: 0 }));
+
+/** Opens or activates a `History: <filename>` tab in the Git tool window. */
+export function openFileHistory(path: string, branch: string | null = "HEAD"): FileHistoryTab {
+  const clean = stripSlash(path);
+  const id = `history:${clean}`;
+  const repo = logRepoOf(clean) ?? currentRepo();
+  const entry: FileHistoryTab = { id, path: clean, repo, branch };
+  useGitLog.setState((s) => {
+    const exists = s.historyTabs.some((t) => t.id === id);
+    const historyTabs = exists
+      ? s.historyTabs.map((t) => (t.id === id ? { ...t, repo, ...(branch !== undefined ? { branch } : {}) } : t))
+      : [...s.historyTabs, entry];
+    return { historyTabs, tab: id };
+  });
+  return entry;
+}
+
+/** Closes a `History: <filename>` tab in the Git tool window. */
+export function closeFileHistory(id: string) {
+  useGitLog.setState((s) => {
+    const idx = s.historyTabs.findIndex((t) => t.id === id);
+    if (idx < 0) return s;
+    const historyTabs = s.historyTabs.filter((t) => t.id !== id);
+    if (s.tab !== id) return { historyTabs };
+    const fallback = historyTabs[Math.min(idx, historyTabs.length - 1)]?.id ?? "log";
+    return { historyTabs, tab: fallback };
+  });
+}
+
+/** Updates the branch filter of an open `History: <filename>` tab. */
+export function setFileHistoryBranch(id: string, branch: string | null) {
+  useGitLog.setState((s) => ({
+    historyTabs: s.historyTabs.map((t) => (t.id === id ? { ...t, branch } : t)),
+  }));
+}
 
 interface RepoCursor {
   repo: string;
@@ -227,7 +276,11 @@ export function installGitLog(): () => void {
     if (s.root !== prev.root) {
       loadPromise = null;
       repoCursors = new Map();
-      useGitLog.setState((l) => ({ ...initialLog(), tab: l.tab, generation: l.generation + 1 }));
+      useGitLog.setState((l) => ({
+        ...initialLog(),
+        tab: l.tab === "console" ? "console" : "log",
+        generation: l.generation + 1,
+      }));
       clearConsole();
     } else if (s.roots.join("\n") !== prev.roots.join("\n")) {
       const l = useGitLog.getState();

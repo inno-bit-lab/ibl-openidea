@@ -14,7 +14,7 @@ export type DiffSide =
   | { type: "worktree"; label?: string }
   /** Another file (Compare With…, Compare Files); editable like the working file. */
   | { type: "file"; path: string; label?: string }
-  | { type: "text"; text: string; label: string }
+  | { type: "text"; text: string; label: string; firstLine?: number }
   /** A Local History revision. */
   | { type: "history"; id: string; label: string };
 
@@ -126,7 +126,7 @@ export function workingDiffData(path: string, line?: number): DiffData {
   const st = statusOf(path);
   const kind = st ? effectiveKind(st) : null;
   const left: DiffSide =
-    kind === "untracked" || kind === "added"
+    kind === "untracked" || kind === "added" || kind === "ignored"
       ? { type: "text", text: "", label: "(does not exist)" }
       : st?.renamedFrom
         ? { type: "rev", rev: "HEAD", path: renamedFromPath(st) ?? undefined, label: `HEAD (${st.renamedFrom})` }
@@ -138,7 +138,8 @@ export function workingDiffData(path: string, line?: number): DiffData {
 /** A path of the commit's or selected repository's log (repository-relative) made absolute. */
 function joinRoot(rel: string, repo?: string | null): string {
   const root = repo ?? currentRepoRoot();
-  return root ? `${root}/${rel}` : rel;
+  if (!root || rel.startsWith("/") || /^[A-Za-z]:\//.test(rel)) return rel;
+  return `${root}/${rel}`;
 }
 
 /** Diff of one file changed by `commit` (first parent ↔ commit). */

@@ -4,6 +4,7 @@ import {
   aggregateCheck,
   buildChangeTree,
   commitRepos,
+  ignoredCountSummary,
   initialCheck,
   hunkIncluded,
   planCommit,
@@ -63,6 +64,80 @@ describe("buildChangeTree", () => {
     ]);
     expect(changes.children![0]!.files).toHaveLength(3);
   });
+
+  it("groups by module and combines Repository → Module → Directory", () => {
+    const modules = [
+      { name: "r", path: "" },
+      { name: "core", path: "libs/core" },
+    ];
+    const items = [
+      fs("src/main/kotlin/App.kt", null, "modified"),
+      fs("README.md", "modified", null),
+      fs("libs/core/src/Lib.kt", null, "modified"),
+    ];
+    const byModOnly = buildChangeTree(items, "/r", false, undefined, ["/r"], {
+      groupByModule: true,
+      modules,
+    });
+    expect(shape(byModOnly)).toEqual([
+      "Changes",
+      "  core",
+      "    Lib.kt",
+      "  r",
+      "    App.kt",
+      "    README.md",
+    ]);
+    expect(byModOnly[0]!.children!.map((n) => n.type)).toEqual(["module", "module"]);
+
+    const combined = buildChangeTree(items, "/r", true, undefined, ["/r"], {
+      groupByRepo: true,
+      groupByModule: true,
+      groupByDir: true,
+      modules,
+      repoHeads: { "/r": "main" },
+    });
+    expect(shape(combined)).toEqual([
+      "Changes",
+      "  r",
+      "    core",
+      "      src",
+      "        Lib.kt",
+      "    r",
+      "      src/main/kotlin",
+      "        App.kt",
+      "      README.md",
+    ]);
+    const repoNode = combined[0]!.children![0]!;
+    expect(repoNode.type).toBe("repo");
+    expect(repoNode.repoColor).toBe(1);
+    expect(repoNode.branch).toBe("main");
+  });
+
+  it("shows Ignored Files group when showIgnored is enabled and summarizes directory/file counts", () => {
+    const withIgnored = [
+      ...status,
+      fs("debug.log", null, "ignored"),
+      fs("build/cache/", null, "ignored"),
+    ];
+    expect(buildChangeTree(withIgnored, "/r", false).some((n) => n.group === "ignored")).toBe(false);
+
+    const shown = buildChangeTree(withIgnored, "/r", true, undefined, ["/r"], {
+      showIgnored: true,
+    });
+    const ignoredGroup = shown.find((n) => n.group === "ignored")!;
+    expect(ignoredGroup).toBeDefined();
+    expect(ignoredGroup.label).toBe("Ignored Files");
+    expect(shape([ignoredGroup])).toEqual([
+      "Ignored Files",
+      "  build",
+      "    cache",
+      "  debug.log",
+      "  out",
+    ]);
+    expect(ignoredCountSummary(ignoredGroup.files)).toBe("2 directories and 1 file");
+    expect(ignoredCountSummary([fs("out/", null, "ignored")])).toBe("1 directory");
+    expect(ignoredCountSummary([fs("a.log", null, "ignored"), fs("b.log", null, "ignored")])).toBe("2 files");
+  });
 });
 
 describe("several repositories", () => {
@@ -93,8 +168,15 @@ describe("several repositories", () => {
       ["r", "/r"],
       ["libs/core", "/r/libs/core"],
     ]);
+    expect(changes.children!.map((n) => [n.type, n.repoColor])).toEqual([
+      ["repo", 1],
+      ["repo", 2],
+    ]);
     expect(shape(changes.children![1]!.children!)).toEqual(["Lib.kt"]);
-    // One repository: no repository level.
+    // Explicit groupByRepo: false flattens multi-repo grouping.
+    const ungrouped = buildChangeTree(nested, "/r", false, undefined, repos, { groupByRepo: false });
+    expect(ungrouped.find((n) => n.group === "changes")!.children!.every((n) => n.type === "file")).toBe(true);
+    // One repository: no repository level unless explicitly enabled.
     const single = buildChangeTree(status, "/r", false, undefined, ["/r"]);
     expect(shape(single)).toEqual(shape(buildChangeTree(status, "/r", false)));
   });

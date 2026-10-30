@@ -4,6 +4,7 @@ import {
   formatMessage,
   isValidMessage,
   keysWithPrefix,
+  localeDisplayName,
   registerMessages,
   resolveLocale,
   setLocale,
@@ -13,8 +14,104 @@ import {
   useI18n,
 } from "./i18n";
 import en from "./locales/en.json";
+import itCatalog from "./locales/it.json";
 import zh from "./locales/zh.json";
+import itText from "./locales/text/it.json";
 import zhText from "./locales/text/zh.json";
+
+/** Technical loanwords and cognates that are spelled identically in English and Italian. */
+const SAME_IN_IT = new Set<string>([
+  "(bare)",
+  "Antialiasing",
+  "Base:",
+  "Branch",
+  "Branch {name}",
+  "Breadcrumb",
+  "Browser",
+  "Chat",
+  "Checkout",
+  "Cherry-Pick",
+  "Commit",
+  "Commit:",
+  "Commit…",
+  "Compose Down",
+  "Console",
+  "Database",
+  "Database:",
+  "Debug",
+  "Debugger",
+  "Debug…",
+  "Directory",
+  "Directory:",
+  "Driver",
+  "Driver:",
+  "Editor",
+  "Enum",
+  "Fetch",
+  "File",
+  "File:",
+  "Hard",
+  "Hash",
+  "Host",
+  "Host:",
+  "Hot Swap",
+  "Inline…",
+  "Language server",
+  "Log",
+  "Max",
+  "Merge",
+  "Merge…",
+  "Min",
+  "No",
+  "OK",
+  "Offset 0x{hex} ({offset})",
+  "Output",
+  "Passphrase:",
+  "Password",
+  "Password:",
+  "Plugin",
+  "Profiler",
+  "Pull",
+  "Pull request",
+  "Pull…",
+  "Push",
+  "Push…",
+  "Rebase",
+  "Rebase…",
+  "Record",
+  "Repository",
+  "Repository:",
+  "Repository: {repo}",
+  "SSH: {name}",
+  "Script",
+  "Server",
+  "Soft",
+  "Stack trace {title}",
+  "Stash",
+  "Struct",
+  "Subpixel",
+  "Tag",
+  "Tag {name}",
+  "Test",
+  "Test (pytest)",
+  "Thread",
+  "Toolchain",
+  "URL:",
+  "Upstream",
+  "Widget",
+  "Zoom",
+  "any, rust, typescript…",
+  "docker.io, ghcr.io, registry.example.com:5000",
+  "file",
+  "schema",
+  "sec.",
+  "tag",
+  "test",
+  "trigger",
+  "vs",
+  "{count} file",
+  "{dirs} directory",
+]);
 
 afterEach(() => _resetI18nForTests());
 
@@ -42,6 +139,8 @@ describe("formatMessage", () => {
     const m = "{count, plural, one {# one} other {# other}}";
     expect(formatMessage(m, { count: 1 }, "zh")).toBe("1 other");
     expect(formatMessage(m, { count: 1 }, "en")).toBe("1 one");
+    expect(formatMessage(m, { count: 1 }, "it")).toBe("1 one");
+    expect(formatMessage(m, { count: 2 }, "it")).toBe("2 other");
   });
 
   it("supports select and nesting", () => {
@@ -67,12 +166,17 @@ describe("formatMessage", () => {
 });
 
 describe("t / locales", () => {
-  it("resolves locale tags", () => {
+  it("resolves locale tags and display names", () => {
     expect(resolveLocale("zh-CN")).toBe("zh");
     expect(resolveLocale("zh_Hans")).toBe("zh");
+    expect(resolveLocale("it-IT")).toBe("it");
+    expect(resolveLocale("it_CH")).toBe("it");
     expect(resolveLocale("EN-us")).toBe("en");
     expect(resolveLocale("fr")).toBe("en");
     expect(resolveLocale(undefined)).toBe(resolveLocale(navigator.language));
+    expect(localeDisplayName("en")).toBe("English");
+    expect(localeDisplayName("it")).toBe("Italiano");
+    expect(localeDisplayName("zh")).toBe("中文");
   });
 
   it("translates with English fallback, then the key itself", async () => {
@@ -80,6 +184,9 @@ describe("t / locales", () => {
     await setLocale("zh");
     expect(useI18n.getState().locale).toBe("zh");
     expect(t("common.cancel")).toBe("取消");
+    await setLocale("it");
+    expect(useI18n.getState().locale).toBe("it");
+    expect(t("common.cancel")).toBe("Annulla");
     registerMessages("en", { "test.onlyEnglish": "Only English" });
     expect(t("test.onlyEnglish")).toBe("Only English");
     expect(t("test.missing.key")).toBe("test.missing.key");
@@ -91,6 +198,9 @@ describe("t / locales", () => {
     );
     await setLocale("zh-CN");
     expect(t("app.keymap.count", { count: 1 })).toBe("1 个快捷键");
+    await setLocale("it-IT");
+    expect(t("app.keymap.count", { count: 1 })).toBe("1 scorciatoia");
+    expect(t("app.keymap.count", { count: 2 })).toBe("2 scorciatoie");
   });
 
   it("falls back to English for unsupported locales", async () => {
@@ -114,6 +224,8 @@ describe("t / locales", () => {
     await setLocale("zh");
     expect(tx("Sync with OS")).toBe("与操作系统同步");
     expect(tx("Some text nobody translated")).toBe("Some text nobody translated");
+    await setLocale("it");
+    expect(tx("Sync with OS")).toBe("Sincronizza con il sistema operativo");
     expect(tx(undefined)).toBeUndefined();
   });
 
@@ -122,6 +234,8 @@ describe("t / locales", () => {
     expect(tx`Sync with OS`).toBe("与操作系统同步");
     expect(tx`Sync with OS`).toBe(tx("Sync with OS"));
     expect(tx`Some text nobody translated`).toBe("Some text nobody translated");
+    await setLocale("it");
+    expect(tx`Sync with OS`).toBe("Sincronizza con il sistema operativo");
   });
 
   it("matches source-text templates, translating the substituted text", async () => {
@@ -132,6 +246,11 @@ describe("t / locales", () => {
     expect(txTemplate("Retry failed")).toBe(`${tx("Retry")}失败`);
     expect(txTemplate("Sync with OS")).toBe("与操作系统同步");
     expect(txTemplate("Something else entirely")).toBe("Something else entirely");
+    await setLocale("it");
+    expect(txTemplate("ruff is not installed")).toBe("ruff non è installato");
+    expect(txTemplate("Language server 'gopls' is not installed")).toBe(
+      "Il language server 'gopls' non è installato",
+    );
   });
 
   it("translates text built by the tx tag, again after the locale changes", async () => {
@@ -150,6 +269,10 @@ describe("t / locales", () => {
     expect(tx`Run '${"Retry"}'`).toBe(`运行 '${tx("Retry")}'`);
     // Values are inserted as they are, braces included.
     expect(tx`Drop ${"stash@{0}"}? This cannot be undone.`).toBe("是否丢弃 stash@{0}？此操作无法撤消。");
+    await setLocale("it");
+    expect(tx(built)).toBe("Esegui 'orders'");
+    expect(tx(zh)).toBe("Esegui 'orders'");
+    expect(tx`Run '${"Retry"}'`).toBe(`Esegui '${tx("Retry")}'`);
     await setLocale("en");
     expect(tx(zh)).toBe("Run 'orders'");
   });
@@ -162,23 +285,30 @@ describe("t / locales", () => {
 });
 
 describe("catalogs", () => {
-  const catalogs: Record<string, Record<string, string>> = { en, zh };
+  const catalogs: Record<string, Record<string, string>> = { en, it: itCatalog, zh };
+  const textCatalogs: Record<string, Record<string, string>> = { it: itText, zh: zhText };
 
-  it("translate source text into non-empty, different text", () => {
-    for (const [source, text] of Object.entries(zhText as Record<string, string>)) {
-      expect(text.trim(), source).not.toBe("");
-      expect(text, source).not.toBe(source);
+  it("translate source text into non-empty, different text (except approved Italian cognates)", () => {
+    for (const [locale, catalog] of Object.entries(textCatalogs)) {
+      for (const [source, text] of Object.entries(catalog)) {
+        expect(text.trim(), `${locale}:${source}`).not.toBe("");
+        if (locale === "it" && SAME_IN_IT.has(source)) continue;
+        expect(text, `${locale}:${source}`).not.toBe(source);
+      }
     }
   });
 
   it("keep the placeholders of source-text templates", () => {
     const names = (m: string) => [...m.matchAll(/\{(\w+)\}/g)].map((x) => x[1]).sort();
-    for (const [source, text] of Object.entries(zhText as Record<string, string>))
-      expect(names(text), source).toEqual(names(source));
+    for (const [locale, catalog] of Object.entries(textCatalogs))
+      for (const [source, text] of Object.entries(catalog))
+        expect(names(text), `${locale}:${source}`).toEqual(names(source));
   });
 
   it("have the same keys", () => {
+    expect(Object.keys(itCatalog).sort()).toEqual(Object.keys(en).sort());
     expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort());
+    expect(Object.keys(itText).sort()).toEqual(Object.keys(zhText).sort());
   });
 
   it("contain only well-formed messages", () => {
@@ -189,9 +319,12 @@ describe("catalogs", () => {
 
   it("use the same parameters across locales", () => {
     const params = (m: string) => [...m.matchAll(/\{\s*([a-z]\w*)\s*[,}]/g)].map((x) => x[1]).sort();
-    for (const key of Object.keys(en))
-      expect(params((zh as Record<string, string>)[key] ?? ""), key).toEqual(
-        params((en as Record<string, string>)[key]!),
-      );
+    for (const [locale, catalog] of Object.entries(catalogs)) {
+      if (locale === "en") continue;
+      for (const key of Object.keys(en))
+        expect(params(catalog[key] ?? ""), `${locale}:${key}`).toEqual(
+          params((en as Record<string, string>)[key]!),
+        );
+    }
   });
 });

@@ -73,6 +73,32 @@
   color: var(--fg-strong);
   font-weight: 600;
 }
+.repoLabel,
+.moduleLabel {
+  color: var(--fg-strong);
+  font-weight: 600;
+}
+.repoColor {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin: 0 2px;
+  border-radius: 3px;
+}
+.repoBranch {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 160px;
+  padding: 0 5px;
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--fg-subtle) 14%, transparent);
+  color: var(--fg-secondary, var(--fg-subtle));
+  font-size: var(--fs-tiny);
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .detail {
   min-width: 0;
   overflow: hidden;

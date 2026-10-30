@@ -8,7 +8,8 @@ import type { GitOperation, RemoteOp } from "@/bindings";
 import { tx } from "@/platform/i18n";
 import { call, commands, emitLocalIdeEvent, isCancelled, isTauri, nextRequestId } from "@/platform/ipc";
 import { editorsFor } from "@/editor/api";
-import { maybeEditorService, notifications } from "@/workbench/contributions";
+import { maybeEditorService, notifications, toolWindowService } from "@/workbench/contributions";
+import { useGitLog } from "./logStore";
 import { progressFraction } from "./model";
 import { currentRepo, refreshNow, repoName, useVcs } from "./store";
 
@@ -49,8 +50,46 @@ export function clearConsole() {
   useVcsConsole.setState({ lines: [] });
 }
 
+export function showGitConsole() {
+  useGitLog.setState({ tab: "console" });
+  try {
+    toolWindowService().show("git", true);
+  } catch {
+    // ToolWindowService not initialized in isolated unit tests.
+  }
+}
+
 export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+export interface RepoFailure {
+  name: string;
+  message: string;
+}
+
+const MAX_SHOWN_FAILURES = 4;
+
+/** First meaningful line of a git error message (collapsing multi-remote/multi-line stderr for one repo). */
+export function summarizeRepoError(message: string): string {
+  const lines = message
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const picked =
+    lines.find((l) => /^fatal:/i.test(l)) ?? lines.find((l) => /^error:/i.test(l)) ?? lines[0] ?? message.trim();
+  return picked.replace(/^(?:fatal|error):\s*/i, "");
+}
+
+/** Formats multi-repository remote failures concisely (up to `maxShown` lines + summary). */
+export function formatRemoteFailures(failures: readonly RepoFailure[], maxShown = MAX_SHOWN_FAILURES): string {
+  const lines = failures.slice(0, maxShown).map((f) => `${f.name}: ${summarizeRepoError(f.message)}`);
+  const more = failures.length - lines.length;
+  if (more > 0) {
+    lines.push(more === 1 ? tx`…and ${more} more repository` : tx`…and ${more} more repositories`);
+  }
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +220,7 @@ export async function runRemote(
   try {
     // Every repository is tried; the failures are reported together. A pull skips the
     // repositories that have nothing to pull from (detached HEAD, e.g. submodules; no upstream).
-    const failures: string[] = [];
+    const failures: RepoFailure[] = [];
     const updated: UpdatedRange[] = [];
     for (const repo of repos) {
       const name = repos.length > 1 && repo ? repoName(repo) : null;
@@ -200,11 +239,23 @@ export async function runRemote(
         if (before && after && before !== after) updated.push({ repo, from: before, to: after });
       } catch (e) {
         if (isCancelled(e) || !name) throw e;
-        logConsole("err", errorMessage(e));
-        failures.push(`${name}: ${errorMessage(e)}`);
+        const msg = errorMessage(e);
+        logConsole("err", msg);
+        failures.push({ name, message: msg });
       }
     }
-    if (failures.length) throw new Error(failures.join("\n"));
+    if (failures.length) {
+      lastRemoteError = failures.map((f) => `${f.name}: ${f.message}`).join("\n");
+      notifications().notify({
+        group: "vcs",
+        level: "error",
+        key: "vcs.remote",
+        title: `${doneTitle} failed`,
+        body: formatRemoteFailures(failures),
+        actions: [{ label: "View in Console", run: showGitConsole }],
+      });
+      return false;
+    }
     lastRemoteError = null;
     if (op.op === "pull" || op.op === "pullFrom") await notifyUpdated(updated);
     else
@@ -226,6 +277,7 @@ export async function runRemote(
       key: "vcs.remote",
       title: cancelled ? `${doneTitle} cancelled` : `${doneTitle} failed`,
       body: cancelled ? undefined : errorMessage(e),
+      actions: cancelled ? undefined : [{ label: "View in Console", run: showGitConsole }],
     });
     return false;
   } finally {

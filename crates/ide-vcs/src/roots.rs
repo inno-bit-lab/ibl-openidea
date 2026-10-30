@@ -138,6 +138,11 @@ impl Repos {
     /// enclosing one's "untracked folder" entry for it is dropped. A repository that cannot
     /// be read (e.g. deleted since the last scan) is left out; fails only when all fail.
     pub fn status(&self) -> IdeResult<Vec<FileStatus>> {
+        self.status_with_ignored(false)
+    }
+
+    /// Like [`Repos::status`], optionally including git-ignored files and directories.
+    pub fn status_with_ignored(&self, include_ignored: bool) -> IdeResult<Vec<FileStatus>> {
         let mut out = Vec::new();
         let mut first_error = None;
         let mut read = 0;
@@ -148,7 +153,7 @@ impl Repos {
                 .map(|r| r.root())
                 .filter(|r| *r != repo.root() && r.starts_with(repo.root()))
                 .collect();
-            let status = match repo.status() {
+            let status = match repo.status_with_ignored(include_ignored) {
                 Ok(status) => {
                     read += 1;
                     status
@@ -160,9 +165,11 @@ impl Repos {
                 }
             };
             out.extend(status.into_iter().filter(|f| {
-                let untracked_root =
-                    f.unstaged == Some(crate::ChangeKind::Untracked) && nested.iter().any(|n| f.path.0 == *n);
-                !untracked_root
+                let nested_root = matches!(
+                    f.unstaged,
+                    Some(crate::ChangeKind::Untracked | crate::ChangeKind::Ignored)
+                ) && nested.iter().any(|n| f.path.0 == *n);
+                !nested_root
             }));
         }
         match first_error {

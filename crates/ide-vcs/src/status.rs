@@ -15,18 +15,26 @@ struct Entry {
 }
 
 pub(crate) fn status(r: &Repo) -> IdeResult<Vec<FileStatus>> {
+    status_with_ignored(r, false)
+}
+
+pub(crate) fn status_with_ignored(r: &Repo, include_ignored: bool) -> IdeResult<Vec<FileStatus>> {
     let repo = r.gix()?;
     let mut map: BTreeMap<String, Entry> = BTreeMap::new();
     let mut conflicts: HashSet<String> = HashSet::new();
     let ignored = r.ignored.read().unwrap_or_else(|p| p.into_inner()).clone();
 
-    let platform = repo
+    let mut platform = repo
         .status(gix::progress::Discard)
         .map_err(gx)?
         .untracked_files(gix::status::UntrackedFiles::Files)
         .index_worktree_rewrites(None)
         .index_worktree_submodules(gix::status::Submodule::AsConfigured { check_dirty: true })
         .tree_index_track_renames(gix::status::tree_index::TrackRenames::Given(gix::diff::Rewrites::default()));
+    if include_ignored {
+        platform = platform
+            .dirwalk_options(|opts| opts.emit_ignored(Some(gix::dir::walk::EmissionMode::CollapseDirectory)));
+    }
     let mut iter = platform.into_iter(Vec::<gix::bstr::BString>::new()).map_err(gx)?;
     for item in iter.by_ref() {
         let item = item.map_err(gx)?;
@@ -47,9 +55,11 @@ pub(crate) fn status(r: &Repo) -> IdeResult<Vec<FileStatus>> {
                     map.entry(path).or_default().unstaged = Some(kind);
                 }
                 WtItem::DirectoryContents { entry, .. } => {
-                    if entry.status != gix::dir::entry::Status::Untracked {
-                        continue;
-                    }
+                    let kind = match entry.status {
+                        gix::dir::entry::Status::Untracked => ChangeKind::Untracked,
+                        gix::dir::entry::Status::Ignored(_) if include_ignored => ChangeKind::Ignored,
+                        _ => continue,
+                    };
                     let mut path = to_string(entry.rela_path.as_ref());
                     if ignored.is_ignored_path(&path) {
                         continue;
@@ -57,7 +67,10 @@ pub(crate) fn status(r: &Repo) -> IdeResult<Vec<FileStatus>> {
                     if entry.disk_kind.is_some_and(|k| k.is_dir()) && !path.ends_with('/') {
                         path.push('/');
                     }
-                    map.entry(path).or_default().unstaged = Some(ChangeKind::Untracked);
+                    let e = map.entry(path).or_default();
+                    if kind != ChangeKind::Ignored || (e.staged.is_none() && e.unstaged.is_none()) {
+                        e.unstaged = Some(kind);
+                    }
                 }
                 WtItem::Rewrite { dirwalk_entry, .. } => {
                     // Rewrites are disabled for index↔worktree, but stay correct if git config enables them.
