@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Worktree `C:\projects\development\IBL\ibl-openidea\.ibl-crew-worktree\dev-codex`, branch `port/mt1-platform` from `origin/port/v0.3.0`, PR into `port/v0.3.0`. Bootstrap per section 3.1 before any edit.
-- Fork sources, read-only: `origin/fix/release-hardening` `7ff9bc9`, `origin/fix/rh-mt-b` `7c87cd3`, `origin/fix/rh-mt-c` `2321a8a`. If the coordinator announces a newer SHA, port its delta in a separate commit.
+- Fork sources, read-only: `origin/fix/release-hardening` at the tip given in the dispatch (at least `0d68ad7`), `origin/fix/rh-mt-b` `86e8498` or later (it carries the review fix `7870140`; once PR #3 merges, read the same code from `origin/fix/release-hardening`), `origin/fix/rh-mt-c` `2321a8a`. If the coordinator announces a newer SHA, port its delta in a separate commit.
 - Cargo only as `pwsh -NoProfile -File scripts/local/cargo-slot.ps1 -- cargo ...`, in the foreground, with `$env:CARGO_TARGET_DIR = 'C:\projects\development\IBL\ibl-openidea\.ibl-crew-worktree\dev-codex\target'` and `$env:CARGO_PROFILE_DEV_DEBUG = 'line-tables-only'`. Until Task 1 exists on your branch, run no cargo at all.
 - No `--release`, no `pnpm build:local`, no `cargo clippy --workspace`. Local lint gate: `cargo clippy -p openidea --all-targets -- -D warnings` and `-p ide-tools`. CI runs the full matrix.
 - Version files stay at upstream's `0.1.29`; MT-4 sets `0.3.0`. Do not touch `ci.yml`: CI runs by `workflow_dispatch` (design section 2), so the temporary trigger change in port map 4 is cancelled.
