@@ -326,6 +326,18 @@ impl AgentManager {
         list
     }
 
+    /// Saves additional CLI arguments without changing the agent definition.
+    pub fn set_custom_args(&self, provider: &str, args: &[String]) -> IdeResult<Vec<AgentProvider>> {
+        let dir = self
+            .shared
+            .paths
+            .custom_agents_dir
+            .as_deref()
+            .ok_or_else(|| IdeError::unavailable("custom agents directory is not configured"))?;
+        provider::set_custom_args(dir, provider, args).map_err(|error| IdeError::internal(error.to_string()))?;
+        Ok(self.providers())
+    }
+
     /// The slash commands to complete for `provider`, in `task`'s directory or (without one)
     /// in the project: what the agent offered last time there, unadvertised builtins,
     /// and, for Claude Code, skills and custom commands on disk it has not listed.

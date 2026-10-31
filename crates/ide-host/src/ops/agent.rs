@@ -5,11 +5,14 @@ use crate::Host;
 use crate::rpc::Dispatcher;
 use ide_agent::registry::{AgentRegistry, RegistryPaths};
 use ide_agent::{
-    AgentChange, AgentCommand, AgentEntry, AgentEvent, AgentProbe, AgentPrompt, AgentProvider, AgentQueued, AgentTask,
-    NewAgentTask,
+    AgentChange, AgentCommand, AgentConfigChoice, AgentEntry, AgentEvent, AgentProbe, AgentPrompt, AgentProvider,
+    AgentQueued, AgentTask, NewAgentTask,
 };
 use ide_core::{IdeError, IdeResult, IpcPath, RequestId};
 use ide_tools::InstallEvent;
+
+/// First use may download an adapter; completion itself always runs read-only.
+const COMPLETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Streams the project's agent events to this window; returns every task.
 pub fn subscribe(host: &Host, window: &str, on_event: Emit<AgentEvent>) -> IdeResult<Vec<AgentTask>> {
@@ -20,6 +23,23 @@ pub fn providers(host: &Host, window: &str) -> IdeResult<Vec<AgentProvider>> {
     let mut providers = host.project(window)?.agents.providers();
     ide_agent::registry::mark_updates(&registry_paths(host), &mut providers);
     Ok(providers)
+}
+
+/// Stores additional arguments independently of native or registry agent definitions.
+pub fn set_args(host: &Host, window: &str, provider: String, args: Vec<String>) -> IdeResult<Vec<AgentProvider>> {
+    host.project(window)?.agents.set_custom_args(&provider, &args)?;
+    providers(host, window)
+}
+
+/// Answers one question in a throwaway session; no task is created.
+pub async fn complete(
+    host: &Host,
+    window: &str,
+    provider: String,
+    prompt: String,
+    config: Vec<AgentConfigChoice>,
+) -> IdeResult<String> {
+    host.project(window)?.agents.complete(&provider, &prompt, &config, COMPLETE_TIMEOUT).await
 }
 
 /// Where ACP Registry agents are saved (`<config>/agents`, like the user's own) and installed.
@@ -167,6 +187,10 @@ pub async fn base_text(host: &Host, window: &str, task: String, path: IpcPath) -
 pub(crate) fn register(d: &mut Dispatcher) {
     d.add("agent_subscribe", |c| async move { subscribe(&c.host, &c.window, c.channel("onEvent")?) });
     d.add("agent_providers", |c| async move { providers(&c.host, &c.window) });
+    d.add("agent_set_args", |c| async move { set_args(&c.host, &c.window, c.arg("provider")?, c.arg("args")?) });
+    d.add("agent_complete", |c| async move {
+        complete(&c.host, &c.window, c.arg("provider")?, c.arg("prompt")?, c.arg("config")?).await
+    });
     d.add("agent_registry_list", |c| async move { registry_list(&c.host, &c.window, c.arg("request")?).await });
     d.add("agent_registry_install", |c| async move {
         registry_install(&c.host, &c.window, c.arg("id")?, c.arg("request")?, c.sender("onEvent")?).await

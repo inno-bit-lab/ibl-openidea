@@ -93,6 +93,10 @@ impl Default for GitSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CommitSettings {
+    pub suggest_agent: String,
+    pub suggest_model: String,
+    pub suggest_thinking: String,
+    pub suggest_rules: String,
     /// Commit from the Commit tool window; off = Local Changes in the Git tool
     /// window and a Commit dialog.
     pub non_modal: bool,
@@ -115,6 +119,10 @@ pub struct CommitSettings {
 impl Default for CommitSettings {
     fn default() -> Self {
         Self {
+            suggest_agent: String::new(),
+            suggest_model: String::new(),
+            suggest_thinking: String::new(),
+            suggest_rules: String::new(),
             non_modal: true,
             clear_initial_message: false,
             analyze_code: true,
@@ -384,5 +392,34 @@ impl Default for ExternalTool {
             synchronize_after: true,
             open_console: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commit_suggestion_settings_default_empty_and_read_camel_case() {
+        let settings: CommitSettings = serde_json::from_str("{}").unwrap();
+        assert!(
+            settings.suggest_agent.is_empty()
+                && settings.suggest_model.is_empty()
+                && settings.suggest_thinking.is_empty()
+                && settings.suggest_rules.is_empty()
+        );
+        let settings: CommitSettings = serde_json::from_value(serde_json::json!({
+            "suggestAgent":"codex", "suggestModel":"small", "suggestThinking":"low", "suggestRules":"Use conventional commits."
+        })).unwrap();
+        assert_eq!(
+            (
+                settings.suggest_agent.as_str(),
+                settings.suggest_model.as_str(),
+                settings.suggest_thinking.as_str(),
+                settings.suggest_rules.as_str()
+            ),
+            ("codex", "small", "low", "Use conventional commits.")
+        );
+        assert_eq!(serde_json::to_value(settings).unwrap()["suggestRules"], "Use conventional commits.");
     }
 }
