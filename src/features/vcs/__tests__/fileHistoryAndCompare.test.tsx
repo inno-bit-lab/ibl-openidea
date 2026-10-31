@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Commit } from "@/bindings";
 
 const vcsLog = vi.fn();
@@ -689,5 +689,57 @@ describe("CompareBranchesEditor", () => {
     await waitFor(() => expect(openInput).toHaveBeenCalledTimes(2));
     expect(openInput.mock.calls[1]![0]).toMatchObject({ path: `${b}/src/b.ts` });
     consoleError.mockRestore();
+  });
+  it("review regression: refresh keeps the lead in the selected repository", async () => {
+    const a = "/p/a",
+      b = "/p/b";
+    useVcs.setState({ roots: [a, b], repo: a });
+    const ca = { ...makeCommit("a0", "in A"), commitTimeMs: 9000 };
+    const bs = ["b1", "b2", "b3"].map((id, i) => ({ ...makeCommit(id, id), commitTimeMs: 8000 - i }));
+    let refreshed = false;
+    vcsLog.mockImplementation((repo, opts) =>
+      ok(opts.range === "HEAD..develop" ? (repo === a ? [ca] : refreshed ? bs.slice(0, 2) : bs) : []),
+    );
+    render(<CompareBranchesEditor input={compareBranchesInput("develop", "main", a, [a, b])} />);
+    const top = screen.getByRole("listbox", { name: "Commits in develop not in main" });
+    await waitFor(() => expect(within(top).getAllByRole("option")).toHaveLength(4));
+    const rows = within(top).getAllByRole("option");
+    fireEvent.mouseDown(rows[1]!, { button: 0 });
+    fireEvent.mouseDown(rows[2]!, { button: 0, ctrlKey: true });
+    fireEvent.mouseDown(rows[3]!, { button: 0, ctrlKey: true });
+    await waitFor(() => expect(vcsCommitsChanges).toHaveBeenCalledWith(b, ["b3", "b2", "b1"]));
+    vcsCommitsChanges.mockClear();
+    refreshed = true;
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Compare develop with main" })).getByRole("button", {
+        name: "Refresh",
+      }),
+    );
+    await waitFor(() => expect(within(top).getAllByRole("option")).toHaveLength(3));
+    await waitFor(() => expect(vcsCommitsChanges).toHaveBeenCalled());
+    expect(vcsCommitsChanges.mock.calls).toEqual([[b, ["b2", "b1"]]]);
+  });
+
+  it("review regression: late old refresh cannot replace new results", async () => {
+    let resolveOld!: (value: unknown) => void;
+    const old = new Promise((resolve) => {
+      resolveOld = resolve;
+    });
+    let calls = 0;
+    vcsLog.mockImplementation((_repo, opts) =>
+      opts.range !== "HEAD..develop" ? ok([]) : ++calls === 1 ? old : ok([makeCommit("new", "new result")]),
+    );
+    render(<CompareBranchesEditor input={compareBranchesInput("develop", "main", "/p")} />);
+    const top = screen.getByRole("listbox", { name: "Commits in develop not in main" });
+    await waitFor(() => expect(calls).toBe(1));
+    fireEvent.click(
+      within(screen.getByRole("toolbar", { name: "Compare develop with main" })).getByRole("button", {
+        name: "Refresh",
+      }),
+    );
+    await waitFor(() => expect(top).toHaveTextContent("new result"));
+    await act(async () => resolveOld({ status: "ok", data: [makeCommit("old", "old result")] }));
+    expect(top).toHaveTextContent("new result");
+    expect(top).not.toHaveTextContent("old result");
   });
 });

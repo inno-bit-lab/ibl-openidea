@@ -287,6 +287,8 @@ function BranchComparisonPane({
     selection: [],
   });
   const anchorRef = useRef<string | null>(null);
+  // Bumped by every load: only the latest load's answer updates the pane.
+  const generation = useRef(0);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -298,6 +300,7 @@ function BranchComparisonPane({
   const load = useCallback(() => {
     // A path filter: the log of the repository holding it.
     const targets = multiRepo && filters.path ? repos.filter((r) => r === repoOf(filters.path!)) : repos;
+    const gen = ++generation.current;
     void Promise.allSettled(
       targets.map(async (repo) => {
         const config = (key: string) => call(commands.vcsConfigGet(repo, key)).catch(() => null);
@@ -323,6 +326,8 @@ function BranchComparisonPane({
         return page.map((c): RepoCommit => ({ ...c, repo, user }));
       }),
     ).then((results) => {
+      // A later load (Refresh, other filters or range) superseded this one.
+      if (gen !== generation.current) return;
       const streams = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
       const failures = results.flatMap((r, i) =>
         r.status === "rejected" ? [`${targets[i] ? repoName(targets[i]!) : "Git"}: ${errorMessage(r.reason)}`] : [],
@@ -331,11 +336,20 @@ function BranchComparisonPane({
       setCommits(merged);
       setError(failures.join("\n") || null);
       setLoading(false);
-      // Keep the selected commits still listed, else select the first.
+      // Keep the selected commits still listed, else select the first. A lead that is gone moves to
+      // the first surviving selected commit, so lead and selection stay in one repository.
       const keys = new Set(merged.map(commitKey));
       setPicked((p) => {
-        const lead = p.selected && keys.has(p.selected) ? p.selected : merged[0] ? commitKey(merged[0]) : null;
         const kept = p.selection.filter((k) => keys.has(k));
+        const keptSet = new Set(kept);
+        const lead =
+          p.selected && keys.has(p.selected)
+            ? p.selected
+            : kept.length
+              ? commitKey(merged.find((c) => keptSet.has(commitKey(c)))!)
+              : merged[0]
+                ? commitKey(merged[0])
+                : null;
         return { selected: lead, selection: kept.length ? kept : lead ? [lead] : [] };
       });
     });
