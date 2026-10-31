@@ -7,6 +7,7 @@ const vcsTags = vi.fn();
 const branchesOf = vi.fn((_repo: string | null): Branch[] => []);
 const vcsRemote = vi.fn();
 const vcsDeleteBranch = vi.fn();
+const vcsRestoreBranch = vi.fn();
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -21,6 +22,7 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
       vcsBranches: async (repo: string | null) => ({ status: "ok", data: branchesOf(repo) }),
       vcsRemote: (repo: string | null, _request: number, op: unknown) => vcsRemote(repo, op),
       vcsDeleteBranch: (repo: string | null, name: string) => vcsDeleteBranch(repo, name),
+      vcsRestoreBranch: (repo: string | null, deleted: unknown) => vcsRestoreBranch(repo, deleted),
       vcsBranchInfo: async () => ({
         status: "ok",
         data: { head: "main", headCommit: "1", upstream: "origin/main", ahead: 0, behind: 0, operation: null },
@@ -313,6 +315,66 @@ describe("Branches pane with branches selected in several repositories", () => {
     ]);
     // One confirmation: the remote branch is not confirmed again.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("review regression: deleting equal branch names retains both Restore actions", async () => {
+    const { notify, useNotifications } = await import("@/workbench/notificationStore");
+    useNotifications.setState({ items: [] });
+    provideNotificationService({ notify });
+    vcsDeleteBranch.mockImplementation(async (repo, name) => ({
+      status: "ok",
+      data: { name, tip: repo === FRONT ? "front-tip" : "back-tip", upstream: null, unmerged: true },
+    }));
+    render(
+      <>
+        <BranchesPanel />
+        <VcsDialogHost />
+        <MessagesHost />
+      </>,
+    );
+    await selectLocal("feature", [0, 1]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Branch" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Branches" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(vcsDeleteBranch).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(useNotifications.getState().items.filter((n) => n.title === "Deleted branch feature")).toHaveLength(2),
+    );
+  });
+
+  it("each Restore after deleting the same name in two repositories restores it in its own repository", async () => {
+    const { notify, useNotifications } = await import("@/workbench/notificationStore");
+    useNotifications.setState({ items: [] });
+    provideNotificationService({ notify });
+    vcsRestoreBranch.mockReset().mockResolvedValue({ status: "ok", data: null });
+    vcsDeleteBranch.mockImplementation(async (repo: string, name: string) => ({
+      status: "ok",
+      data: { name, tip: repo === FRONT ? "front-tip" : "back-tip", upstream: null, unmerged: true },
+    }));
+    render(
+      <>
+        <BranchesPanel />
+        <VcsDialogHost />
+        <MessagesHost />
+      </>,
+    );
+    await selectLocal("feature", [0, 1]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Branch" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "Delete Branches" })).getByRole("button", { name: "Delete" }),
+    );
+    await waitFor(() =>
+      expect(useNotifications.getState().items.filter((n) => n.title === "Deleted branch feature")).toHaveLength(2),
+    );
+    const deleted = useNotifications.getState().items.filter((n) => n.title === "Deleted branch feature");
+    // Each balloon names its repository.
+    expect(deleted.map((n) => String(n.body).split("\n")[0]).sort()).toEqual(["back", "front"]);
+    for (const n of deleted) n.actions!.find((a) => a.label === "Restore")!.run();
+    await waitFor(() => expect(vcsRestoreBranch).toHaveBeenCalledTimes(2));
+    expect(vcsRestoreBranch.mock.calls.map(([repo, d]) => [repo, (d as { tip: string }).tip]).sort()).toEqual([
+      [BACK, "back-tip"],
+      [FRONT, "front-tip"],
+    ]);
   });
 
   it("cancelling the one confirmation deletes nothing", async () => {

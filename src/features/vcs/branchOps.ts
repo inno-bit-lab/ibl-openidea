@@ -256,14 +256,17 @@ export async function deleteBranch(name: string, repo: string | null = currentRe
   const branches =
     repo === currentRepo() ? useVcs.getState().branches : await call(commands.vcsBranches(repo)).catch(() => []);
   const otherTracking = branches.some((b) => !b.remote && b.name !== name && b.upstream === tracked);
-  const key = `vcs.deleted.${name}`;
+  // One notification (and Restore) per repository: the same name deleted in several keeps each one.
+  const key = `vcs.deleted.${repo ?? ""}:${name}`;
   const done = () => notifications().expire?.(key);
+  const where = repo && useVcs.getState().roots.length > 1 ? repoName(repo) : undefined;
+  const unmerged = deleted.unmerged ? tx("Unmerged commits were discarded") : undefined;
   notifications().notify({
     group: "vcs",
     level: "info",
     key,
     title: `Deleted branch ${name}`,
-    body: deleted.unmerged ? "Unmerged commits were discarded" : undefined,
+    body: [where, unmerged].filter(Boolean).join("\n") || undefined,
     actions: [
       {
         label: "Restore",
