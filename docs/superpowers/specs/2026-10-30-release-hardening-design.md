@@ -85,7 +85,7 @@ A failed job leaves the release as a draft: fix it and re-run with `workflow_dis
 
 - the NSIS installer and the MSI;
 - two DMGs and two `.app.tar.gz` bundles;
-- the AppImage, deb and rpm;
+- the AppImage, deb and rpm (a release candidate `vX.Y.Z-N` has no rpm: RPM rejects `-` in its version and Tauri 2.12 has no RPM version override, so `release.yml` skips that bundle for pre-release tags);
 - a `.sig` for every bundle the updater uses;
 - four `openidea-server-*.gz`, each with its `.sha256`;
 - a `latest.json` with every platform key.

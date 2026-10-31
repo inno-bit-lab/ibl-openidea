@@ -90,8 +90,11 @@ Parameters `-FullDebug`, `-SeedFrom`, `-WhatIf`. Steps:
 
 - Release and build: `.github/workflows/release.yml`, `src-tauri/tauri.conf.json` (productName, window title, identifier, `bundle.publisher`, copyright, short and long description, updater pubkey and endpoint), `src-tauri/tauri.windows.conf.json` (title), `src-tauri/icons/**`, `README.md` (download link), `index.html`.
 - App crate: `src-tauri/src/lib.rs`, `src-tauri/src/migrate.rs` (new), `src-tauri/src/dev.rs`, `src-tauri/src/menu.rs` (brand strings only), `crates/ide-tools/src/server.rs` (`RELEASES` and its test).
-- Launcher and scripts: `scripts/dev-session.ts`, `scripts/dev-session.test.ts`, `scripts/local/**`, `src-tauri/tauri.local.conf.json`, `package.json` (scripts block only).
+- Launcher and scripts: `knip.ts` (`ignoreBinaries` only: add `pwsh` next to upstream's `rustfmt`, for the `pwsh -File` scripts in `package.json`), `scripts/dev-session.ts`, `scripts/dev-session.test.ts`, `scripts/local/**`, `src-tauri/tauri.local.conf.json`, `package.json` (scripts block only).
 - Brand test expectations only: `src/features/perf/__tests__/perf.test.ts` and `views.test.tsx` (the seven assertions that follow the `memory.ts` rebrand).
+- Brand test expectations only: `src/features/app/__tests__/updates.test.ts` (update notification strings).
+- Upstream test fix, cherry-picked with `-x`: `src/features/debugger/__tests__/javaSeparator.test.ts` from upstream `8fe09eba` (#514, `module: ""`). Upstream 504d859 fails this test on every OS (`commands.findFiles is not a function`, CI run 41169130045). It ships in PR #5 together with the `actionTitles.test.ts` fix, so `port/v0.3.0` turns green for every macro task.
+- Windows test fix, one line: `src/platform/locales/actionTitles.test.ts` normalizes `root` to forward slashes (`fileURLToPath` gives backslashes on Windows, so `startsWith(`${root}src/`)` skipped every file). Own commit; candidate for upstream.
 - Brand UI: `src/features/welcome/ProjectsPage.tsx`, `WelcomeView.tsx`, `welcome.test.tsx`, `src/workbench/TitleBar.tsx`, `src/workbench/Welcome.tsx` (moved here from port map MT-3: it is brand only), `src/features/app/AboutDialog.tsx`, `src/features/app/__tests__/shell.test.tsx`, `src/features/app/__tests__/menuBridge.test.ts` (Quit label only), plus the new upstream literals you rebrand in Task 3.
 - Catalogs: brand keys in `src/platform/locales/en.json` and `zh.json`, brand entries in `text/zh.json`, `"IBLOpenIdea"` in `UNTRANSLATED` of `textCatalog.test.ts`.
 - Docs: `docs/superpowers/**`, `docs/intents/**`, `docs/development/parallel-local-dev.md`.
@@ -146,6 +149,7 @@ Parameters `-FullDebug`, `-SeedFrom`, `-WhatIf`. Steps:
 ### Task 6: Release pipeline
 
 - [ ] Take upstream's `release.yml`; re-apply the release name `IBLOpenIdea ${tag}` and the `already_published` output with its `if:` on `build`, `server`, `updater-manifest` and `publish`. Upstream already has `uploadUpdaterJson: false` (release.yml:121) and the manifest job (release.yml:179); repository URLs come from `context.repo`.
+- [ ] Then, in a separate commit, port `308822d` from `release-hardening` (upstream has the same two defects, release.yml:121 and :201): `includeUpdaterJson: false` instead of the `uploadUpdaterJson` input that tauri-action@v0 does not have, and for pre-release tags (`vX.Y.Z-N`) `--bundles deb,appimage` on Linux plus no `linux-x86_64-rpm` key in the manifest (RPM rejects `-` and Tauri 2.12 has no RPM version override). Candidate upstream contribution.
 - [ ] `git diff upstream/main -- .github/workflows/release.yml` shows only those lines. Commit.
 
 ### Task 7: CI green
