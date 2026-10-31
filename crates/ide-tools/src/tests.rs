@@ -44,6 +44,49 @@ fn find<'a>(list: &'a [ToolInfo], name: &str) -> &'a ToolInfo {
 }
 
 #[test]
+fn managed_prefix_adds_nothing_when_no_tool_is_installed() {
+    let env = Env::new();
+    let candidates = bin_dirs_in(&env.root, Platform::current());
+    let base = std::env::join_paths([&env.sys]).unwrap();
+    assert_eq!(prepend_existing(&candidates, &base), base);
+}
+
+#[test]
+fn managed_prefix_adds_only_installed_tool_dirs() {
+    let env = Env::new();
+    let candidates = bin_dirs_in(&env.root, Platform::current());
+    fs::create_dir_all(&candidates[0]).unwrap();
+    let base = std::env::join_paths([&env.sys]).unwrap();
+    let actual: Vec<_> = std::env::split_paths(&prepend_existing(&candidates, &base)).collect();
+    assert_eq!(actual, [candidates[0].clone(), env.sys]);
+}
+
+#[test]
+fn managed_prefix_is_idempotent() {
+    let env = Env::new();
+    let candidates = bin_dirs_in(&env.root, Platform::current());
+    fs::create_dir_all(&candidates[0]).unwrap();
+    let base = std::env::join_paths([&env.sys]).unwrap();
+    let first = prepend_existing(&candidates, &base);
+    // Baseline control: the frozen composition already adds each candidate at most once.
+    assert_eq!(prepend_existing(&candidates, &first), first);
+}
+
+#[test]
+fn tools_child_path_holds_only_existing_candidates() {
+    let env = Env::new();
+    let candidates = bin_dirs_in(&env.root, Platform::current());
+    assert_eq!(
+        std::env::split_paths(&env.tools().child_path).collect::<Vec<_>>().as_slice(),
+        std::slice::from_ref(&env.sys)
+    );
+    fs::create_dir_all(&candidates[0]).unwrap();
+    let tools = env.tools();
+    assert_eq!(std::env::split_paths(&tools.child_path).collect::<Vec<_>>(), [candidates[0].clone(), env.sys.clone()]);
+    assert_eq!(std::env::split_paths(&tools.system_path).collect::<Vec<_>>(), [env.sys]);
+}
+
+#[test]
 fn version_parsing() {
     assert_eq!(parse_version("rust-analyzer 1.85.0 (4d91de4e 2025-02-17)").as_deref(), Some("1.85.0"));
     assert_eq!(

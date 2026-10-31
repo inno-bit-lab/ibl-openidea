@@ -7,8 +7,18 @@ use crate::version_managers;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-/// Where executables are looked up: this process's `PATH` (the login shell's in the
+static MANAGED_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+
+/// Registers the application's managed-tool candidates once at startup, without changing PATH.
+pub fn register_managed_dirs(mut candidates: Vec<PathBuf>) {
+    let mut seen = HashSet::new();
+    candidates.retain(|dir| seen.insert(dir.clone()));
+    let _ = MANAGED_DIRS.set(candidates);
+}
+
+/// Where executables are looked up: existing managed tools, this process's `PATH` (the login shell's in the
 /// app), the login shell's `PATH` as last read, then per-user directories and mise's,
 /// asdf's and pyenv's shims, for when the shell's setup didn't reach the app. Language server
 /// launchers, their settings hooks and tool detection all look here, so a settings
@@ -20,14 +30,62 @@ pub fn search_path() -> OsString {
     // The Windows user `PATH` may not reach a process started before it was set; append its
     // entries after the inherited ones so missing user tools still resolve.
     let user_path = crate::process::user_path();
-    let dirs = search_dirs(
+    let dirs = search_path_dirs(
         host_var_os("PATH").as_deref(),
         shell_path.as_deref(),
         user_path.as_deref(),
         home.as_deref(),
         &shims,
     );
-    std::env::join_paths(dirs).unwrap_or_default()
+    // Re-read existence at lookup time so a newly installed tool needs no app restart.
+    let mut managed: Vec<PathBuf> = MANAGED_DIRS
+        .get()
+        .into_iter()
+        .flatten()
+        .filter(|dir| dir.is_absolute() && dir.is_dir() && std::env::join_paths([dir]).is_ok() && !dirs.contains(dir))
+        .cloned()
+        .collect();
+    managed.extend(dirs);
+    let path = std::env::join_paths(managed).unwrap_or_default();
+    #[cfg(windows)]
+    warn_path_budget(&path);
+    path
+}
+
+fn search_path_dirs(
+    process_path: Option<&OsStr>,
+    shell_path: Option<&OsStr>,
+    user_path: Option<&OsStr>,
+    home: Option<&Path>,
+    shims: &[PathBuf],
+) -> Vec<PathBuf> {
+    let dirs = search_dirs(process_path, shell_path, user_path, home, shims);
+    #[cfg(windows)]
+    let dirs = {
+        // Keep explicit PATH entries even when absent (for example, a disconnected drive).
+        let explicit: HashSet<PathBuf> =
+            process_path.into_iter().chain(shell_path).chain(user_path).flat_map(std::env::split_paths).collect();
+        dirs.into_iter()
+            .filter(|dir| !home.is_some_and(|home| dir.starts_with(home)) || explicit.contains(dir) || dir.is_dir())
+            .collect()
+    };
+    dirs
+}
+
+#[cfg(windows)]
+fn warn_path_budget(path: &OsStr) {
+    use std::os::windows::ffi::OsStrExt;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    let length = path.encode_wide().count();
+    if length > 8191 && !WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            composer = "ide_core::tool_path::search_path",
+            length,
+            limit = 8191,
+            "Composed PATH exceeds the Windows cmd.exe limit"
+        );
+    }
 }
 
 /// Resolves a command on the shared path, or an explicit path relative to `root`.
@@ -135,6 +193,29 @@ fn version_key(name: &str) -> Vec<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn search_path_drops_absent_home_fallbacks_but_preserves_explicit_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let installed = home.join(".cargo/bin");
+        std::fs::create_dir_all(&installed).unwrap();
+        let explicit = home.join(".local/bin");
+        let shell_entry = home.join(".npm-global/bin");
+        let user_entry = home.join(".dotnet/tools");
+        let outside = tmp.path().join("absent-system-bin");
+        let process_path = std::env::join_paths([&explicit, &outside]).unwrap();
+        let shell_path = std::env::join_paths([&shell_entry]).unwrap();
+        let user_path = std::env::join_paths([&user_entry]).unwrap();
+        let dirs = search_path_dirs(Some(&process_path), Some(&shell_path), Some(&user_path), Some(&home), &[]);
+        assert!(dirs.contains(&installed));
+        for entry in [&explicit, &shell_entry, &user_entry, &outside] {
+            assert!(dirs.contains(entry), "explicit PATH entry was removed: {}", entry.display());
+        }
+        assert!(!dirs.contains(&home.join("go/bin")), "absent home fallback remains");
+        assert!(!dirs.contains(&home.join(".pyenv/shims")), "absent shim fallback remains");
+    }
 
     #[test]
     fn commands_resolve_on_path_and_explicit_paths_under_root() {
