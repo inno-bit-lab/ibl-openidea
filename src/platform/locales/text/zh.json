@@ -5249,5 +5249,12 @@
   "Commit Message:": "提交消息：",
   "Custom revision": "自定义修订版本",
   "Filter revisions by hash, message or author": "按哈希、消息或作者筛选修订版本",
-  "No revisions found": "未找到修订版本"
+  "No revisions found": "未找到修订版本",
+  "Ignored Files": "已忽略的文件",
+  "{dirs} directory": "{dirs} 个目录",
+  "{dirs} directories": "{dirs} 个目录",
+  "{dirs} directory and {regular} file": "{dirs} 个目录和 {regular} 个文件",
+  "{dirs} directory and {regular} files": "{dirs} 个目录和 {regular} 个文件",
+  "{dirs} directories and {regular} file": "{dirs} 个目录和 {regular} 个文件",
+  "{dirs} directories and {regular} files": "{dirs} 个目录和 {regular} 个文件"
 }

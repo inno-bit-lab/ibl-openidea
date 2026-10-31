@@ -5,6 +5,7 @@ import {
   buildChangeTree,
   commitRepos,
   ignoreTargets,
+  ignoredCountSummary,
   initialCheck,
   hunkIncluded,
   planCommit,
@@ -63,6 +64,55 @@ describe("buildChangeTree", () => {
       "  README.md",
     ]);
     expect(changes.children![0]!.files).toHaveLength(3);
+  });
+
+  it("groups by module, below the repositories and above the directories", () => {
+    const modules = [
+      { name: "r", path: "" },
+      { name: "core", path: "libs/core" },
+    ];
+    const items = [
+      fs("src/main/kotlin/App.kt", null, "modified"),
+      fs("README.md", "modified", null),
+      fs("libs/core/src/Lib.kt", null, "modified"),
+    ];
+    const byModule = buildChangeTree(items, "/r", false, undefined, ["/r"], { groupByModule: true, modules });
+    expect(shape(byModule)).toEqual(["Changes", "  core", "    Lib.kt", "  r", "    App.kt", "    README.md"]);
+    expect(byModule[0]!.children!.map((n) => [n.type, n.path])).toEqual([
+      ["module", "/r/libs/core"],
+      ["module", "/r"],
+    ]);
+
+    const combined = buildChangeTree(items, "/r", true, undefined, ["/r", "/r/libs/core"], {
+      groupByModule: true,
+      modules,
+    });
+    expect(shape(combined)).toEqual([
+      "Changes",
+      "  r",
+      "    r",
+      "      src/main/kotlin",
+      "        App.kt",
+      "      README.md",
+      "  libs/core",
+      "    core",
+      "      src",
+      "        Lib.kt",
+    ]);
+    expect(combined[0]!.children!.map((n) => n.type)).toEqual(["dir", "dir"]);
+  });
+
+  it("shows the Ignored Files group with Show Ignored Files and counts its directories and files", () => {
+    const withIgnored = [...status, fs("debug.log", null, "ignored"), fs("build/cache/", null, "ignored")];
+    expect(buildChangeTree(withIgnored, "/r", false).some((n) => n.group === "ignored")).toBe(false);
+
+    const shown = buildChangeTree(withIgnored, "/r", true, undefined, ["/r"], { showIgnored: true });
+    const ignored = shown.find((n) => n.group === "ignored")!;
+    expect(ignored.label).toBe("Ignored Files");
+    expect(shape([ignored])).toEqual(["Ignored Files", "  build", "    cache", "  debug.log", "  out"]);
+    expect(ignoredCountSummary(ignored.files)).toBe("2 directories and 1 file");
+    expect(ignoredCountSummary([fs("out/", null, "ignored")])).toBe("1 directory");
+    expect(ignoredCountSummary([fs("a.log", null, "ignored"), fs("b.log", null, "ignored")])).toBe("2 files");
   });
 });
 

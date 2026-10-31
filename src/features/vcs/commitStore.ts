@@ -14,6 +14,9 @@ interface CommitState {
   /** Commit Options › Run Git hooks. */
   runHooks: boolean;
   groupByDir: boolean;
+  groupByModule: boolean;
+  /** View Options › Show › Ignored Files. */
+  showIgnored: boolean;
   /** User overrides of the inclusion checkboxes (absolute path → state). */
   checks: Map<string, CheckState>;
   /** Changed blocks left out of the commit (absolute path → `hunkKeys`) of `hunks` files. */
@@ -42,6 +45,8 @@ export const useCommit = create<CommitState>(() => ({
   author: "",
   runHooks: true,
   groupByDir: readBool("openidea.vcs.groupByDir", false),
+  groupByModule: readBool("openidea.vcs.groupByModule", false),
+  showIgnored: readBool("openidea.vcs.showIgnored", false),
   checks: new Map(),
   excludedHunks: new Map(),
   selection: [],
@@ -66,6 +71,24 @@ export function setGroupByDir(v: boolean) {
   useCommit.setState({ groupByDir: v });
   try {
     localStorage.setItem("openidea.vcs.groupByDir", String(v));
+  } catch {
+    // ignore
+  }
+}
+
+export function setGroupByModule(v: boolean) {
+  useCommit.setState({ groupByModule: v });
+  try {
+    localStorage.setItem("openidea.vcs.groupByModule", String(v));
+  } catch {
+    // ignore
+  }
+}
+
+export function setShowIgnored(v: boolean) {
+  useCommit.setState({ showIgnored: v });
+  try {
+    localStorage.setItem("openidea.vcs.showIgnored", String(v));
   } catch {
     // ignore
   }

@@ -69,7 +69,7 @@ export function statusDecorations(status: readonly FileStatus[], propagate = tru
     // Settings › Version Control › Show directories with changed descendants.
     else if (propagate) deco.propagate = true;
     // Git reports untracked / ignored folders as one `dir/` entry: decorate their whole content.
-    if (fs.path.endsWith("/")) deco.subtree = true;
+    if (fs.path.endsWith("/") || fs.relPath.endsWith("/")) deco.subtree = true;
     const rank = FOLDER_PRECEDENCE.indexOf(kind);
     entries.push([stripSlash(fs.path), deco, rank < 0 ? FOLDER_PRECEDENCE.length : rank]);
   }
