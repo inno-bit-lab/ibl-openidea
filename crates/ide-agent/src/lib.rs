@@ -1314,8 +1314,7 @@ async fn ask(
         "running read-only completion"
     );
     let has_reported = !options.is_empty();
-    let mut effective_choices: Vec<(bool, AgentConfigChoice)> =
-        vec![(true, AgentConfigChoice { id: "mode".into(), value: chosen_mode })];
+    let mut effective_choices: Vec<(bool, AgentConfigChoice)> = Vec::new();
     for choice in config {
         let matches = |o: &AgentConfigOption| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str());
         let is_caller_mode = choice.id == "mode"
@@ -1325,6 +1324,8 @@ async fn ask(
             effective_choices.push((false, choice.clone()));
         }
     }
+    // The mode goes last, so no other setting the agent applies after it can change it.
+    effective_choices.push((true, AgentConfigChoice { id: "mode".into(), value: chosen_mode }));
     for (is_mode, choice) in &effective_choices {
         let value = choice.value.trim();
         if value.is_empty() {
