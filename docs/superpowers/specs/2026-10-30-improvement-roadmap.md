@@ -8,10 +8,10 @@
 
 | Release | Where the code is | Candidate | Left before the final tag |
 |---|---|---|---|
-| v0.2.2 | MT-A (#2) and MT-B (#3) merged; `main` = `3ef089a` | `v0.2.2-2`, published as a prerelease; A1 passed | A3, A4 and A5 on the owner's PC |
-| v0.2.3 | MT-C (#4) merged into `fix/release-hardening` | `v0.2.3-2`, published as a prerelease; A1 passed | B1 to B3 on the owner's PC |
+| v0.2.2 | MT-A (#2) and MT-B (#3) merged; `main` = `3ef089a` | `v0.2.2-2`, published as a prerelease; A1 passed | Nothing: A3 and A4 passed on the owner's PC and A5 in the team's run, on 2026-10-31 |
+| v0.2.3 | MT-C (#4) merged into `fix/release-hardening` | `v0.2.3-2`, published as a prerelease; A1 passed | B1 under way on the owner's PC (update installed, profile copied), then B2; B3 passed |
 | v0.3.0 | `port/v0.3.0` = `2847c42` (PRs #5 to #12), integrated CI green; `port/release-v0.3.0` = `904af48` | `v0.3.0-1`, published as a prerelease; C1 and C2 passed | C3, C4 and C5 on the owner's PC |
-| v0.3.x | Follow-ups collected (section "v0.3.x follow-ups") | none | none |
+| v0.3.1 | Under way on `next/v0.3.1`: small fixes (#13) merged, process-tree teardown (#14) in review, upstream tranches MT-1 to MT-7 planned and MT-1 in development (section "v0.3.x follow-ups") | none | All of it |
 | v0.4 to v0.6 | Not started | none | A design session with the owner |
 
 `releases/latest` is still `v0.2.1`, so the updater does not offer the candidates to anyone.
@@ -106,7 +106,27 @@ Collected during the sync, none of them blocking v0.3.0:
 - **Next upstream sync.** The port is frozen at upstream `504d859`. Upstream has moved on (`c5cb217c` on 2026-10-31).
 - **Small fixes.** `src/features/github/diff/reviewDiff.test.tsx:219` fails now and then. The module doc at `crates/ide-tools/src/lib.rs:9-10` still describes the old `PATH` behaviour.
 - **Possible upstream contributions**, if the owner wants them: the `PATH` budget fix, the Windows fix to `actionTitles.test.ts`, and the `release.yml` corrections (`includeUpdaterJson`, no rpm for pre-releases). Upstream has the same defects.
-- **Crew bugs**, for a session in the Crew repository: composer detection confused by Antigravity's teamwork rows; an ACP member taken for a pane member on retry; panes shrunk when the dashboard is opened from a phone; an ACP member's queue filling up with old messages and blocking new ones.
+- **Crew bugs**, for a session in the Crew repository: composer detection confused by Antigravity's teamwork rows; an ACP member taken for a pane member on retry; panes shrunk when the dashboard is opened from a phone; an ACP member's queue filling up with old messages and blocking new ones. The first four are fixed in gmaldarelli/ibl-crew#101, which waits for the owner's merge.
+
+Status on 2026-10-31: the small fixes are merged into `next/v0.3.1` (#13), and the process-tree teardown is in review (#14).
+
+### Defects found in the owner's tests (2026-10-31)
+
+None of them blocks the final tags. The owner can change that decision. `rev-codex` analysed them on `8727ac7` (v0.2.3-2) and `5e1b50a6` (`next/v0.3.1`).
+
+- **D1, silent first start after the identifier change.** v0.2.3 copies the old profile before it opens any window. On the owner's PC the copy was 18,895 files and 1.23 GB, and the window appeared after about 94 seconds, so the app looked dead and the owner started it a second time. The copy resumed and finished correctly. `next/v0.3.1` has the same code. Fix in v0.3.1: a progress window during the copy, designed by `rev-claude`.
+- **D2, wrong version in Windows "Installed apps".** After the in-app update from 0.2.2-2 to 0.2.3-2 the installed files are 0.2.3-2, but the uninstall entry still shows version 0.2.2-2 and publisher `l0ng`. The installer template writes these values, so the cause is still unknown, and finding it needs an isolated machine. It stays a follow-up.
+- **D3, an agent's error text becomes the commit suggestion.** Antigravity could not start an MCP server and replied with the error as plain text, and Suggest put that text in the commit message box. The suggestion code accepts any text the agent returns, on `next/v0.3.1` too. Fix in v0.3.1: Suggest accepts only a structured answer and shows anything else as an error, with a plan by `rev-codex`.
+- **D4, Pi hides provider errors.** With a provider out of credit, the Pi session ended as "ready" and showed no error. The cause is the `pi-acp` 0.0.34 adapter, which reports a failed prompt as a normal end of turn. It stays a follow-up; an issue to the adapter's authors is the owner's decision.
+
+Other findings from the same tests:
+
+- On v0.2.2 every Suggest left its temporary folder behind, and Antigravity left two processes running. The teardown fix in v0.3.1 covers both.
+- On the owner's PC, Antigravity 1.4.5 does not answer the ACP `initialize` within 30 seconds, with or without the teardown fix. It stays a follow-up.
+- `cargo test` adds directories to `PATH` until it passes cmd's 8,191-character limit, so the ignored real-agent tests need a runner that restores the normal `PATH`.
+- Possible upstream issue: Maven on Windows receives a non-ASCII cache path as `??`, seen in an ignored Tomcat test.
+
+Known limitations for the v0.2.3 and v0.3.0 release notes: the first start after an update from 0.2.2 or earlier copies the settings and can show no window for a minute or two, so the app must not be closed; if the agent answers Suggest with an error, the error text can appear in the commit message box and must be discarded.
 
 ## Sub-project 3: remote web IDE
 
