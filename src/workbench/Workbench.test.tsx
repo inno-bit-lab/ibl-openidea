@@ -212,6 +212,32 @@ describe("notifications", () => {
     expect(useNotifications.getState().items.every((n) => n.read && !n.balloon)).toBe(true);
     dispose();
   });
+
+  it("renders a multi-line error balloon whole, with a working Dismiss and its actions", () => {
+    loadToolWindowLayout("/balloons-multiline");
+    const onConsole = vi.fn();
+    render(<Balloons />);
+    const body = Array.from({ length: 20 }, (_, i) => `repo-${i + 1}: unable to access remote`).join("\n");
+    act(
+      () =>
+        void notify({
+          group: "vcs",
+          level: "error",
+          title: "Fetch failed",
+          body,
+          actions: [{ label: "View in Console", run: onConsole }],
+        }),
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Fetch failed");
+    expect(alert).toHaveTextContent("repo-1: unable to access remote");
+    expect(alert).toHaveTextContent("repo-20: unable to access remote");
+    fireEvent.click(screen.getByRole("button", { name: "View in Console" }));
+    expect(onConsole).toHaveBeenCalledOnce();
+    act(() => void notify({ group: "vcs", level: "error", title: "Fetch failed again", body }));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("Fetch failed again")).toBeNull();
+  });
 });
 
 describe("tool window stripe", () => {

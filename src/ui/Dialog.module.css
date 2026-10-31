@@ -17,8 +17,9 @@
   display: flex;
   flex-direction: column;
   position: relative;
-  max-width: 100%;
-  max-height: 100%;
+  /* Never larger than the window less the backdrop's margins, whatever the content. */
+  max-width: min(100%, calc(100vw - 48px));
+  max-height: min(100%, calc(100vh - 48px));
   background: var(--bg-dialog, var(--bg-elev));
   color: var(--fg-strong);
   outline: none;
@@ -250,22 +251,30 @@
 .messageText {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding-top: 4px;
 }
 .messageTitle {
+  flex: none;
   color: var(--fg-strong);
   font-weight: 600;
 }
 .messageBody {
+  /* A long message (one line per repository…) scrolls instead of pushing the buttons out. */
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(55vh, 420px);
+  overflow-y: auto;
   color: var(--fg-strong);
   line-height: 1.5;
   overflow-wrap: anywhere;
   white-space: pre-line;
 }
 .messageExtra {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: flex-start;

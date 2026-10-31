@@ -2,7 +2,9 @@
   position: fixed;
   /* Inside the editor island's bottom-right corner, clear of the right stripe. */
   right: 78px;
-  bottom: calc(var(--h-statusbar) + 16px);
+  bottom: calc(var(--h-statusbar, 30px) + 16px);
+  /* Several tall balloons never reach above the title bar. */
+  max-height: calc(100vh - var(--h-titlebar, 40px) - var(--h-statusbar, 30px) - 28px);
   /* Balloons belong to the main window: modal dialogs cover them, like IDEA. */
   z-index: calc(var(--z-dialog) - 1);
   display: flex;
@@ -13,6 +15,8 @@
 }
 .balloon {
   pointer-events: auto;
+  min-height: 0;
+  max-height: min(320px, calc(100vh - var(--h-titlebar, 40px) - var(--h-statusbar, 30px) - 28px));
   animation: slideIn var(--dur) var(--ease);
 }
 @keyframes slideIn {
@@ -37,6 +41,8 @@
 .entry {
   width: 100%;
   flex: none;
+  /* The tool window lists whole notifications; only balloons are clamped. */
+  max-height: none;
   border: 0;
   border-bottom: 1px solid var(--border);
   border-radius: 0;

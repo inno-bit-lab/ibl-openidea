@@ -662,7 +662,11 @@ export function Tree<T>(props: TreeProps<T>) {
                       indices={matches}
                       tone="accent"
                     />
-                    {detail && <span className={styles.detail}>{detail}</span>}
+                    {detail && (
+                      <span className={styles.detail} title={detail}>
+                        {detail}
+                      </span>
+                    )}
                   </>
                 )}
               </div>
