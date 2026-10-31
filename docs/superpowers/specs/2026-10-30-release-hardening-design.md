@@ -70,7 +70,7 @@ Fix:
 ### 4.4 Secrets
 
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are set (checked 2026-10-30).
-- The key must be the pair of the public key in `tauri.conf.json` (key ID `6F488B067990A3BE`); acceptance test A2 checks this.
+- The key must be the pair of the public key in `tauri.conf.json` (key ID `A31A0E471F28FEEC`); acceptance test A2 checks this.
 
 ### 4.5 Release procedure
 
@@ -343,7 +343,8 @@ Three multi-agent swarms building Rust on one machine (8 cores, about 32 GB) wil
 **v0.2.2 acceptance, on `v0.2.2-rc.N`:**
 
 - A1. The candidate has every asset listed in 4.5.
-- A2. After the final release, v0.2.0 offers and installs v0.2.2 through "Check for Updates". The signatures in `latest.json` carry key ID `6F488B067990A3BE`.
+- A2 (changed 2026-10-31). The original signing key's password was not available, so the key was replaced (new key ID A31A0E471F28FEEC, from rc `v0.2.2-2` / `v0.2.3-2`). Installs of 0.2.0 and 0.2.1 trust the old key, so they cannot update automatically: they install 0.2.2 manually once, and the release notes say so. From 0.2.2 on, "Check for Updates" works again. The original A2 text follows for reference:
+  A2. After the final release, v0.2.0 offers and installs v0.2.2 through "Check for Updates". The signatures in `latest.json` carry key ID `A31A0E471F28FEEC`.
 - A3. Commit suggestion: with `agy` and with Claude the log shows an allowlisted mode and a temporary cwd; an agent with only permissive modes, or with none, returns an error.
 - A4. Remote development to a Linux host downloads `openidea-server` from the release and verifies its `.sha256`.
 - A5. Two worktrees run `pnpm dev:local` at the same time, each with its own port and profile, with no `ERROR_BUSY`.
@@ -376,7 +377,7 @@ Three multi-agent swarms building Rust on one machine (8 cores, about 32 GB) wil
 ## 11. Owner actions
 
 - Enable workflows on the fork (Actions tab).
-- Confirm that the signing secret is the pair of key `6F488B067990A3BE`.
+- Confirm that the signing secret is the pair of key `A31A0E471F28FEEC`.
 - Install `sccache` on development machines (optional, machine-level).
 - Enable the Windows Sandbox feature (needed for B1 to B3).
 - Cross-session messaging between the coordinator and the bridge (delegated decision: the coordinator sets it up and records it in the owner report). According to the Claude Code documentation (`cross-session-messaging`):
