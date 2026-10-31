@@ -97,3 +97,93 @@ fn managed_composition_keeps_cmd_shims_within_the_path_budget() {
     assert!(path_chars(&composed) < CMD_PATH_LIMIT, "managed contribution exceeded the cmd budget");
     assert!(helper_ran(&output));
 }
+
+#[derive(Clone)]
+struct WarningCapture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for WarningCapture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn overlong_paths_warn_once_per_composer() {
+    const CHILD: &str = "IBL_PATH_BUDGET_WARN_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let fixture = Fixture::new();
+        let path = fixture.path_at_least(9000);
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "overlong_paths_warn_once_per_composer", "--nocapture"])
+            .env(CHILD, "1")
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "warning child failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+        return;
+    }
+
+    // Each composer has fresh process-global state; no environment mutation in test threads.
+    let fixture = Fixture::new();
+    let base = std::env::var_os("PATH").unwrap();
+    assert!(path_chars(&base) > CMD_PATH_LIMIT);
+    let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let capture = WarningCapture(bytes.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .without_time()
+        .with_target(false)
+        .with_writer(move || capture.clone())
+        .finish();
+    let lengths = tracing::subscriber::with_default(subscriber, || {
+        let short = ide_tools::path_with_tools(&fixture.root, OsStr::new(""));
+        assert!(path_chars(&short) < CMD_PATH_LIMIT);
+        let _ = ide_tools::Tools::with_paths(
+            fixture.root.join("tools"),
+            OsString::new(),
+            ide_tools::platform::Platform::current(),
+        );
+        assert!(bytes.lock().unwrap().is_empty(), "short PATH must not warn");
+        let mut lengths = None;
+        for _ in 0..2 {
+            let startup = ide_tools::path_with_tools(&fixture.root, &base);
+            let _ = ide_tools::Tools::with_paths(
+                fixture.root.join("tools"),
+                base.clone(),
+                ide_tools::platform::Platform::current(),
+            );
+            let lookup = ide_core::tool_path::search_path();
+            lengths = Some([path_chars(&startup), path_chars(&base), path_chars(&lookup)]);
+        }
+        lengths.unwrap()
+    });
+    let log = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+    eprintln!("COMPOSER_WARNINGS\n{log}");
+    let events: Vec<_> = log.lines().collect();
+    assert_eq!(events.len(), 3, "expected exactly one warning per composer: {log}");
+    for (composer, length) in
+        ["ide_tools::extend_process_path", "ide_tools::Tools::with_paths", "ide_core::tool_path::search_path"]
+            .into_iter()
+            .zip(lengths)
+    {
+        let matching: Vec<_> = events.iter().filter(|line| line.contains(composer)).collect();
+        assert_eq!(matching.len(), 1, "wrong warning count for {composer}: {log}");
+        let event = matching[0];
+        assert!(
+            event.contains("WARN") && event.contains(&format!("length={length}")) && event.contains("limit=8191"),
+            "wrong warning level or fields: {event}"
+        );
+    }
+}

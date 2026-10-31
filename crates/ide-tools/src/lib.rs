@@ -149,7 +149,7 @@ fn managed_bin_dir(root: &Path, spec: &ToolSpec, platform: Platform) -> Option<P
     }
 }
 
-/// Prepends [`tools_bin_dirs`] to this process's `PATH` so language servers,
+/// Prepends existing [`tools_bin_dirs`] to this process's `PATH` so language servers,
 /// debug adapters and terminals find managed tools, and appends the Windows user
 /// `PATH` entries a process may not inherit, for agent detection and for what the
 /// tools found there run in turn. Call once at startup, before other threads start
@@ -168,7 +168,22 @@ pub fn extend_process_path(app_data: &Path) {
 /// mise / asdf shims when their shell hook didn't put them there.
 pub fn path_with_tools(app_data: &Path, path: &std::ffi::OsStr) -> OsString {
     let path = &ide_core::version_managers::path_with_shims(&ide_core::version_managers::managers(), path);
-    prepend_existing(&tools_bin_dirs(app_data), path)
+    let path = prepend_existing(&tools_bin_dirs(app_data), path);
+    #[cfg(windows)]
+    {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        warn_path_budget(&path, "ide_tools::extend_process_path", &WARNED);
+    }
+    path
+}
+
+#[cfg(windows)]
+fn warn_path_budget(path: &std::ffi::OsStr, composer: &str, warned: &std::sync::atomic::AtomicBool) {
+    use std::os::windows::ffi::OsStrExt;
+    let length = path.encode_wide().count();
+    if length > 8191 && !warned.swap(true, Ordering::Relaxed) {
+        tracing::warn!(composer, length, limit = 8191, "Composed PATH exceeds the Windows cmd.exe limit");
+    }
 }
 
 fn prepend_existing(candidates: &[PathBuf], path: &std::ffi::OsStr) -> OsString {
@@ -427,6 +442,11 @@ impl Tools {
         let system: Vec<PathBuf> = std::env::split_paths(&search_path).filter(|d| !ours.contains(d)).collect();
         let system_path = std::env::join_paths(&system).unwrap_or_default();
         let child_path = prepend_existing(&ours, &system_path);
+        #[cfg(windows)]
+        {
+            static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            warn_path_budget(&child_path, "ide_tools::Tools::with_paths", &WARNED);
+        }
         Self {
             root,
             system_path,

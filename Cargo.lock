@@ -4110,6 +4110,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio-util",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -4605,6 +4606,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tracing",
+ "tracing-subscriber",
  "which",
  "zip",
 ]
