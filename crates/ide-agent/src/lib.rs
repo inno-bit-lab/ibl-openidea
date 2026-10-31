@@ -102,6 +102,19 @@ struct Known {
     commands: HashMap<String, Vec<AgentCommand>>,
 }
 
+fn provider_options(provider: &str, mut config: Vec<AgentConfigOption>) -> Vec<AgentConfigOption> {
+    config::add_client_options(provider, &mut config);
+    if let Some((o, v)) = config::bypass_mode(&config).map(|(o, v)| (o.id.clone(), v.value.clone()))
+        && let Some(o) = config.iter_mut().find(|c| c.id == o)
+    {
+        o.current = Some(v);
+    }
+    if let Some(o) = config.iter_mut().find(|o| o.id == config::CURSOR_APPROVAL) {
+        o.current = Some("bypass".into());
+    }
+    config
+}
+
 impl Shared {
     fn spec(&self, id: &str) -> Option<provider::ProviderSpec> {
         self.providers.read().iter().find(|p| p.id == id).cloned()
@@ -115,17 +128,10 @@ impl Shared {
     }
 
     fn known_config(&self, provider: &str) -> Vec<AgentConfigOption> {
-        let mut config = self.known.lock().get(provider).map(|k| k.config.clone()).unwrap_or_default();
-        config::add_client_options(provider, &mut config);
-        if let Some((o, v)) = config::bypass_mode(&config).map(|(o, v)| (o.id.clone(), v.value.clone()))
-            && let Some(o) = config.iter_mut().find(|c| c.id == o)
-        {
-            o.current = Some(v);
-        }
-        if let Some(o) = config.iter_mut().find(|o| o.id == config::CURSOR_APPROVAL) {
-            o.current = Some("bypass".into());
-        }
-        config
+        provider_options(
+            provider,
+            self.known.lock().get(provider).map(|known| known.config.clone()).unwrap_or_default(),
+        )
     }
 
     /// The commands the agent offered last time in this project.
@@ -235,6 +241,52 @@ struct Task {
     deleted: Mutex<bool>,
 }
 
+fn migrate_agents(custom_dir: &Path, models_file: &Path) {
+    let tools = models_file.parent().unwrap_or(custom_dir).join("tools");
+    if let Err(error) = provider::migrate_legacy(custom_dir, &tools) {
+        tracing::warn!("could not migrate legacy agents in {}: {error}", custom_dir.display());
+    }
+}
+
+/// Lists the profile's agents for Settings opened from Welcome, without creating a project.
+pub fn providers_from(custom_dir: &Path, models_file: &Path) -> Vec<AgentProvider> {
+    migrate_agents(custom_dir, models_file);
+    let known: HashMap<String, Known> =
+        std::fs::read(models_file).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
+    let extra = provider::extra_args(Some(custom_dir));
+    provider::load(Some(custom_dir))
+        .into_iter()
+        .map(|spec| AgentProvider {
+            extra_args: extra.get(&spec.id).cloned().unwrap_or_default(),
+            id: spec.id.clone(),
+            name: spec.name,
+            command: std::iter::once(spec.command.as_str())
+                .chain(spec.args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" "),
+            installed: provider::installed(&spec.command),
+            config: provider_options(
+                &spec.id,
+                known.get(&spec.id).map(|entry| entry.config.clone()).unwrap_or_default(),
+            ),
+            commands: Vec::new(),
+            source: spec.source,
+        })
+        .collect()
+}
+
+/// Saves profile arguments through the same mutex-protected store used by open projects.
+pub fn set_custom_args_in(
+    custom_dir: &Path,
+    models_file: &Path,
+    provider: &str,
+    args: &[String],
+) -> IdeResult<Vec<AgentProvider>> {
+    migrate_agents(custom_dir, models_file);
+    provider::set_custom_args(custom_dir, provider, args).map_err(|error| IdeError::internal(error.to_string()))?;
+    Ok(providers_from(custom_dir, models_file))
+}
+
 impl AgentManager {
     /// Loads the project's saved tasks. Spawned work runs on `runtime`.
     pub fn new(paths: AgentPaths, runtime: tokio::runtime::Handle) -> Self {
@@ -252,10 +304,7 @@ impl AgentManager {
         let known =
             std::fs::read(&paths.models_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         if let Some(custom_dir) = &paths.custom_agents_dir {
-            let tools = paths.models_file.parent().unwrap_or(custom_dir).join("tools");
-            if let Err(error) = provider::migrate_legacy(custom_dir, &tools) {
-                tracing::warn!("could not migrate legacy agents in {}: {error}", custom_dir.display());
-            }
+            migrate_agents(custom_dir, &paths.models_file);
         }
         let providers = RwLock::new(provider::load(paths.custom_agents_dir.as_deref()));
         let shared = Arc::new(Shared {
