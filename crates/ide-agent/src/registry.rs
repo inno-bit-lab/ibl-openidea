@@ -703,11 +703,15 @@ mod tests {
         assert!(matches!(choose(&entry, arm, &|_| false), Some(Choice::Binary(_))));
         assert!(choose(&entry, Platform { os: Os::Linux, arch: Arch::Arm64 }, &|_| false).is_none());
         entry.distribution.npx = Some(serde_json::from_str(r#"{"package":"amp-acp"}"#).unwrap());
+        entry.distribution.uvx = Some(serde_json::from_str(r#"{"package":"amp-acp-python"}"#).unwrap());
         assert!(matches!(choose(&entry, arm, &|_| true), Some(Choice::Npx(_))));
+        assert!(matches!(choose(&entry, arm, &|name| name == "uv"), Some(Choice::Uvx(_))));
+        assert!(matches!(choose(&entry, arm, &|name| name != "node"), Some(Choice::Uvx(_))));
+        assert!(matches!(choose(&entry, arm, &|_| false), Some(Choice::Binary(_))));
         let mut native = entry.distribution.binary["windows-x86_64"].clone();
         native.cmd = "native.exe".into();
         entry.distribution.binary.insert("windows-aarch64".into(), native);
-        assert!(matches!(choose(&entry, arm, &|_| false), Some(Choice::Binary(b)) if b.cmd == "native.exe"));
+        assert!(matches!(choose(&entry, arm, &|_| true), Some(Choice::Binary(b)) if b.cmd == "native.exe"));
     }
 
     const INDEX: &str = r#"{"version":"1.0.0","agents":[
