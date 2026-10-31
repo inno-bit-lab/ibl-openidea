@@ -282,3 +282,28 @@
 .manageRowSelected:hover {
   background: var(--bg-list-selected);
 }
+/* Git Remotes: a header per repository, its remotes indented below. */
+.remoteRepoHeader {
+  width: 100%;
+  height: var(--h-row);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: default;
+}
+[role="group"]:first-child > .remoteRepoHeader {
+  border-top: none;
+}
+.remoteRepoHeaderActive {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.remoteNested {
+  padding-left: 14px;
+}

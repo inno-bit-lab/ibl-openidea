@@ -5229,5 +5229,8 @@
   "Image folder must be relative.": "图片文件夹必须使用相对路径。",
   "Image exceeds 16 MB.": "图片超过 16 MB。",
   "Cannot insert image": "无法插入图片",
-  "{message}. IBLOpenIdea can install a private copy that every Python interpreter uses for debugging.": "{message}。IBLOpenIdea 可以安装专用副本，供所有 Python 解释器调试使用。"
+  "{message}. IBLOpenIdea can install a private copy that every Python interpreter uses for debugging.": "{message}。IBLOpenIdea 可以安装专用副本，供所有 Python 解释器调试使用。",
+  "View in Console": "在控制台中查看",
+  "…and {more} more repositories": "…以及另外 {more} 个仓库",
+  "…and {more} more repository": "…以及另外 {more} 个仓库"
 }

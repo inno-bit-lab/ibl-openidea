@@ -1,7 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Branch, BranchInfo, Commit, FileStatus } from "@/bindings";
 
 const vcsStatus = vi.fn();
+const vcsRemote = vi.fn();
+const vcsLog = vi.fn();
+const branchInfo = vi.fn((_repo: string | null) => info());
+const vcsRoots = vi.fn((): Array<{ root: string; operation: null; head?: string; headCommit?: string }> => [
+  { root: "/p", operation: null },
+]);
+const branchesOf = vi.fn((_repo: string | null): Branch[] => []);
+const remotesOf = vi.fn((_repo: string | null) => [{ name: "origin", url: "https://example.com/r.git" }]);
+/** Repository-scoped git calls of the dialogs: `[command, repo, ...args]`. */
+const gitCall = vi.fn((..._args: unknown[]) => Promise.resolve({ status: "ok", data: null }));
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -10,16 +22,51 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
     commands: {
       ...real.commands,
       vcsStatus: () => vcsStatus(),
-      vcsBranchInfo: async () => ({ status: "ok", data: info() }),
-      vcsRoots: async () => ({ status: "ok", data: [{ root: "/p", operation: null }] }),
+      vcsBranchInfo: async (repo: string | null) => ({ status: "ok", data: branchInfo(repo) }),
+      vcsRoots: async () => ({ status: "ok", data: vcsRoots() }),
+      vcsRemote: (repo: string | null, _request: number, op: unknown) => vcsRemote(repo, op),
+      vcsLog: (repo: string | null, query: unknown) => vcsLog(repo, query),
+      vcsRemotes: async (repo: string | null) => ({ status: "ok", data: remotesOf(repo) }),
+      vcsBranches: async (repo: string | null) => ({ status: "ok", data: branchesOf(repo) }),
+      vcsMergeWith: (...a: unknown[]) => gitCall("merge", ...a),
+      vcsRebaseWith: (...a: unknown[]) => gitCall("rebase", ...a),
+      vcsEditRemote: (...a: unknown[]) => gitCall("editRemote", ...a),
+      vcsStashPush: (...a: unknown[]) => gitCall("stash", ...a),
+      vcsAddWorktree: (...a: unknown[]) => gitCall("addWorktree", ...a),
+      vcsWorktrees: async () => ({ status: "ok", data: [] }),
     },
   };
 });
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  Channel: class {
+    onmessage: ((m: unknown) => void) | null = null;
+  },
+}));
 
-import { addToVcsTargets, rollbackPlan } from "../changeOps";
+import { useProject } from "@/platform/project";
+import { provideNotificationService, provideToolWindowService } from "@/workbench/contributions";
+import { addToVcsTargets, rollbackPlan, stashChanges } from "../changeOps";
 import { planCommit, renamedFromPath } from "../changes";
-import { refsSignature } from "../logStore";
+import { VcsDialogHost } from "../dialogs";
+import {
+  showManageRemotes,
+  showMergeDialog,
+  showNewWorktree,
+  showPullDialog,
+  showRebaseDialog,
+} from "../gitMenuDialogs";
+import { refsSignature, useGitLog } from "../logStore";
 import { newestFirst } from "../operations";
+import {
+  clearConsole,
+  formatRemoteFailures,
+  lastRemoteFailure,
+  runRemote,
+  summarizeRepoError,
+  useVcsConsole,
+} from "../ops";
+import { showPushDialog, showUpdateDialog } from "../remoteUi";
 import {
   headPushed,
   initialRows,
@@ -256,5 +303,309 @@ describe("status refresh", () => {
     await second;
     expect(useVcs.getState().status.map((f) => f.relPath)).toEqual(["after.ts"]);
     expect(vcsStatus).toHaveBeenCalledTimes(2);
+  });
+});
+
+type Notice = { level: string; title: string; body?: unknown; actions?: Array<{ label: string; run: () => void }> };
+
+describe("multi-repository remote failure formatting", () => {
+  it("extracts the primary error line without its fatal/error prefix", () => {
+    const multiRemoteStderr = [
+      "fatal: unable to access 'https://example.com/a.git/': The requested URL returned error: 999",
+      "error: could not fetch origin",
+      "fatal: unable to access 'https://example.com/b.git/': The requested URL returned error: 999",
+      "error: could not fetch upstream",
+    ].join("\n");
+    expect(summarizeRepoError(multiRemoteStderr)).toBe(
+      "unable to access 'https://example.com/a.git/': The requested URL returned error: 999",
+    );
+    expect(summarizeRepoError("error: RPC failed; HTTP 502")).toBe("RPC failed; HTTP 502");
+    expect(summarizeRepoError("  Connection reset by peer  ")).toBe("Connection reset by peer");
+  });
+
+  it("bounds the failures to 4 repositories plus a count of the others", () => {
+    const two = [
+      { name: "chb", message: "fatal: unable to access 'https://example/chb.git/': error 999" },
+      { name: "ecs", message: "fatal: unable to access 'https://example/ecs.git/': error 999" },
+    ];
+    expect(formatRemoteFailures(two)).toBe(
+      "chb: unable to access 'https://example/chb.git/': error 999\necs: unable to access 'https://example/ecs.git/': error 999",
+    );
+    const five = Array.from({ length: 5 }, (_, i) => ({
+      name: `repo-${i + 1}`,
+      message: `fatal: network unreachable (${i + 1})`,
+    }));
+    expect(formatRemoteFailures(five)).toBe(
+      [
+        "repo-1: network unreachable (1)",
+        "repo-2: network unreachable (2)",
+        "repo-3: network unreachable (3)",
+        "repo-4: network unreachable (4)",
+        "…and 1 more repository",
+      ].join("\n"),
+    );
+    const sixteen = Array.from({ length: 16 }, (_, i) => ({
+      name: `repo-${i + 1}`,
+      message: `fatal: unable to access 'https://example/repo-${i + 1}.git/': error 999\nerror: could not fetch origin`,
+    }));
+    const formatted = formatRemoteFailures(sixteen);
+    expect(formatted.split("\n")).toHaveLength(5);
+    expect(formatted).toContain("…and 12 more repositories");
+  });
+
+  it("summarizes a 16-repository fetch failure in the balloon, keeps the full output, and opens the Git console", async () => {
+    clearConsole();
+    vcsStatus.mockResolvedValue({ status: "ok", data: [] });
+    const repos = Array.from({ length: 16 }, (_, i) => `/p/repo-${i + 1}`);
+    useVcs.setState({ available: true, root: "/p", roots: repos, repo: repos[0]!, remoteBusy: null });
+    vcsRemote.mockReset().mockImplementation(async (repo: string) => ({
+      status: "error",
+      error: {
+        code: "git",
+        message: `fatal: unable to access 'https://example/${repo.slice(3)}.git/': The requested URL returned error: 999\nerror: could not fetch origin`,
+      },
+    }));
+    const notified: Notice[] = [];
+    provideNotificationService({ notify: (n) => void notified.push(n) });
+    const shown: Array<{ id: string; focus?: boolean }> = [];
+    provideToolWindowService({
+      show: (id, focus) => void shown.push({ id, focus }),
+      hide: () => {},
+      toggle: () => {},
+      isVisible: () => false,
+    });
+    useGitLog.setState({ tab: "log" });
+
+    expect(await runRemote({ op: "fetch" }, "16 repositories", repos)).toBe(false);
+
+    const error = notified.at(-1)!;
+    expect(error).toMatchObject({ level: "error", title: "Fetch failed" });
+    expect(String(error.body).split("\n")).toEqual([
+      "repo-1: unable to access 'https://example/repo-1.git/': The requested URL returned error: 999",
+      "repo-2: unable to access 'https://example/repo-2.git/': The requested URL returned error: 999",
+      "repo-3: unable to access 'https://example/repo-3.git/': The requested URL returned error: 999",
+      "repo-4: unable to access 'https://example/repo-4.git/': The requested URL returned error: 999",
+      "…and 12 more repositories",
+    ]);
+    // The full output stays available: in lastRemoteFailure() and once per repository in the console.
+    expect(lastRemoteFailure()?.split("\n")).toHaveLength(32);
+    expect(useVcsConsole.getState().lines.filter((l) => l.kind === "err")).toHaveLength(32);
+
+    error.actions!.find((a) => a.label === "View in Console")!.run();
+    await waitFor(() => expect(useGitLog.getState().tab).toBe("console"));
+    expect(shown).toEqual([{ id: "git", focus: true }]);
+  });
+});
+
+describe("Update Project and Push scoped to repositories", () => {
+  const ROOTS = ["/p/a", "/p/b", "/p/c"];
+  const outgoing = { ...commit("o1"), summary: "outgoing change" };
+
+  beforeEach(() => {
+    vcsStatus.mockReset().mockResolvedValue({ status: "ok", data: [] });
+    vcsRemote.mockReset().mockResolvedValue({ status: "ok", data: { summary: "ok" } });
+    vcsLog.mockReset().mockResolvedValue({ status: "ok", data: [outgoing] });
+    branchInfo.mockReset().mockImplementation(() => info({ upstream: "origin/main" }));
+    vcsRoots
+      .mockReset()
+      .mockReturnValue(ROOTS.map((root) => ({ root, operation: null, head: "main", headCommit: "c3" })));
+    provideNotificationService({ notify: () => {} });
+    useProject.setState({ settings: { vcs: { confirmation: { showUpdateOptions: false } } } });
+    useVcs.setState({
+      available: true,
+      root: "/p",
+      roots: ROOTS,
+      repo: "/p/a",
+      branch: info({ upstream: "origin/main" }),
+      remoteBusy: null,
+    });
+  });
+
+  const pulled = () => vcsRemote.mock.calls.map(([repo, op]) => [repo, op]);
+
+  it("Update Project without the options dialog pulls at once in the one chosen repository", async () => {
+    render(createElement(VcsDialogHost));
+    showUpdateDialog({ repo: "/p/b" });
+    await waitFor(() => expect(pulled()).toEqual([["/p/b", { op: "pull", rebase: false }]]));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("pulls only the chosen subset, with the configured update method", async () => {
+    useProject.setState({
+      settings: { vcs: { git: { updateMethod: "rebase" }, confirmation: { showUpdateOptions: false } } },
+    });
+    showUpdateDialog({ repos: ["/p/a", "/p/c"] });
+    await waitFor(() =>
+      expect(pulled()).toEqual([
+        ["/p/a", { op: "pull", rebase: true }],
+        ["/p/c", { op: "pull", rebase: true }],
+      ]),
+    );
+  });
+
+  it("without a target updates every repository", async () => {
+    showUpdateDialog();
+    await waitFor(() => expect(pulled().map(([repo]) => repo)).toEqual(ROOTS));
+  });
+
+  it("the Update Project dialog keeps the chosen repository", async () => {
+    useProject.setState({ settings: { vcs: { confirmation: { showUpdateOptions: true } } } });
+    render(createElement(VcsDialogHost));
+    showUpdateDialog({ repo: "/p/c" });
+    const dialog = await screen.findByRole("dialog", { name: "Update Project" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(pulled()).toEqual([["/p/c", { op: "pull", rebase: false }]]));
+  });
+
+  it("Push for a subset lists and pushes only those repositories", async () => {
+    render(createElement(VcsDialogHost));
+    void showPushDialog({ repos: ["/p/a", "/p/c"] });
+    const dialog = await screen.findByRole("dialog", { name: "Push Commits" });
+    await within(dialog).findByText("a");
+    expect(within(dialog).getByText("c")).toBeInTheDocument();
+    expect(within(dialog).queryByText("b")).not.toBeInTheDocument();
+    expect(vcsLog.mock.calls.map(([repo]) => repo).sort()).toEqual(["/p/a", "/p/c"]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Push" }));
+    await waitFor(() =>
+      expect(vcsRemote.mock.calls.map(([repo, op]) => [repo, (op as { op: string }).op])).toEqual([
+        ["/p/a", "push"],
+        ["/p/c", "push"],
+      ]),
+    );
+  });
+
+  it("Push for one repository opens that repository's push dialog", async () => {
+    render(createElement(VcsDialogHost));
+    void showPushDialog({ repo: "/p/b" });
+    const dialog = await screen.findByRole("dialog", { name: "Push Commits to origin/main" });
+    expect(useVcs.getState().repo).toBe("/p/b");
+    await within(dialog).findByText("outgoing change");
+    expect(vcsLog.mock.calls.map(([repo]) => repo)).toEqual(["/p/b"]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Push" }));
+    await waitFor(() =>
+      expect(vcsRemote.mock.calls.map(([repo, op]) => [repo, (op as { op: string }).op])).toEqual([["/p/b", "push"]]),
+    );
+  });
+});
+
+describe("Git dialogs: repository picker", () => {
+  const ROOTS = ["/p/a", "/p/b", "/p/c"];
+
+  beforeEach(() => {
+    vcsStatus.mockReset().mockResolvedValue({ status: "ok", data: [] });
+    vcsRemote.mockReset().mockResolvedValue({ status: "ok", data: { summary: "ok" } });
+    gitCall.mockClear();
+    branchInfo.mockReset().mockImplementation(() => info({ upstream: "origin/main" }));
+    branchesOf
+      .mockReset()
+      .mockImplementation((repo) =>
+        repo === "/p/a"
+          ? [{ ...branch("main", "c3"), current: true }]
+          : [{ ...branch("main", "c3"), current: true }, branch("feature", "c4"), branch("origin/main", "c3", true)],
+      );
+    remotesOf.mockReset().mockImplementation(() => [{ name: "origin", url: "https://example.com/r.git" }]);
+    provideNotificationService({ notify: () => {} });
+    useProject.setState({ settings: {} });
+    useVcs.setState({
+      available: true,
+      root: "/p",
+      roots: ROOTS,
+      repo: "/p/a",
+      branch: info({ upstream: "origin/main" }),
+      remoteBusy: null,
+    });
+  });
+
+  const pick = async (dialog: HTMLElement, label: string, option: RegExp) => {
+    fireEvent.click(within(dialog).getByLabelText(label));
+    fireEvent.click(await screen.findByRole("option", { name: option }));
+  };
+  const repoCalls = (command: string) => gitCall.mock.calls.filter(([c]) => c === command).map(([, repo]) => repo);
+
+  it("Pull pulls into the picked repository", async () => {
+    render(createElement(VcsDialogHost));
+    showPullDialog();
+    const dialog = await screen.findByRole("dialog", { name: /^Pull to/ });
+    await pick(dialog, "Repository", /^b/);
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Pull" })).toBeEnabled());
+    fireEvent.click(within(dialog).getByRole("button", { name: "Pull" }));
+    await waitFor(() =>
+      expect(vcsRemote.mock.calls.map(([repo, op]) => [repo, (op as { op: string }).op])).toEqual([
+        ["/p/b", "pullFrom"],
+      ]),
+    );
+  });
+
+  it("Merge offers and merges the picked repository's branches", async () => {
+    render(createElement(VcsDialogHost));
+    showMergeDialog();
+    const dialog = await screen.findByRole("dialog", { name: /^Merge into/ });
+    await pick(dialog, "Repository", /^b/);
+    await pick(dialog, "Branch to merge", /^feature/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(repoCalls("merge")).toEqual(["/p/b"]));
+    expect(gitCall.mock.calls.find(([c]) => c === "merge")?.[2]).toEqual(["feature"]);
+  });
+
+  it("Rebase rebases the picked repository", async () => {
+    render(createElement(VcsDialogHost));
+    showRebaseDialog();
+    const dialog = await screen.findByRole("dialog", { name: "Rebase" });
+    await pick(dialog, "Repository", /^c/);
+    await pick(dialog, "Upstream", /^feature/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Rebase" }));
+    await waitFor(() => expect(repoCalls("rebase")).toEqual(["/p/c"]));
+  });
+
+  it("Stash stashes the picked repository's changes", async () => {
+    render(createElement(VcsDialogHost));
+    void stashChanges();
+    const dialog = await screen.findByRole("dialog", { name: "Stash" });
+    await pick(dialog, "Repository", /^b/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create Stash" }));
+    await waitFor(() => expect(repoCalls("stash")).toEqual(["/p/b"]));
+  });
+
+  it("New Worktree creates the worktree of the picked repository", async () => {
+    render(createElement(VcsDialogHost));
+    showNewWorktree();
+    const dialog = await screen.findByRole("dialog", { name: "New Worktree" });
+    await pick(dialog, "Repository", /^c/);
+    await pick(dialog, "Check out", /^feature/);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(repoCalls("addWorktree")).toEqual(["/p/c"]));
+    expect(gitCall.mock.calls.find(([c]) => c === "addWorktree")?.slice(2)).toEqual([
+      "/p/c-feature-wt",
+      "feature",
+      "feature-wt",
+    ]);
+  });
+
+  it("Manage Remotes groups remotes by repository and adds a remote to the chosen one", async () => {
+    remotesOf.mockImplementation((repo) =>
+      repo === "/p/a" ? [{ name: "origin", url: "https://example.com/a.git" }] : [],
+    );
+    render(createElement(VcsDialogHost));
+    showManageRemotes("/p/b");
+    const dialog = await screen.findByRole("dialog", { name: "Git Remotes" });
+    await within(dialog).findByText("https://example.com/a.git");
+    for (const name of ["a", "b", "c"]) expect(within(dialog).getByRole("group", { name })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Remote…" }));
+    const define = await screen.findByRole("dialog", { name: "Define Remote" });
+    fireEvent.change(within(define).getByLabelText("URL"), { target: { value: "https://example.com/b.git" } });
+    fireEvent.click(within(define).getByRole("button", { name: "OK" }));
+    await waitFor(() =>
+      expect(gitCall.mock.calls.filter(([c]) => c === "editRemote").map(([, ...rest]) => rest)).toEqual([
+        ["/p/b", { op: "add", name: "origin", url: "https://example.com/b.git" }],
+      ]),
+    );
+  });
+
+  it("shows no picker for a single repository", async () => {
+    useVcs.setState({ roots: ["/p"], repo: "/p" });
+    render(createElement(VcsDialogHost));
+    showMergeDialog();
+    const dialog = await screen.findByRole("dialog", { name: /^Merge into/ });
+    expect(within(dialog).queryByLabelText("Repository")).not.toBeInTheDocument();
   });
 });

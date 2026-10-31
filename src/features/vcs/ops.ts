@@ -8,7 +8,7 @@ import type { GitOperation, RemoteOp } from "@/bindings";
 import { tx } from "@/platform/i18n";
 import { call, commands, isCancelled, nextRequestId } from "@/platform/ipc";
 import { editorsFor } from "@/editor/api";
-import { maybeEditorService, notifications } from "@/workbench/contributions";
+import { maybeEditorService, notifications, toolWindowService } from "@/workbench/contributions";
 import { cancelTask, upsertTaskSoon, useTasks } from "@/workbench/tasks";
 import { progressFraction } from "./model";
 import { currentRepo, refreshNow, repoName, useVcs } from "./store";
@@ -50,8 +50,41 @@ export function clearConsole() {
   useVcsConsole.setState({ lines: [] });
 }
 
+/** Shows the Git tool window's Console tab (a failure balloon's View in Console). */
+export function showGitConsole() {
+  void import("./logStore").then((m) => m.selectGitTab("console"));
+  toolWindowService().show("git", true);
+}
+
 export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+export interface RepoFailure {
+  name: string;
+  message: string;
+}
+
+const MAX_SHOWN_FAILURES = 4;
+
+/** The line of a git error that says what went wrong (`fatal:`, else `error:`, else the first), without its prefix. */
+export function summarizeRepoError(message: string): string {
+  const lines = message
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const picked =
+    lines.find((l) => /^fatal:/i.test(l)) ?? lines.find((l) => /^error:/i.test(l)) ?? lines[0] ?? message.trim();
+  return picked.replace(/^(?:fatal|error):\s*/i, "");
+}
+
+/** Failures of a multi-repository remote operation for a balloon: one line per repository, at most `maxShown`. */
+export function formatRemoteFailures(failures: readonly RepoFailure[], maxShown = MAX_SHOWN_FAILURES): string {
+  const lines = failures.slice(0, maxShown).map((f) => `${f.name}: ${summarizeRepoError(f.message)}`);
+  const more = failures.length - lines.length;
+  if (more > 0) lines.push(more === 1 ? tx`…and ${more} more repository` : tx`…and ${more} more repositories`);
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +219,7 @@ export async function runRemote(
   try {
     // Every repository is tried; the failures are reported together. A pull skips the
     // repositories that have nothing to pull from (detached HEAD, e.g. submodules; no upstream).
-    const failures: string[] = [];
+    const failures: RepoFailure[] = [];
     const updated: UpdatedRange[] = [];
     for (const repo of repos) {
       const name = repos.length > 1 && repo ? repoName(repo) : null;
@@ -206,10 +239,22 @@ export async function runRemote(
       } catch (e) {
         if (isCancelled(e) || !name) throw e;
         logConsole("err", errorMessage(e));
-        failures.push(`${name}: ${errorMessage(e)}`);
+        failures.push({ name, message: errorMessage(e) });
       }
     }
-    if (failures.length) throw new Error(failures.join("\n"));
+    if (failures.length) {
+      // The balloon gets one line per repository; the console and lastRemoteFailure() keep the full output.
+      lastRemoteError = failures.map((f) => `${f.name}: ${f.message}`).join("\n");
+      notifications().notify({
+        group: "vcs",
+        level: "error",
+        key: "vcs.remote",
+        title: `${doneTitle} failed`,
+        body: formatRemoteFailures(failures),
+        actions: [{ label: "View in Console", run: showGitConsole }],
+      });
+      return false;
+    }
     lastRemoteError = null;
     if (op.op === "pull" || op.op === "pullFrom") await notifyUpdated(updated);
     else
@@ -234,6 +279,7 @@ export async function runRemote(
         key: "vcs.remote",
         title: `${doneTitle} failed`,
         body: errorMessage(e),
+        actions: [{ label: "View in Console", run: showGitConsole }],
       });
     return false;
   } finally {

@@ -10,6 +10,7 @@ import { runCommitChecks } from "./commitChecks";
 import { forgetAmendDraft, keepMessageAfterCommit, rememberMessage, useCommit } from "./commitStore";
 import { workflowSettings } from "@/platform/workflowSettings";
 import { confirmDialog, openDialog } from "./dialogs";
+import { RepoSelect, useDialogRepo } from "./gitMenuDialogs";
 import { hunkKeys } from "./hunks";
 import { KIND_COLOR, baseName, dirName, effectiveKind, relTo, rootOf, stripSlash } from "./model";
 import { logConsole, runOp, saveAll } from "./ops";
@@ -289,18 +290,19 @@ export async function addToVcs(paths: readonly string[]) {
   );
 }
 
-/** Stash Changes dialog: message, Keep index (staged changes stay), include untracked files. */
-export function stashChanges(repo = currentRepo()): Promise<void> {
+/** Stash Changes dialog: repository, message, Keep index (staged changes stay), include untracked files. */
+export function stashChanges(initialRepo: string | null = currentRepo()): Promise<void> {
   return new Promise((resolve) => {
     const close = openDialog(() => (
       <StashDialog
+        initialRepo={initialRepo}
         onDone={async (r) => {
           close();
           if (r) {
             await saveAll();
             await runOp(
               "Stash changes",
-              () => call(commands.vcsStashPush(repo, r.message || null, r.includeUntracked, r.keepIndex)),
+              () => call(commands.vcsStashPush(r.repo, r.message || null, r.includeUntracked, r.keepIndex)),
               { success: "Changes stashed" },
             );
             void loadStashes().catch(() => undefined);
@@ -313,15 +315,18 @@ export function stashChanges(repo = currentRepo()): Promise<void> {
 }
 
 function StashDialog({
+  initialRepo,
   onDone,
 }: {
-  onDone: (r: { message: string; keepIndex: boolean; includeUntracked: boolean } | null) => void;
+  initialRepo: string | null;
+  onDone: (r: { repo: string | null; message: string; keepIndex: boolean; includeUntracked: boolean } | null) => void;
 }) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
   const [message, setMessage] = useState("");
   const [keepIndex, setKeepIndex] = useState(false);
   const [includeUntracked, setIncludeUntracked] = useState(false);
-  const branch = useVcs((s) => s.branch?.head ?? null);
-  const submit = () => onDone({ message: message.trim(), keepIndex, includeUntracked });
+  const branch = useVcs((s) => (repo && s.heads[repo] ? s.heads[repo].head : (s.branch?.head ?? null)));
+  const submit = () => onDone({ repo, message: message.trim(), keepIndex, includeUntracked });
   return (
     <Dialog
       open
@@ -340,6 +345,7 @@ function StashDialog({
           submit();
         }}
       >
+        <RepoSelect roots={roots} value={repo} onChange={setRepo} />
         {branch && <div className={styles.hint}>{tx`Current branch: ${branch}`}</div>}
         <label className={styles.fieldLabel}>
           <T>Message:</T>
