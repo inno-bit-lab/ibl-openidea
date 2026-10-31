@@ -262,3 +262,30 @@ async fn coverage_matches_transfers_without_connecting() {
     assert_eq!(ide_remote::coverage(&settings, &root, &[root.join("assets/b.txt")])[0].paths.len(), 1);
     assert!(ide_remote::coverage(&settings, &root, &[root.join("../outside")])[0].paths.is_empty());
 }
+
+#[tokio::test]
+async fn delete_parent_preserves_excluded_descendants() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let target = tmp.path().join("target");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(target.join("app/src/private")).unwrap();
+    std::fs::create_dir_all(target.join("app/src/.git")).unwrap();
+    let secret = target.join("app/src/private/keep.txt");
+    let git_config = target.join("app/src/.git/config");
+    std::fs::write(&secret, "excluded path data").unwrap();
+    std::fs::write(&git_config, "excluded name data").unwrap();
+    std::fs::write(target.join("app/src/deployed.txt"), "may delete").unwrap();
+    let service = service(tmp.path());
+    let mut settings = settings(&target);
+    settings.deployment.exclude = vec![".git".into()];
+    settings.deployment.servers[0].excluded_paths = vec!["app/src/private".into()];
+    let report = service.delete_remote(&settings, &root, None, &[root.join("src")]).await.unwrap();
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert!(
+        secret.exists() && git_config.exists(),
+        "delete removed excluded descendants: private exists={}, .git exists={}, report={report:?}",
+        secret.exists(),
+        git_config.exists()
+    );
+}

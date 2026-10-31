@@ -118,6 +118,20 @@ impl SftpFs {
         }
     }
 
+    /// Like [`Self::stat`], without following a final symlink.
+    pub async fn lstat(&self, path: &str) -> IdeResult<Option<RemoteEntry>> {
+        match self.sftp.symlink_metadata(path).await {
+            Ok(a) => {
+                let name = path.rsplit('/').next().unwrap_or(path).to_owned();
+                let target_is_dir =
+                    a.is_symlink() && self.sftp.metadata(path).await.map(|m| m.is_dir()).unwrap_or(false);
+                Ok(Some(entry(path.to_owned(), name, &a, target_is_dir)))
+            }
+            Err(e) if err(path, e.clone()).kind == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(err(path, e)),
+        }
+    }
+
     /// Entries of `dir`, folders first, then by name; symlinks to folders count as folders.
     pub async fn list(&self, dir: &str) -> IdeResult<Vec<RemoteEntry>> {
         let read = self.sftp.read_dir(dir).await.map_err(|e| err(dir, e))?;
@@ -213,6 +227,11 @@ impl SftpFs {
         } else {
             self.sftp.remove_file(path).await.map_err(|e| err(path, e))
         }
+    }
+
+    /// Removes an empty folder; the server refuses while anything is still in it.
+    pub async fn remove_empty_dir(&self, path: &str) -> IdeResult<()> {
+        self.sftp.remove_dir(path).await.map_err(|e| err(path, e))
     }
 
     pub async fn rename(&self, from: &str, to: &str) -> IdeResult<()> {

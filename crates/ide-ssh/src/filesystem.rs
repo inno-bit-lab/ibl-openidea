@@ -60,6 +60,19 @@ impl RemoteFs {
         }
     }
 
+    /// Like [`Self::stat`], without following a final symlink: `is_symlink` tells a link from
+    /// the folder or file it points to.
+    pub async fn lstat(&self, path: &str) -> IdeResult<Option<RemoteEntry>> {
+        match self {
+            Self::Sftp(fs) => fs.lstat(path).await,
+            Self::Local => match tokio::fs::symlink_metadata(path).await {
+                Ok(meta) => Ok(Some(local_entry(path, meta).await?)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e.into()),
+            },
+        }
+    }
+
     pub async fn list(&self, dir: &str) -> IdeResult<Vec<RemoteEntry>> {
         match self {
             Self::Sftp(fs) => fs.list(dir).await,
@@ -144,6 +157,14 @@ impl RemoteFs {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// Removes an empty folder; fails, and keeps it, while anything is still in it.
+    pub async fn remove_empty_dir(&self, path: &str) -> IdeResult<()> {
+        match self {
+            Self::Sftp(fs) => fs.remove_empty_dir(path).await,
+            Self::Local => Ok(tokio::fs::remove_dir(path).await?),
         }
     }
 

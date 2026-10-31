@@ -273,7 +273,9 @@ impl Deployment<'_> {
         report
     }
 
-    /// Deletes the remote counterparts of `paths`.
+    /// Deletes the remote counterparts of `paths`. A folder goes with what is under it, except
+    /// excluded entries and mapping roots: those stay, with the folders that lead to them, and
+    /// each one kept counts as skipped.
     pub async fn delete_remote(&self, paths: &[PathBuf]) -> TransferReport {
         let mut report = TransferReport::default();
         for p in paths {
@@ -282,16 +284,48 @@ impl Deployment<'_> {
                 report.skipped += 1;
                 continue;
             };
-            match self.fs.stat(&remote).await {
-                Ok(None) => {}
-                Ok(Some(_)) => match self.fs.remove(&remote).await {
-                    Ok(()) => report.files += 1,
-                    Err(e) => report.fail(self.rel(p), e),
-                },
+            // `lstat`: a symlink is removed itself, never the folder it points to.
+            let removed = match self.fs.lstat(&remote).await {
+                Ok(None) => continue,
+                Ok(Some(e)) if e.is_dir && !e.is_symlink => self.remove_tree(&remote, &mut report).await.map(|_| ()),
+                Ok(Some(_)) => self.fs.remove(&remote).await,
+                Err(e) => Err(e),
+            };
+            match removed {
+                Ok(()) => report.files += 1,
                 Err(e) => report.fail(self.rel(p), e),
             }
         }
         report
+    }
+
+    /// What a folder deletion keeps: excluded entries and mapping roots.
+    fn protected(&self, remote: &str) -> bool {
+        self.exclude.remote(remote) || self.map.is_root(remote)
+    }
+
+    /// Removes what `dir` holds, then `dir` once nothing protected is left in it. Returns whether
+    /// `dir` itself went.
+    async fn remove_tree(&self, dir: &str, report: &mut TransferReport) -> IdeResult<bool> {
+        let mut kept = false;
+        for e in self.fs.list(dir).await? {
+            if self.cancel.is_cancelled() {
+                return Err(IdeError::cancelled());
+            }
+            if self.protected(&e.path) {
+                report.skipped += 1;
+                kept = true;
+            } else if e.is_dir && !e.is_symlink {
+                kept |= !Box::pin(self.remove_tree(&e.path, report)).await?;
+            } else {
+                self.fs.remove(&e.path).await?;
+            }
+        }
+        if !kept {
+            // Not recursive: anything the listing missed keeps the folder, with an error.
+            self.fs.remove_empty_dir(dir).await?;
+        }
+        Ok(!kept)
     }
 
     /// Sync with Deployed: local and remote files under `local` side by side.
