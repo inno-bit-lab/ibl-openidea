@@ -778,10 +778,24 @@ export function CommitMessageField({ included, runner }: { included: number; run
   const historyTick = useCommit((s) => s.historyTick);
   const checkProblems = useCommit((s) => s.checkProblems);
   const status = useVcs((s) => s.status);
+  const repo = useVcs((s) => s.repo);
   const checks = useCommitChecks();
+  const includedFiles = useMemo(() => planCommit(status, checks).included, [status, checks]);
+  const includedKey = includedFiles.map((f) => f.path).join("\n");
   const [suggesting, setSuggesting] = useState(false);
   const [suggestError, setSuggestError] = useState<string | null>(null);
+  /** The Suggest request whose answer may still fill the message. */
+  const pendingSuggest = useRef<object | null>(null);
   const { emptyError } = runner;
+
+  // Closing the field, or another set of included files, Amend state or selected repository,
+  // retires the pending request: its answer describes a commit that is no longer the one shown.
+  useEffect(
+    () => () => {
+      pendingSuggest.current = null;
+    },
+    [includedKey, amend, repo],
+  );
 
   // The failed checks concern what was about to be committed: editing it dismisses them.
   useEffect(() => {
@@ -813,6 +827,9 @@ export function CommitMessageField({ included, runner }: { included: number; run
       setSuggestError(tx("Choose an agent to suggest commit messages in the Commit settings."));
       return;
     }
+    const request = {};
+    pendingSuggest.current = request;
+    const draft = useCommit.getState().message;
     setSuggesting(true);
     setSuggestError(null);
     try {
@@ -822,14 +839,18 @@ export function CommitMessageField({ included, runner }: { included: number; run
         thinking: cfg.suggestThinking,
         rules: cfg.suggestRules,
         subjectLimit: cfg.limitSubject ? cfg.subjectLimit : null,
-        included: planCommit(status, checks).included,
+        included: includedFiles,
         checks,
       });
+      // The message lives in the shared store: write only for a live request, and never over
+      // a draft the user edited while the agent was answering.
+      if (pendingSuggest.current !== request || useCommit.getState().message !== draft) return;
       useCommit.setState({ message: text });
       runner.clearEmptyError();
     } catch (e) {
-      setSuggestError(e instanceof Error ? e.message : String(e));
+      if (pendingSuggest.current === request) setSuggestError(e instanceof Error ? e.message : String(e));
     } finally {
+      if (pendingSuggest.current === request) pendingSuggest.current = null;
       setSuggesting(false);
     }
   };

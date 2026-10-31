@@ -294,4 +294,100 @@ describe("Suggest Commit Message", () => {
       dispose();
     }
   });
+
+  /** `agentComplete` answers only when the test calls the returned function. */
+  function deferAgent() {
+    let finish!: (value: { status: "ok"; data: string }) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    return (data: string) => act(async () => finish({ status: "ok", data }));
+  }
+
+  // Regressions from the PR #9 review (rev-codex, DD7F19): a late answer must not reach the shared store.
+  it("a pending suggestion does not overwrite a newer draft", async () => {
+    suggestSettings("codex");
+    let finish!: (value: { status: "ok"; data: string }) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole("textbox", { name: "Commit message" }), {
+      target: { value: "fix: my newer draft" },
+    });
+    await act(async () => finish({ status: "ok", data: "feat: old suggestion" }));
+    expect(useCommit.getState().message).toBe("fix: my newer draft");
+  });
+
+  it("a suggestion from a cancelled dialog cannot replace the next draft", async () => {
+    suggestSettings("codex");
+    let finish!: (value: { status: "ok"; data: string }) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<VcsDialogHost />);
+    act(() => showCommitDialog());
+    const dialog = await screen.findByRole("dialog", { name: "Commit Changes" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Commit Changes" })).toBeNull());
+    act(() => useCommit.setState({ message: "fix: next draft" }));
+    await act(async () => finish({ status: "ok", data: "feat: stale dialog suggestion" }));
+    expect(useCommit.getState().message).toBe("fix: next draft");
+  });
+
+  it("drops the suggestion of a cancelled dialog even when the draft did not change", async () => {
+    suggestSettings("codex");
+    const answer = deferAgent();
+    render(<VcsDialogHost />);
+    act(() => showCommitDialog());
+    const dialog = await screen.findByRole("dialog", { name: "Commit Changes" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Commit Changes" })).toBeNull());
+    await answer("feat: stale dialog suggestion");
+    expect(useCommit.getState().message).toBe("");
+  });
+
+  it("drops a suggestion asked for another repository selection", async () => {
+    suggestSettings("codex");
+    const answer = deferAgent();
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    act(() => useVcs.setState({ repo: "/ws/ecs" }));
+    await answer("feat: suggestion for chb");
+    expect(useCommit.getState().message).toBe("");
+    // The button works again for the new context.
+    const again = deferAgent();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
+    await again("feat: suggestion for ecs");
+    expect(useCommit.getState().message).toBe("feat: suggestion for ecs");
+  });
+
+  it("a read-only refusal is visible and no fallback is attempted", async () => {
+    suggestSettings("codex");
+    agentComplete.mockRejectedValue(new Error("No read-only mode is available"));
+    useCommit.setState({ message: "keep this draft" });
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No read-only mode is available");
+    expect(agentComplete).toHaveBeenCalledTimes(1);
+    expect(agentComplete.mock.calls[0]![0]).toBe("codex");
+    expect(useCommit.getState().message).toBe("keep this draft");
+  });
 });
