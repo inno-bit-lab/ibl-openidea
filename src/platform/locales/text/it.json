@@ -1794,6 +1794,7 @@
   "Save Files": "Salva file",
   "Save files if the IDE is idle for": "Salva i file se l'IDE è inattivo per",
   "Save files when switching to a different application or a built-in terminal": "Salva i file quando si passa a un'altra applicazione o al terminale integrato",
+  "Synchronize external changes when switching to the IDE window": "Sincronizza le modifiche esterne quando si torna alla finestra dell'IDE",
   "Save or roll back the changes before reloading it from disk.": "Salva o annulla le modifiche prima di ricaricare dal disco.",
   "Save password": "Salva password",
   "Save to file:": "Salva su file:",
