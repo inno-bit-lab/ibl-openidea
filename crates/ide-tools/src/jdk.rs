@@ -323,9 +323,9 @@ impl Tools {
             picked =
                 adoptium_pick(&http.get_text(&adoptium_assets_url(feature, self.platform), cancel)?, self.platform)?;
         }
-        if picked.is_none() && self.platform.os == Os::Mac && self.platform.arch == Arch::Arm64 {
-            // Java 8 has no Apple Silicon build: the Intel one runs under Rosetta.
-            let intel = Platform { os: Os::Mac, arch: Arch::X64 };
+        if picked.is_none() && matches!(self.platform.os, Os::Mac | Os::Windows) && self.platform.arch == Arch::Arm64 {
+            // Older JDKs may need the OS-provided x64 emulation.
+            let intel = Platform { os: self.platform.os, arch: Arch::X64 };
             picked = adoptium_pick(&http.get_text(&adoptium_assets_url(feature, intel), cancel)?, intel)?;
         }
         let (dl, major) = picked.ok_or_else(|| {
@@ -466,6 +466,79 @@ mod tests {
         std::fs::create_dir_all(home.join("bin")).unwrap();
         std::fs::write(home.join("release"), "JAVA_VERSION=\"25.0.1\"\n").unwrap();
         std::fs::write(home.join("bin").join(platform.exe("java")), "").unwrap();
+    }
+
+    #[test]
+    fn arm_jdk_resolution_preserves_os_and_falls_back_only_without_a_native_build() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A native curl fixture records the real resolver's requests without network,
+        // shell argument parsing or process-global environment changes.
+        let source = tmp.path().join("curl.rs");
+        std::fs::write(
+            &source,
+            r#"
+use std::{fs, io::Write};
+fn main() {
+    let root = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let url = args.last().unwrap();
+    assert!(url.starts_with("https://api.adoptium.net/v3/assets/latest/"));
+    let mut log = fs::OpenOptions::new().create(true).append(true).open(root.join("requests.log")).unwrap();
+    writeln!(log, "{url}").unwrap();
+    let file = if url.contains("architecture=x64") { "x64.json" } else { "native.json" };
+    print!("{}", fs::read_to_string(root.join(file)).unwrap());
+}
+"#,
+        )
+        .unwrap();
+        let mut compiler = std::process::Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
+        let output = ide_core::process::prepare(&mut compiler)
+            .arg("--edition=2024")
+            .arg(&source)
+            .arg("-o")
+            .arg(tmp.path().join(Platform::current().exe("curl")))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+        for os in [Os::Windows, Os::Mac, Os::Linux] {
+            for native_available in [true, false] {
+                let platform = Platform { os, arch: Arch::Arm64 };
+                let ext = if os == Os::Windows { "zip" } else { "tar.gz" };
+                let x64 = format!("[{}]", asset(&format!("java.{ext}"), adoptium_os(os), "normal", ""));
+                let native = if native_available {
+                    x64.replace("\"architecture\":\"x64\"", "\"architecture\":\"aarch64\"")
+                } else {
+                    "[]".into()
+                };
+                std::fs::write(tmp.path().join("native.json"), native).unwrap();
+                std::fs::write(tmp.path().join("x64.json"), &x64).unwrap();
+                std::fs::write(tmp.path().join("requests.log"), "").unwrap();
+                let location = tmp.path().join(format!("{os:?}-{native_available}"));
+                let target = location.join("temurin-25.0.1");
+                let home = if os == Os::Mac { target.join("Contents/Home") } else { target.clone() };
+                // Reuse an existing fixture JDK after resolution; no archive download.
+                fake_jdk(&home, platform);
+                let tools = Tools::with_paths(tmp.path().join("tools"), tmp.path().as_os_str().into(), platform);
+                let result = tools.download_jdk(TEMURIN, 25, Some(&location), &CancellationToken::new(), &|_| {});
+                if native_available || os != Os::Linux {
+                    assert_eq!(result.unwrap().home.into_path_buf(), home);
+                } else {
+                    assert_eq!(result.unwrap_err().kind, ErrorKind::Unavailable);
+                }
+                let requests = std::fs::read_to_string(tmp.path().join("requests.log")).unwrap();
+                let requests: Vec<_> = requests.lines().collect();
+                let fallback = !native_available && matches!(os, Os::Windows | Os::Mac);
+                assert_eq!(requests.len(), if fallback { 2 } else { 1 }, "{os:?}, native={native_available}");
+                assert!(requests[0].contains("architecture=aarch64"));
+                if fallback {
+                    assert!(requests[1].contains("architecture=x64"));
+                }
+                for url in requests {
+                    assert!(url.contains(&format!("&os={}&", adoptium_os(os))), "{url}");
+                }
+            }
+        }
     }
 
     #[test]
