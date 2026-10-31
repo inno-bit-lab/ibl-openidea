@@ -19,6 +19,9 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
         .args(["-c", "init.defaultBranch=main", "-c", "core.quotepath=off"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        // Git 2.45.1+ refuses a local clone of a repository whose own config sets
+        // `core.hooksPath` (as `configure` does): the blobless clone test needs it allowed.
+        .env("GIT_CLONE_PROTECTION_ACTIVE", "false")
         .output()
         .expect("git runs");
     assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
