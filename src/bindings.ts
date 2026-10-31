@@ -230,6 +230,7 @@ export const commands = {
 	 *  Large documents fall back to word / line / document ranges.
 	 */
 	docSelectionRanges: (doc: DocId, offset: number) => typedError<Range[], IdeError>(__TAURI_INVOKE("doc_selection_ranges", { doc, offset })),
+	jvmFilePresentations: (paths: string[]) => typedError<JvmFilePresentation[], IdeError>(__TAURI_INVOKE("jvm_file_presentations", { paths })),
 	/**
 	 *  What the structure service supports for a language (`tree`: every query,
 	 *  `locals`: scope analysis).
@@ -3224,11 +3225,30 @@ export type GitSettings = {
 	combineStashAndShelf?: boolean,
 };
 
+export type GoBuildTags = {
+	/**  Empty values inherit the selected toolchain's defaults. */
+	os?: string,
+	arch?: string,
+	version?: string,
+	compiler?: string,
+	/**  Empty = automatic, "1" = enabled, "0" = disabled. */
+	cgo?: string,
+	custom?: string,
+	experiments?: string,
+};
+
+export type GoModules = {
+	env?: { [key in string]: string },
+	autoVendor?: boolean,
+};
+
 export type GoSettings = {
 	/**  Empty = the `go` on `PATH`. */
 	goroot?: string,
 	/**  Empty = `go env GOPATH`. */
 	gopath?: string,
+	buildTags?: GoBuildTags,
+	modules?: GoModules,
 };
 
 export type GotoKind = "definition" | "declaration" | "typeDefinition" | "implementation";
@@ -3748,6 +3768,19 @@ export type JdkVendor = {
 	id: string,
 	name: string,
 };
+
+export type JvmFilePresentation = {
+	path: string,
+	presentation: JvmPresentation,
+};
+
+export type JvmPresentation = {
+	kind: JvmTypeKind | null,
+	springBoot: boolean,
+	runnable: boolean,
+};
+
+export type JvmTypeKind = "class" | "abstractClass" | "interface" | "enum" | "record" | "annotation" | "exception" | "object";
 
 /**  Editor › Code Style › <Language> › Tabs and Indents (unset fields inherit). */
 export type LanguageCodeStyle = LanguageCodeStyle_Serialize | LanguageCodeStyle_Deserialize;

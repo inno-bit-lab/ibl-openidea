@@ -4367,6 +4367,7 @@ dependencies = [
 name = "ide-lsp"
 version = "0.3.0"
 dependencies = [
+ "dunce",
  "futures",
  "globset",
  "ide-core",
@@ -4461,7 +4462,9 @@ dependencies = [
 name = "ide-run"
 version = "0.3.0"
 dependencies = [
+ "dunce",
  "encoding_rs",
+ "ide-build",
  "ide-core",
  "libc",
  "parking_lot",
