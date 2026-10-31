@@ -700,3 +700,30 @@ fn properties_ascii_noop_and_charset_conversion() {
     assert_eq!(f.docs.snapshot(doc.id).unwrap().text, "a=世界😀");
     assert!(!f.docs.is_dirty(doc.id).unwrap());
 }
+
+#[test]
+fn properties_syntax_escapes_survive_an_unrelated_edit() {
+    let f = fixture();
+    let path = f.root.join("messages.properties");
+    let original = "key\\u003Dpart=keep\n\\u0023key=retained\ngreeting=\\u4f60\\u597d\nother=old\n";
+    fs::write(&path, original).unwrap();
+    let mut defaults = f.docs.file_defaults();
+    defaults.native_to_ascii = true;
+    f.docs.set_file_defaults(defaults);
+    let doc = f.docs.open(&path).unwrap();
+    let edited = doc.text.replace("other=old", "other=new");
+    // An edit undone before saving keeps the file's own spelling.
+    f.docs.replace_all(doc.id, &edited).unwrap();
+    f.docs.replace_all(doc.id, &doc.text).unwrap();
+    f.docs.save(doc.id).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original.as_bytes());
+    // An edit on another line must not turn the escaped `=` and `#` into a separator and a comment.
+    f.docs.replace_all(doc.id, &edited).unwrap();
+    f.docs.save(doc.id).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "key\\u003Dpart=keep\n\\u0023key=retained\ngreeting=\\u4F60\\u597D\nother=new\n"
+    );
+    assert!(!f.docs.is_dirty(doc.id).unwrap());
+    assert_eq!(doc.text, "key\\u003Dpart=keep\n\\u0023key=retained\ngreeting=你好\nother=old\n");
+}

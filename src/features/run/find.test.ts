@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_FIND_OPTIONS, findInLines, MAX_MATCHES, type FindOptions } from "./find";
 
@@ -52,6 +53,19 @@ describe("findInLines", () => {
 
   it("skips empty regular expression matches", () => {
     expect(findInLines(lines("abc"), "x*", opts({ regex: true })).matches).toEqual([]);
+  });
+
+  it("steps over an astral character after an empty match", () => {
+    // A regression loops synchronously; the vm timeout ends it instead of hanging the suite.
+    const find = (text: string, query: string) =>
+      runInNewContext(
+        "find()",
+        { find: () => findInLines(lines(text), query, opts({ regex: true })) },
+        { timeout: 2000 },
+      );
+    expect(find("\u{1F600} smile", "^").matches).toEqual([]);
+    expect(find("\u{1F600}\u{1F600}", "x*").matches).toEqual([]);
+    expect(find("\u{1F600}b", "b*").matches).toEqual([{ line: 0, lineId: 1, start: 2, end: 3 }]);
   });
 
   it("caps the matches and reports the overflow", () => {

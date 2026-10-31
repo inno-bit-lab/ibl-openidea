@@ -662,3 +662,32 @@ fn shelf_new_renames_keep_self_contained_sides_and_plain_imports_keep_scope() {
     shelf::delete_path(&shelf, "plain", Some("one.txt")).unwrap();
     assert_eq!(shelf::list(&shelf).unwrap().iter().find(|s| s.id == "plain").unwrap().files[0].path, "two.txt");
 }
+
+#[test]
+fn shelf_binary_sibling_in_a_b_directory_keeps_its_own_scope() {
+    let fx = Fixture::new();
+    std::fs::create_dir(fx.path("b")).unwrap();
+    std::fs::write(fx.path("file.bin"), b"old\0a").unwrap();
+    std::fs::write(fx.path("b/file.bin"), b"old\0b").unwrap();
+    fx.commit_all("base");
+    std::fs::write(fx.path("file.bin"), b"new\0a").unwrap();
+    std::fs::write(fx.path("b/file.bin"), b"new\0b").unwrap();
+    let repo = fx.repo();
+    let shelf = fx._tmp.path().join("shelf");
+    let entry = repo.shelve(&shelf, "two binaries", &[fx.path("file.bin"), fx.path("b/file.bin")]).unwrap();
+    let mut listed: Vec<String> = shelf::list(&shelf).unwrap()[0].files.iter().map(|f| f.path.clone()).collect();
+    listed.sort();
+    assert_eq!(listed, ["b/file.bin", "file.bin"]);
+    let selected = shelf::selected_patch(&shelf, &entry.id, Some("file.bin")).unwrap();
+    assert!(selected.contains("diff --git a/file.bin b/file.bin"));
+    assert!(!selected.contains("b/b/file.bin"));
+    // Deleting the root file must keep the shelved change of b/file.bin.
+    shelf::delete_path(&shelf, &entry.id, Some("file.bin")).unwrap();
+    let remaining = shelf::list(&shelf).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["b/file.bin"]);
+    shelf::unshelve_path(&repo, &shelf, &entry.id, true, Some("b/file.bin")).unwrap();
+    assert_eq!(std::fs::read(fx.path("b/file.bin")).unwrap(), b"new\0b");
+    assert_eq!(std::fs::read(fx.path("file.bin")).unwrap(), b"old\0a");
+    assert!(shelf::list(&shelf).unwrap().is_empty());
+}
