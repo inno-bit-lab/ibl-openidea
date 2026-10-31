@@ -303,10 +303,7 @@ function ChangesPanel() {
   const showIgnored = useCommit((s) => s.showIgnored);
   const [ignoredFiles, setIgnoredFiles] = useState<FileStatus[]>([]);
   useEffect(() => {
-    if (!showIgnored) {
-      setIgnoredFiles([]);
-      return;
-    }
+    if (!showIgnored) return;
     let alive = true;
     void call(commands.vcsIgnored()).then(
       (files) => {

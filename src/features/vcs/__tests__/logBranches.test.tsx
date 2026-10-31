@@ -46,12 +46,8 @@ import { argRepos, registerVcsActions } from "../actions";
 import { BranchWidget, useBranchesPopup } from "../BranchWidget";
 import { branchMenu, inRepo } from "../branchMenu";
 import { updateBranch, useFavoriteBranches } from "../branchOps";
-import * as messagesMod from "@/workbench/messages";
+import { MessagesHost } from "@/workbench/messages";
 import { VcsDialogHost, closeAllDialogs } from "../dialogs";
-
-const MessageHost = Object.entries(messagesMod).find(([k, v]) => /^[A-Z]/.test(k) && typeof v === "function")?.[1] as
-  | (() => JSX.Element | null)
-  | undefined;
 import { showManageRemotes } from "../gitMenuDialogs";
 import { BranchesPanel } from "../GitLog";
 import { emptyFilters, selectCommit, useGitLog } from "../logStore";
@@ -649,7 +645,7 @@ describe("Git Log branches pane", () => {
       <>
         <BranchesPanel />
         <VcsDialogHost />
-        {MessageHost ? <MessageHost /> : null}
+        <MessagesHost />
       </>,
     );
     await waitFor(() => expect(screen.getByText("gamma")).toBeInTheDocument());
@@ -717,7 +713,7 @@ describe("Git Log branches pane", () => {
       <>
         <BranchesPanel />
         <VcsDialogHost />
-        {MessageHost ? <MessageHost /> : null}
+        <MessagesHost />
       </>,
     );
     await waitFor(() => expect(screen.getByText("gamma")).toBeInTheDocument());

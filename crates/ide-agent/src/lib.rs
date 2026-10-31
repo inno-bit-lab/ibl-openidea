@@ -104,11 +104,7 @@ impl Shared {
 
     fn known_config(&self, provider: &str) -> Vec<AgentConfigOption> {
         let cached = self.known.lock().get(provider).map(|k| k.config.clone()).unwrap_or_default();
-        if cached.is_empty() {
-            default_known_config(provider)
-        } else {
-            cached
-        }
+        if cached.is_empty() { default_known_config(provider) } else { cached }
     }
 
     /// The commands the agent offered last time in this project.
@@ -373,9 +369,8 @@ impl AgentManager {
             })
         };
         let cwd = std::env::temp_dir().join(format!("ibl-suggest-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&cwd).map_err(|e| {
-            IdeError::internal(format!("cannot create temporary directory {}: {e}", cwd.display()))
-        })?;
+        std::fs::create_dir_all(&cwd)
+            .map_err(|e| IdeError::internal(format!("cannot create temporary directory {}: {e}", cwd.display())))?;
         let fallback_config = self.shared.known_config(&spec.id);
         let peer = match (self.shared.connector)(&spec, &cwd, collector.clone(), on_stderr) {
             Ok(p) => p,
@@ -383,10 +378,7 @@ impl AgentManager {
                 if let Err(rm_err) = std::fs::remove_dir_all(&cwd) {
                     tracing::warn!("complete: removing temporary cwd {} failed: {rm_err}", cwd.display());
                 }
-                return Err(IdeError::unavailable(format!(
-                    "Couldn't start {} (`{}`): {e}",
-                    spec.name, spec.command
-                )));
+                return Err(IdeError::unavailable(format!("Couldn't start {} (`{}`): {e}", spec.name, spec.command)));
             }
         };
         let outcome =
@@ -409,9 +401,7 @@ impl AgentManager {
                 }
                 Ok(Err(AskError::ReadOnly(message))) => Err(message),
                 // Signed out, or the account was refused (Claude Code: "API Error: 403").
-                Ok(Err(AskError::Rpc(RpcError::Server { message, .. })))
-                    if message.to_lowercase().contains("auth") =>
-                {
+                Ok(Err(AskError::Rpc(RpcError::Server { message, .. }))) if message.to_lowercase().contains("auth") => {
                     Err(format!("{} needs you to sign in. {}", spec.name, spec.login_hint))
                 }
                 Ok(Err(AskError::Rpc(e))) => Err(describe_error(e, &stderr.lock())),
@@ -484,9 +474,8 @@ impl AgentManager {
         // Until the session reports its own, show what the agent offered last time with the choices applied.
         let mut config = self.shared.known_config(&spec.id);
         for choice in &req.config {
-            if let Some(o) = config
-                .iter_mut()
-                .find(|o| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str()))
+            if let Some(o) =
+                config.iter_mut().find(|o| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str()))
             {
                 o.current = Some(choice.value.clone());
             }
@@ -897,11 +886,8 @@ impl Task {
         let wire_prompt;
         let outgoing = match instructions.map(str::trim).filter(|s| !s.is_empty()) {
             Some(inst) if prompt.text.is_empty() => {
-                wire_prompt = AgentPrompt {
-                    text: inst.to_owned(),
-                    files: prompt.files.clone(),
-                    images: prompt.images.clone(),
-                };
+                wire_prompt =
+                    AgentPrompt { text: inst.to_owned(), files: prompt.files.clone(), images: prompt.images.clone() };
                 &wire_prompt
             }
             Some(inst) => {
@@ -916,7 +902,11 @@ impl Task {
         };
         let result: Result<Value, RpcError> = live
             .peer
-            .request("session/prompt", json!({ "sessionId": live.session, "prompt": blocks(outgoing, &contents) }), None)
+            .request(
+                "session/prompt",
+                json!({ "sessionId": live.session, "prompt": blocks(outgoing, &contents) }),
+                None,
+            )
             .await;
         match result {
             Ok(v) => Ok(v.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned()),
@@ -1327,9 +1317,7 @@ async fn ask(
     let mut effective_choices: Vec<(bool, AgentConfigChoice)> =
         vec![(true, AgentConfigChoice { id: "mode".into(), value: chosen_mode })];
     for choice in config {
-        let matches = |o: &AgentConfigOption| {
-            o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str())
-        };
+        let matches = |o: &AgentConfigOption| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str());
         let is_caller_mode = choice.id == "mode"
             || options.iter().any(|o| matches(o) && is_mode_option(o))
             || fallback_config.iter().any(|o| matches(o) && is_mode_option(o));
@@ -1342,9 +1330,7 @@ async fn ask(
         if value.is_empty() {
             continue;
         }
-        let matches = |o: &AgentConfigOption| {
-            o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str())
-        };
+        let matches = |o: &AgentConfigOption| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str());
         let target = if *is_mode {
             options.iter().find(|o| is_mode_option(o)).cloned().expect("restrictive_mode verified mode option")
         } else {
@@ -1477,7 +1463,11 @@ fn default_known_config(provider: &str) -> Vec<AgentConfigOption> {
                 values: vec![
                     opt_value("read-only", "Read Only", Some("Codex can read files in the current workspace.")),
                     opt_value("auto", "Default", Some("Codex can read and edit files, and run commands.")),
-                    opt_value("full-access", "Full Access", Some("Codex can edit files and run commands without asking.")),
+                    opt_value(
+                        "full-access",
+                        "Full Access",
+                        Some("Codex can edit files and run commands without asking."),
+                    ),
                 ],
                 via: AgentConfigVia::Option,
             },

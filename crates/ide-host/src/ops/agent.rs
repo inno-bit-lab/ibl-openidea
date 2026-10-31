@@ -124,10 +124,7 @@ pub async fn base_text(host: &Host, window: &str, task: String, path: IpcPath) -
 pub(crate) fn register(d: &mut Dispatcher) {
     d.add("agent_subscribe", |c| async move { subscribe(&c.host, &c.window, c.channel("onEvent")?) });
     d.add("agent_providers", |c| async move { providers(&c.host, &c.window) });
-    d.add(
-        "agent_set_args",
-        |c| async move { set_args(&c.host, &c.window, c.arg("provider")?, c.arg("args")?) },
-    );
+    d.add("agent_set_args", |c| async move { set_args(&c.host, &c.window, c.arg("provider")?, c.arg("args")?) });
     d.add("agent_complete", |c| async move {
         let config = c.arg::<Option<Vec<AgentConfigChoice>>>("config").ok().flatten().unwrap_or_default();
         complete(&c.host, &c.window, c.arg("provider")?, c.arg("prompt")?, config).await

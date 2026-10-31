@@ -17,17 +17,11 @@ struct FakeAgent {
 
 impl FakeAgent {
     fn with_modes(current: &str, available: &[(&'static str, &'static str)]) -> Self {
-        Self {
-            modes: Mutex::new(Some((current.to_owned(), available.to_vec()))),
-            ..Self::default()
-        }
+        Self { modes: Mutex::new(Some((current.to_owned(), available.to_vec()))), ..Self::default() }
     }
 
     fn without_modes() -> Self {
-        Self {
-            modes: Mutex::new(Some((String::new(), Vec::new()))),
-            ..Self::default()
-        }
+        Self { modes: Mutex::new(Some((String::new(), Vec::new()))), ..Self::default() }
     }
 
     fn update(&self, session: &str, update: Value) {
@@ -84,8 +78,8 @@ impl Handler for FakeAgent {
                 Ok(json!({}))
             }
             "session/set_config_option" | "session/set_mode" => {
-                let is_mode = method == "session/set_mode"
-                    || params.get("configId").and_then(Value::as_str) == Some("mode");
+                let is_mode =
+                    method == "session/set_mode" || params.get("configId").and_then(Value::as_str) == Some("mode");
                 if is_mode && self.fail_set_mode.load(Ordering::Relaxed) {
                     return Err((codes::INTERNAL_ERROR, "cannot set mode".into()));
                 }

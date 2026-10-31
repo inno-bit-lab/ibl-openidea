@@ -138,9 +138,7 @@ pub(crate) fn set_custom_args(custom_dir: &Path, id: &str, extra_args: &[String]
     let cleaned: Vec<String> = extra_args.iter().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect();
     let file = custom_dir.join(format!("{id}.toml"));
     let builtin = builtins().into_iter().find(|b| b.id == id);
-    let existing_file = std::fs::read_to_string(&file)
-        .ok()
-        .and_then(|t| toml::from_str::<CustomAgent>(&t).ok());
+    let existing_file = std::fs::read_to_string(&file).ok().and_then(|t| toml::from_str::<CustomAgent>(&t).ok());
 
     let custom = match (builtin, existing_file) {
         (Some(b), existing) => {
@@ -175,10 +173,7 @@ pub(crate) fn set_custom_args(custom_dir: &Path, id: &str, extra_args: &[String]
         }
         (None, Some(mut existing)) => {
             if existing.command.is_none() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "custom agent is missing command",
-                ));
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "custom agent is missing command"));
             }
             existing.extra_args = cleaned;
             existing
@@ -218,12 +213,8 @@ fn find_agy_in_versions_dir(root: &Path) -> Option<PathBuf> {
     if is_executable(&direct) {
         return Some(direct);
     }
-    let mut versions: Vec<PathBuf> = std::fs::read_dir(root)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .collect();
+    let mut versions: Vec<PathBuf> =
+        std::fs::read_dir(root).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
     versions.sort();
     versions.into_iter().rev().map(|v| v.join(bin)).find(|p| is_executable(p))
 }
@@ -496,7 +487,10 @@ mod tests {
         set_custom_args(dir.path(), "codex", &["--y".into()]).unwrap();
         let text = std::fs::read_to_string(dir.path().join("codex.toml")).unwrap();
         assert!(!text.contains("command"), "builtin extra_args must not freeze command:\n{text}");
-        assert!(!text.contains("\nargs =") && !text.starts_with("args ="), "builtin extra_args must not freeze args:\n{text}");
+        assert!(
+            !text.contains("\nargs =") && !text.starts_with("args ="),
+            "builtin extra_args must not freeze args:\n{text}"
+        );
         assert!(text.contains("extra_args"), "expected extra_args in file:\n{text}");
         let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
         assert_eq!(codex.command, "npx");
@@ -514,7 +508,10 @@ mod tests {
         set_custom_args(dir.path(), "codex", &["--z".into()]).unwrap();
         let text = std::fs::read_to_string(dir.path().join("codex.toml")).unwrap();
         assert!(!text.contains("command"), "v0.2 builtin command should be stripped:\n{text}");
-        assert!(!text.contains("\nargs =") && !text.starts_with("args ="), "v0.2 builtin args should be stripped:\n{text}");
+        assert!(
+            !text.contains("\nargs =") && !text.starts_with("args ="),
+            "v0.2 builtin args should be stripped:\n{text}"
+        );
         assert!(text.contains("extra_args"), "expected extra_args in rewritten file:\n{text}");
         let codex = load(Some(dir.path())).into_iter().find(|s| s.id == "codex").unwrap();
         assert_eq!(codex.name, "Codex");
@@ -525,11 +522,7 @@ mod tests {
     #[test]
     fn v02_override_with_other_args_stays_explicit() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("codex.toml"),
-            "command = \"npx\"\nargs = [\"my-custom-codex-acp\"]\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("codex.toml"), "command = \"npx\"\nargs = [\"my-custom-codex-acp\"]\n").unwrap();
         set_custom_args(dir.path(), "codex", &["--z".into()]).unwrap();
         let text = std::fs::read_to_string(dir.path().join("codex.toml")).unwrap();
         assert!(text.contains("command = \"npx\""), "explicit override must keep command:\n{text}");
@@ -542,11 +535,7 @@ mod tests {
     #[test]
     fn custom_agent_without_command_is_skipped_with_a_warning() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("custom_no_cmd.toml"),
-            "name = \"NoCmd\"\nextra_args = [\"--foo\"]\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("custom_no_cmd.toml"), "name = \"NoCmd\"\nextra_args = [\"--foo\"]\n").unwrap();
         let specs = load(Some(dir.path()));
         assert!(!specs.iter().any(|s| s.id == "custom_no_cmd"));
         assert!(set_custom_args(dir.path(), "custom_no_cmd", &["--bar".into()]).is_err());

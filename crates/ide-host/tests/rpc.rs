@@ -146,11 +146,7 @@ fn init_git_repo_with_ignored() -> (tempfile::TempDir, std::path::PathBuf) {
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     let run_git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&repo)
-            .status()
-            .unwrap();
+        let status = std::process::Command::new("git").args(args).current_dir(&repo).status().unwrap();
         assert!(status.success(), "git {args:?} failed");
     };
     run_git(&["init"]);
