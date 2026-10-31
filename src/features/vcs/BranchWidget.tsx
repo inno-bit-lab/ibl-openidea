@@ -1,6 +1,14 @@
 import { branchesByRepo } from "./multiRoot";
 /** Title bar branch widget (branch name + incoming / outgoing markers) + Branches popup. */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
+} from "react";
 import clsx from "clsx";
 import { create } from "zustand";
 import type { Branch, BranchInfo } from "@/bindings";
@@ -20,6 +28,7 @@ import {
   Popup,
   SearchField,
   firstSelectable,
+  showContextMenu,
   type MenuItem,
   T,
 } from "@/ui";
@@ -27,6 +36,7 @@ import { buildBranchRows, withExpanded, type BranchRow, type PopupAction } from 
 import { branchPresentation, extensionPopupActions, useBranchWidgetExtensions } from "./branchWidgetExtensions";
 import { branchMenu, commonBranchMenu, inRepo, tagMenu } from "./branchMenu";
 import { loadFavoriteBranches, recentBranches, toggleFavoriteBranch, useFavoriteBranches } from "./branchOps";
+import { showManageRemotes } from "./gitMenuDialogs";
 import { inProgress, operationTitle, type InProgress } from "./operations";
 import {
   buildMultiRepoRows,
@@ -477,7 +487,13 @@ function BranchesPanel({ onClose, actions: baseActions, root, fallback, onBack }
           aria-label="Branches"
           className={styles.list}
           empty={<span className={styles.empty}>{loaded ? tx("No matching branches") : tx("Loading…")}</span>}
-          renderItem={(r) => (r.type === "group" ? <GroupRowView row={r} /> : <BranchRowView row={r} />)}
+          renderItem={(r) =>
+            r.type === "group" ? (
+              <GroupRowView row={r} onContextMenu={remotesMenu(r.key, root, closeAll)} />
+            ) : (
+              <BranchRowView row={r} />
+            )
+          }
         />
       </div>
       {menuFor && <SubMenu {...menuFor} onClose={() => setMenuFor(null)} />}
@@ -732,7 +748,15 @@ function MultiRepoPanel({ onClose, actions: popupActions }: { onClose: () => voi
             </span>
           }
           renderItem={(r) => (
-            <RepoRowView row={r} operation={r.type === "repo" ? operations[r.repo.root] : undefined} />
+            <RepoRowView
+              row={r}
+              operation={r.type === "repo" ? operations[r.repo.root] : undefined}
+              onContextMenu={
+                r.type === "group"
+                  ? remotesMenu(r.key, r.key === "repo:remote" ? (current ?? undefined) : undefined, closeAll)
+                  : undefined
+              }
+            />
           )}
         />
       </div>
@@ -762,7 +786,15 @@ function MultiRepoPanel({ onClose, actions: popupActions }: { onClose: () => voi
   );
 }
 
-function RepoRowView({ row, operation }: { row: RepoRow; operation?: string }) {
+function RepoRowView({
+  row,
+  operation,
+  onContextMenu,
+}: {
+  row: RepoRow;
+  operation?: string;
+  onContextMenu?: (e: ReactMouseEvent) => void;
+}) {
   switch (row.type) {
     case "action":
     case "branch":
@@ -783,7 +815,7 @@ function RepoRowView({ row, operation }: { row: RepoRow; operation?: string }) {
         </span>
       );
     case "group":
-      return <GroupRowView row={row} />;
+      return <GroupRowView row={row} onContextMenu={onContextMenu} />;
     case "common":
       return (
         <span className={styles.row} data-row-key={row.key} style={{ paddingLeft: row.depth * INDENT }}>
@@ -811,14 +843,38 @@ function RepoRowView({ row, operation }: { row: RepoRow; operation?: string }) {
   }
 }
 
+/** A Remote group's context menu: Manage Remotes… (of `repo`, else of every repository). */
+function remotesMenu(key: string, repo: string | undefined, close: () => void) {
+  if (key !== "group:remote" && key !== "common:remote" && key !== "repo:remote") return undefined;
+  return (e: ReactMouseEvent) => {
+    e.preventDefault();
+    showContextMenu(e, [
+      {
+        label: "Manage Remotes…",
+        run: () => {
+          close();
+          showManageRemotes(repo);
+        },
+      },
+    ]);
+  };
+}
+
 /** A collapsible group (Recent / Local / Remote / Tags) or a prefix folder. Folder names are not translated. */
-function GroupRowView({ row }: { row: { key: string; label: string; expanded: boolean; depth: number } }) {
+function GroupRowView({
+  row,
+  onContextMenu,
+}: {
+  row: { key: string; label: string; expanded: boolean; depth: number };
+  onContextMenu?: (e: ReactMouseEvent) => void;
+}) {
   return (
     <span
       className={clsx(styles.row, row.depth === 0 && styles.groupRow)}
       data-row-key={row.key}
       style={row.depth ? { paddingLeft: row.depth * INDENT } : undefined}
       aria-expanded={row.expanded}
+      onContextMenu={onContextMenu}
     >
       <Icon name={row.expanded ? "chevron-down" : "chevron-right"} size={12} className={styles.rowIcon} />
       {row.depth > 0 && <Icon name="folder" size={14} className={styles.rowIcon} />}

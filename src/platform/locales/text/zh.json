@@ -5232,5 +5232,8 @@
   "{message}. IBLOpenIdea can install a private copy that every Python interpreter uses for debugging.": "{message}。IBLOpenIdea 可以安装专用副本，供所有 Python 解释器调试使用。",
   "View in Console": "在控制台中查看",
   "…and {more} more repositories": "…以及另外 {more} 个仓库",
-  "…and {more} more repository": "…以及另外 {more} 个仓库"
+  "…and {more} more repository": "…以及另外 {more} 个仓库",
+  "{name} (remote)": "{name}（远程）",
+  "Delete Branches": "删除分支",
+  "Delete the following branches?\n{list}": "删除以下分支？\n{list}"
 }

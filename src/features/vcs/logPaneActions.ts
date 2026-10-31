@@ -7,7 +7,14 @@ import { create } from "zustand";
 import type { Branch } from "@/bindings";
 import { registerActions, type Action } from "@/platform/actions";
 import { notifications, toolWindowService } from "@/workbench/contributions";
-import { deleteBranch, deleteRemoteBranch, newBranch, toggleFavoriteBranch, updateBranch } from "./branchOps";
+import {
+  deleteBranches,
+  newBranch,
+  newBranchInRepos,
+  toggleFavoriteBranch,
+  updateBranches,
+  type RepoBranch,
+} from "./branchOps";
 import {
   changesArg,
   compareChangeWithLocal,
@@ -32,10 +39,20 @@ export interface BranchTarget {
 /** The Branches pane's selected refs (what its toolbar acts on without an argument). */
 export const useBranchesPane = create<{ selected: BranchTarget[] }>(() => ({ selected: [] }));
 
-function branchArg(arg: unknown): BranchTarget | null {
-  if (arg && typeof arg === "object" && "ref" in arg) return arg as BranchTarget;
-  return useBranchesPane.getState().selected[0] ?? null;
+/** The refs an action acts on: its argument (one target or several), else the pane's selection. */
+function branchTargets(arg: unknown): BranchTarget[] {
+  if (Array.isArray(arg)) return arg.filter((t): t is BranchTarget => !!t && typeof t === "object" && "ref" in t);
+  if (arg && typeof arg === "object" && "ref" in arg) return [arg as BranchTarget];
+  return useBranchesPane.getState().selected;
 }
+
+function branchArg(arg: unknown): BranchTarget | null {
+  return branchTargets(arg)[0] ?? null;
+}
+
+/** The targets that are branches, each with its repository. */
+const repoBranches = (targets: readonly BranchTarget[]): RepoBranch[] =>
+  targets.flatMap((t) => (t.branch ? [{ branch: t.branch, repo: t.repo }] : []));
 
 const withBranch =
   (fn: (b: Branch) => unknown): Action["run"] =>
@@ -46,14 +63,17 @@ const withBranch =
     if (b) void fn(b);
   };
 
-/** Delete is offered for branches other than the current one. */
-export function canDeleteBranch(t: BranchTarget | null): boolean {
-  return !!t?.branch && !t.branch.current;
+const targetList = (t: BranchTarget | readonly BranchTarget[] | null): readonly BranchTarget[] =>
+  !t ? [] : "ref" in t ? [t] : t;
+
+/** Delete is offered for branches other than the current one (any of them, for several). */
+export function canDeleteBranch(t: BranchTarget | readonly BranchTarget[] | null): boolean {
+  return targetList(t).some((x) => !!x.branch && !x.branch.current);
 }
 
-/** Update fast-forwards a local branch with an upstream (or updates the project for the current one). */
-export function canUpdateBranch(t: BranchTarget | null): boolean {
-  return !!t?.branch && !t.branch.remote && (t.branch.current || !!t.branch.upstream);
+/** Update fast-forwards a local branch with an upstream, or updates the repository of the current one (any of them, for several). */
+export function canUpdateBranch(t: BranchTarget | readonly BranchTarget[] | null): boolean {
+  return targetList(t).some((x) => !!x.branch && !x.branch.remote && (x.branch.current || !!x.branch.upstream));
 }
 
 export function registerLogPaneActions(): () => void {
@@ -95,9 +115,15 @@ export function registerLogPaneActions(): () => void {
       when: VCS,
       hidden: true,
       run: async ({ arg }) => {
-        const t = branchArg(arg);
+        const targets = branchTargets(arg);
+        const repos = [...new Set(targets.flatMap((x) => (x.repo ? [x.repo] : [])))];
+        const t = targets[0] ?? null;
+        const from = t && t.ref !== "HEAD" && !t.branch?.current ? t.ref : undefined;
+        // Selected in several repositories: the new branch goes into each of them.
+        if (repos.length > 1)
+          return void newBranchInRepos(repos, targets.every((x) => x.ref === from) ? from : undefined);
         if (t?.repo) await focusRepo(t.repo);
-        void newBranch(t && t.ref !== "HEAD" && !t.branch?.current ? t.ref : undefined);
+        void newBranch(from);
       },
     },
     {
@@ -107,7 +133,7 @@ export function registerLogPaneActions(): () => void {
       icon: "git-pull",
       when: VCS,
       hidden: true,
-      run: withBranch((b) => updateBranch(b.name)),
+      run: ({ arg }) => void updateBranches(repoBranches(branchTargets(arg))),
     },
     {
       id: "vcs.log.branches.delete",
@@ -116,10 +142,7 @@ export function registerLogPaneActions(): () => void {
       icon: "trash",
       when: VCS,
       hidden: true,
-      run: withBranch((b) => {
-        if (b.current) return;
-        return b.remote ? deleteRemoteBranch(b.name) : deleteBranch(b.name);
-      }),
+      run: ({ arg }) => void deleteBranches(repoBranches(branchTargets(arg))),
     },
     {
       id: "vcs.log.branches.toggleFavorite",

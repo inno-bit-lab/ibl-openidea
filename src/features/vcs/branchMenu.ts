@@ -9,6 +9,7 @@ import {
   checkoutDetached,
   checkoutInRepos,
   deleteBranch,
+  deleteBranches,
   deleteInRepos,
   deleteRemoteBranch,
   mergeInRepos,
@@ -21,13 +22,15 @@ import {
   renameBranch,
   toggleFavoriteBranch,
   updateBranch,
+  updateBranches,
   useFavoriteBranches,
 } from "./branchOps";
 import { showCompareBranches } from "./CompareBranches";
 import { showDiffWithWorkingTree } from "./operations";
 import type { CommonBranch } from "./repoBranches";
 import { runRemote, saveAll } from "./ops";
-import { focusRepo, useVcs } from "./store";
+import { showUpdateDialog } from "./remoteUi";
+import { currentRepo, focusRepo, useVcs } from "./store";
 import { tx } from "@/platform/i18n";
 
 /** `git pull <remote> <branch>` into the current branch (`origin/feat/x` → origin, feat/x). */
@@ -61,11 +64,12 @@ export function branchMenu(b: Branch, current: string | null, done: () => void =
     run: run(() => executeAction("vcs.showLog", { branch: b.name })),
   };
   if (b.current) {
+    // The selected repository's branch (`inRepo` selects it first): Update and Push act on that repository.
     return [
       { label: tx`New Branch from '${b.name}'…`, icon: "branch", run: run(() => newBranch()) },
       { kind: "separator" },
-      { label: "Update", icon: "git-pull", run: run(() => executeAction("vcs.update")) },
-      { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push")) },
+      { label: "Update", icon: "git-pull", run: run(() => showUpdateDialog({ repo: currentRepo() })) },
+      { label: "Push…", icon: "git-push", run: run(() => executeAction("vcs.push", { repo: currentRepo() })) },
       { kind: "separator" },
       { label: "Rename…", run: run(() => renameBranch(b.name)) },
       favoriteItem,
@@ -156,6 +160,52 @@ export function commonBranchMenu(b: CommonBranch, roots: readonly string[], done
       { label: "Delete", danger: true, icon: "trash", run: run(() => deleteInRepos(b.name, roots)) },
     );
   return items;
+}
+
+/**
+ * Entries for several branches selected in the Git Log's Branches pane, in one or more
+ * repositories: each acts on every selected branch in its own repository.
+ */
+export function selectedBranchesMenu(
+  targets: readonly { branch?: Branch; repo?: string }[],
+  done: () => void = () => {},
+): MenuItem[] {
+  const run = (fn: () => unknown) => () => {
+    done();
+    void fn();
+  };
+  const list = targets.flatMap((t) => (t.branch ? [{ branch: t.branch, repo: t.repo }] : []));
+  const repos = list.map((t) => t.repo ?? currentRepo());
+  const name = list[0]?.branch.name ?? "";
+  // The same branch, once in each of several repositories (as the Branches popup's common branches).
+  const common = list.every((t) => t.branch.name === name) && new Set(repos).size === list.length;
+  const roots = repos.filter((r): r is string => !!r);
+  const allCurrent = list.every((t) => t.branch.current);
+  return [
+    ...(common && !list.some((t) => t.branch.current)
+      ? [{ label: "Checkout", run: run(() => checkoutInRepos(name, roots)) }, { kind: "separator" as const }]
+      : []),
+    {
+      label: "Update",
+      icon: "git-pull",
+      disabled: !list.some((t) => !t.branch.remote && (t.branch.current || t.branch.upstream)),
+      run: run(() => updateBranches(list)),
+    },
+    {
+      label: "Push…",
+      icon: "git-push",
+      disabled: !allCurrent,
+      run: run(() => executeAction("vcs.push", { repos: roots })),
+    },
+    { kind: "separator" },
+    {
+      label: "Delete",
+      danger: true,
+      icon: "trash",
+      disabled: allCurrent,
+      run: run(() => deleteBranches(list)),
+    },
+  ];
 }
 
 /** `items` acting on repository `root`: it is selected (with its branches loaded) before each entry runs. */

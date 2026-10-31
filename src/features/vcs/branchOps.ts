@@ -9,6 +9,7 @@ import { isFavoriteBranch, pushRecent, shortRemoteName } from "./branches";
 import { showCommitRange } from "./CompareBranches";
 import { confirmDialog, promptText } from "./dialogs";
 import { runOp, runRemote, saveAll } from "./ops";
+import { showUpdateDialog } from "./remoteUi";
 import { conflictedFiles, currentRepo, refreshNow, repoName, useVcs } from "./store";
 import { tx } from "@/platform/i18n";
 
@@ -249,12 +250,13 @@ export async function renameBranch(name: string) {
  * deleted anyway and the notification says so, offering View Commits. Restore recreates
  * the branch (with its upstream); Delete Tracked Branch removes the remote branch too.
  */
-export async function deleteBranch(name: string) {
-  const repo = currentRepo();
+export async function deleteBranch(name: string, repo: string | null = currentRepo()) {
   const deleted = await runOp(`Delete branch ${name}`, () => call(commands.vcsDeleteBranch(repo, name)));
   if (!deleted) return;
   const tracked = deleted.upstream;
-  const otherTracking = useVcs.getState().branches.some((b) => !b.remote && b.name !== name && b.upstream === tracked);
+  const branches =
+    repo === currentRepo() ? useVcs.getState().branches : await call(commands.vcsBranches(repo)).catch(() => []);
+  const otherTracking = branches.some((b) => !b.remote && b.name !== name && b.upstream === tracked);
   const key = `vcs.deleted.${name}`;
   const done = () => notifications().expire?.(key);
   notifications().notify({
@@ -274,7 +276,7 @@ export async function deleteBranch(name: string) {
         },
       },
       ...(deleted.unmerged
-        ? [{ label: "View Commits", run: () => showCommitRange(`Commits of ${name}`, "HEAD", deleted.tip) }]
+        ? [{ label: "View Commits", run: () => showCommitRange(`Commits of ${name}`, "HEAD", deleted.tip, repo) }]
         : []),
       ...(tracked && !otherTracking
         ? [
@@ -282,7 +284,7 @@ export async function deleteBranch(name: string) {
               label: "Delete Tracked Branch",
               run: () => {
                 done();
-                void deleteRemoteBranch(tracked);
+                void deleteRemoteBranch(tracked, repo);
               },
             },
           ]
@@ -291,16 +293,25 @@ export async function deleteBranch(name: string) {
   });
 }
 
-/** Deletes a branch on its remote (`git push <remote> --delete <name>`); `name` is e.g. `origin/feature`. */
-export async function deleteRemoteBranch(name: string) {
-  const ok = await confirmDialog({
-    title: "Delete Remote Branch",
-    message: tx`Delete branch '${shortRemoteName(name)}' on the remote? The remote-tracking branch '${name}' is removed as well.`,
-    okLabel: "Delete",
-    danger: true,
-  });
+/**
+ * Deletes a branch on its remote (`git push <remote> --delete <name>`); `name` is e.g. `origin/feature`.
+ * `confirm: false` when the caller already asked (Delete for several selected branches).
+ */
+export async function deleteRemoteBranch(
+  name: string,
+  repo: string | null = currentRepo(),
+  { confirm = true }: { confirm?: boolean } = {},
+) {
+  const ok =
+    !confirm ||
+    (await confirmDialog({
+      title: "Delete Remote Branch",
+      message: tx`Delete branch '${shortRemoteName(name)}' on the remote? The remote-tracking branch '${name}' is removed as well.`,
+      okLabel: "Delete",
+      danger: true,
+    }));
   if (!ok) return;
-  await runRemote({ op: "deleteBranch", branch: name }, name);
+  await runRemote({ op: "deleteBranch", branch: name }, name, [repo]);
 }
 
 /** Checkout and Rebase onto Current: checks out `name`, then rebases it onto the branch that was current. */
@@ -315,15 +326,70 @@ export async function checkoutAndRebase(name: string) {
   await rebaseOnto(current);
 }
 
-/** Update for a branch other than the current one: fast-forwards it to its upstream. */
+/** Update for a branch of the selected repository: the current one updates that repository, another is fast-forwarded to its upstream. */
 export async function updateBranch(name: string) {
   const b = useVcs.getState().branches.find((x) => !x.remote && x.name === name);
-  if (b?.current) return void executeAction("vcs.update");
+  if (b?.current) return void showUpdateDialog({ repo: currentRepo() });
   if (!b?.upstream) {
     notifications().notify({ group: "vcs", level: "warning", title: `Branch '${name}' has no tracked branch` });
     return;
   }
   await runRemote({ op: "updateBranch", branch: name }, `${name} ← ${b.upstream}`);
+}
+
+/** A branch in its repository (`repo` unset: the selected one), e.g. one of the Branches pane's selected rows. */
+export interface RepoBranch {
+  branch: Branch;
+  repo?: string;
+}
+
+const repoOfTarget = (t: RepoBranch) => t.repo ?? currentRepo();
+
+/**
+ * Update for several branches, each in its own repository: the others are fast-forwarded
+ * to their upstreams, then the current ones' repositories are updated (one Update Project).
+ */
+export async function updateBranches(targets: readonly RepoBranch[]) {
+  const local = targets.filter((t) => !t.branch.remote);
+  for (const t of local.filter((x) => !x.branch.current && x.branch.upstream))
+    await runRemote({ op: "updateBranch", branch: t.branch.name }, `${t.branch.name} ← ${t.branch.upstream}`, [
+      repoOfTarget(t),
+    ]);
+  const repos = [...new Set(local.filter((t) => t.branch.current).map(repoOfTarget))];
+  if (repos.length === 1) await showUpdateDialog({ repo: repos[0] });
+  else if (repos.length) await showUpdateDialog({ repos: repos.filter((r): r is string => !!r) });
+}
+
+/**
+ * Delete for several branches, each in its own repository: one confirmation for all of them
+ * (a single branch is deleted as by its own Delete), then no further question per branch.
+ */
+export async function deleteBranches(targets: readonly RepoBranch[]) {
+  const deletable = targets.filter((t) => !t.branch.current);
+  if (deletable.length === 1) {
+    const { branch, repo } = deletable[0]!;
+    return branch.remote
+      ? deleteRemoteBranch(branch.name, repo ?? currentRepo())
+      : deleteBranch(branch.name, repo ?? currentRepo());
+  }
+  if (!deletable.length) return;
+  const list = deletable
+    .map((t) => {
+      const name = t.branch.remote ? tx`${t.branch.name} (remote)` : t.branch.name;
+      return t.repo && useVcs.getState().roots.length > 1 ? `${repoName(t.repo)}: ${name}` : name;
+    })
+    .join("\n");
+  const ok = await confirmDialog({
+    title: "Delete Branches",
+    message: tx`Delete the following branches?\n${list}`,
+    okLabel: "Delete",
+    danger: true,
+  });
+  if (!ok) return;
+  for (const t of deletable)
+    await (t.branch.remote
+      ? deleteRemoteBranch(t.branch.name, repoOfTarget(t), { confirm: false })
+      : deleteBranch(t.branch.name, repoOfTarget(t)));
 }
 
 // --- several repositories ----------------------------------------------------

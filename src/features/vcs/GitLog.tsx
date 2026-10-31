@@ -66,7 +66,7 @@ import { KIND_COLOR, baseName, dirName, fileCount, formatTime, relTo, type Effec
 import { clearConsole, useVcsConsole } from "./ops";
 import { currentRepo, loadBranches, repoName, useVcs } from "./store";
 import { loadFavoriteBranches, useFavoriteBranches } from "./branchOps";
-import { branchMenu, inRepo, tagMenu } from "./branchMenu";
+import { branchMenu, inRepo, selectedBranchesMenu, tagMenu } from "./branchMenu";
 import {
   branchFolderKeys,
   branchGroupKeys,
@@ -374,22 +374,22 @@ export function BranchesPanel() {
     <div className={styles.branches} onKeyDownCapture={onKeyDownCapture}>
       <div className={styles.branchesTools} role="toolbar" aria-orientation="vertical" aria-label={tx("Branches")}>
         <IconButton icon="chevron-left" title="Hide Branches" size="small" action="vcs.log.showBranches" />
-        <IconButton icon="plus" title="New Branch…" size="small" action="vcs.log.branches.new" actionArg={target} />
+        <IconButton icon="plus" title="New Branch…" size="small" action="vcs.log.branches.new" actionArg={targets} />
         <IconButton
           icon="git-pull"
           size="small"
           title="Update Selected"
           action="vcs.log.branches.update"
-          actionArg={target}
-          disabled={!canUpdateBranch(target ?? null)}
+          actionArg={targets}
+          disabled={!canUpdateBranch(targets)}
         />
         <IconButton
           icon="trash"
           size="small"
           title="Delete Branch"
           action="vcs.log.branches.delete"
-          actionArg={target}
-          disabled={!canDeleteBranch(target ?? null)}
+          actionArg={targets}
+          disabled={!canDeleteBranch(targets)}
         />
         <IconButton
           icon="locate"
@@ -409,6 +409,13 @@ export function BranchesPanel() {
           disabled={!target?.branch}
         />
         <IconButton icon="git-fetch" title="Fetch" size="small" action="vcs.fetch" />
+        <IconButton
+          icon="web"
+          title="Manage Remotes…"
+          size="small"
+          action="vcs.manageRemotes"
+          actionArg={target?.repo ? { repo: target.repo } : undefined}
+        />
         <IconButton icon="refresh" title="Refresh" size="small" onClick={() => void loadBranches()} />
       </div>
       <div className={styles.branchesMain}>
@@ -460,12 +467,30 @@ export function BranchesPanel() {
             setLogFilters({ branches: sel, repositories: n.repo ? [n.repo] : [] });
           }}
           onContextMenu={(n, _s, e) => {
-            const menu = n?.branch
-              ? branchMenu(n.branch, n.repo ? (useVcs.getState().heads[n.repo]?.head ?? null) : current)
-              : n?.kind === "tag"
-                ? tagMenu(n.ref!)
-                : [];
-            const items = n?.repo ? inRepo(n.repo, menu) : menu;
+            // Several selected branches (in one or more repositories): actions on each, in its repository.
+            const selection = n && selected.has(n.key) ? targets.filter((t) => t.branch) : [];
+            const many = selection.length > 1 ? selectedBranchesMenu(selection) : null;
+            const remotes =
+              n?.key === "g:remote" ||
+              n?.kind === "remote" ||
+              (n?.kind === "repository" && n.key.startsWith("g:remote"))
+                ? [
+                    {
+                      kind: "action",
+                      action: "vcs.manageRemotes",
+                      arg: n.repo ? { repo: n.repo } : undefined,
+                    } satisfies MenuItem,
+                  ]
+                : null;
+            const menu =
+              many ??
+              remotes ??
+              (n?.branch
+                ? branchMenu(n.branch, n.repo ? (useVcs.getState().heads[n.repo]?.head ?? null) : current)
+                : n?.kind === "tag"
+                  ? tagMenu(n.ref!)
+                  : []);
+            const items = n?.repo && !many && !remotes ? inRepo(n.repo, menu) : menu;
             if (!items.length) return;
             e.preventDefault();
             showContextMenu(e, items);

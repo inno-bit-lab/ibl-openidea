@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Branch, Commit } from "@/bindings";
 
 const vcsCommitFiles = vi.fn();
 const vcsTags = vi.fn();
+const branchesOf = vi.fn((_repo: string | null): Branch[] => []);
+const vcsRemote = vi.fn();
+const vcsDeleteBranch = vi.fn();
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -15,14 +18,38 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
       vcsTags: (repo: unknown) => vcsTags(repo),
       vcsLog: () => Promise.resolve({ status: "ok", data: [] }),
       vcsConfigGet: () => Promise.resolve({ status: "ok", data: null }),
+      vcsBranches: async (repo: string | null) => ({ status: "ok", data: branchesOf(repo) }),
+      vcsRemote: (repo: string | null, _request: number, op: unknown) => vcsRemote(repo, op),
+      vcsDeleteBranch: (repo: string | null, name: string) => vcsDeleteBranch(repo, name),
+      vcsBranchInfo: async () => ({
+        status: "ok",
+        data: { head: "main", headCommit: "1", upstream: "origin/main", ahead: 0, behind: 0, operation: null },
+      }),
+      vcsStatus: async () => ({ status: "ok", data: [] }),
+      vcsRoots: async () => ({
+        status: "ok",
+        data: useVcs.getState().roots.map((root) => ({ root, operation: null, head: "main", headCommit: "1" })),
+      }),
     },
   };
 });
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  Channel: class {
+    onmessage: ((m: unknown) => void) | null = null;
+  },
+}));
 
+import { setContext } from "@/platform/context";
+import { isMacHost } from "@/platform/keymap";
+import { useProject } from "@/platform/project";
+import { provideNotificationService } from "@/workbench/contributions";
+import { MessagesHost } from "@/workbench/messages";
 import { buildBranchTree, filterBranchTree } from "../branches";
+import { VcsDialogHost } from "../dialogs";
 import { buildFileTree } from "../fileTree";
 import { filesUnder, filterPatch, flatFileNodes, toLogChanges, useLogChanges } from "../logChanges";
-import { canDeleteBranch, canUpdateBranch, useBranchesPane } from "../logPaneActions";
+import { canDeleteBranch, canUpdateBranch, registerLogPaneActions, useBranchesPane } from "../logPaneActions";
 import { BranchesPanel, CommitDetails, changesMenu, graphOptionsMenu } from "../GitLog";
 import { LogSettingsPage } from "../LogSettingsPage";
 import { DEFAULT_LOG_OPTIONS, useLogOptions } from "../logOptions";
@@ -167,6 +194,142 @@ describe("Branches pane", () => {
     expect(useBranchesPane.getState().selected.map((t) => t.ref)).toEqual(["feature"]);
     expect(screen.getByRole("button", { name: "Delete Branch" })).toBeEnabled();
     expect(await screen.findByText("Tags")).toBeInTheDocument();
+  });
+
+  it("enables Update and Delete when any selected branch qualifies", () => {
+    const current = b("main", { current: true });
+    const tracked = b("feature", { upstream: "origin/feature" });
+    expect(canDeleteBranch([{ ref: "main", branch: current, repo: "/p/a" }])).toBe(false);
+    expect(
+      canDeleteBranch([
+        { ref: "main", branch: current, repo: "/p/a" },
+        { ref: "feature", branch: tracked, repo: "/p/b" },
+      ]),
+    ).toBe(true);
+    expect(canUpdateBranch([{ ref: "x", branch: b("x"), repo: "/p/a" }])).toBe(false);
+    expect(
+      canUpdateBranch([
+        { ref: "x", branch: b("x"), repo: "/p/a" },
+        { ref: "feature", branch: tracked, repo: "/p/b" },
+      ]),
+    ).toBe(true);
+  });
+});
+
+describe("Branches pane with branches selected in several repositories", () => {
+  const FRONT = "/p/front";
+  const BACK = "/p/back";
+  let off: () => void = () => {};
+
+  beforeEach(() => {
+    off = registerLogPaneActions();
+    setContext("vcsAvailable", true);
+    provideNotificationService({ notify: () => {} });
+    useProject.setState({ settings: { vcs: { confirmation: { showUpdateOptions: false } } } });
+    branchesOf
+      .mockReset()
+      .mockImplementation((repo) => [
+        b("main", { current: true, upstream: "origin/main", commit: "1" }),
+        b("feature", { upstream: "origin/feature", commit: "2" }),
+        ...(repo === BACK ? [b("origin/old", { remote: true, commit: "3" })] : []),
+      ]);
+    vcsRemote.mockReset().mockResolvedValue({ status: "ok", data: { summary: "ok" } });
+    vcsDeleteBranch.mockReset().mockImplementation(async (_repo: string, name: string) => ({
+      status: "ok",
+      data: { name, tip: "2", upstream: null, unmerged: false },
+    }));
+    useVcs.setState({
+      available: true,
+      root: "/p",
+      roots: [FRONT, BACK],
+      repo: FRONT,
+      heads: { [FRONT]: { head: "main", headCommit: "1" }, [BACK]: { head: "main", headCommit: "1" } },
+      branchesLoaded: true,
+      branches: branchesOf(FRONT),
+      branch: { head: "main", headCommit: "1", upstream: "origin/main", ahead: 0, behind: 0, operation: null },
+      remoteBusy: null,
+    });
+    useBranchesPane.setState({ selected: [] });
+  });
+
+  afterEach(() => off());
+
+  /** Selects branch `name` of the Local group in each of `repos` (Local lists the repositories in order). */
+  const selectLocal = async (name: string, repos: number[]) => {
+    await waitFor(() => expect(screen.getAllByText(name)).toHaveLength(2));
+    const rows = screen.getAllByText(name);
+    repos.forEach((i, n) => fireEvent.mouseDown(rows[i]!, n ? cmd() : {}));
+  };
+  const cmd = () => (isMacHost() ? { metaKey: true } : { ctrlKey: true });
+  const remoteCalls = () => vcsRemote.mock.calls.map(([repo, op]) => [repo, op]);
+
+  it("Update runs in the repository of each selected branch", async () => {
+    render(<BranchesPanel />);
+    await selectLocal("feature", [0, 1]);
+    expect(useBranchesPane.getState().selected.map((t) => [t.repo, t.ref])).toEqual([
+      [FRONT, "feature"],
+      [BACK, "feature"],
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Update Selected" }));
+    await waitFor(() =>
+      expect(remoteCalls()).toEqual([
+        [FRONT, { op: "updateBranch", branch: "feature" }],
+        [BACK, { op: "updateBranch", branch: "feature" }],
+      ]),
+    );
+  });
+
+  it("Update of current branches pulls only their repositories", async () => {
+    render(<BranchesPanel />);
+    await selectLocal("main", [1]);
+    fireEvent.click(screen.getByRole("button", { name: "Update Selected" }));
+    await waitFor(() => expect(remoteCalls()).toEqual([[BACK, { op: "pull", rebase: false }]]));
+  });
+
+  it("Delete asks once for branches selected in two repositories, then deletes each in its repository", async () => {
+    render(
+      <>
+        <BranchesPanel />
+        <VcsDialogHost />
+        <MessagesHost />
+      </>,
+    );
+    // The repositories' remote folders load collapsed: open back's origin.
+    fireEvent.mouseDown(await screen.findByText("origin"));
+    fireEvent.keyDown(screen.getByRole("tree", { name: "Branches" }), { key: "ArrowRight" });
+    await selectLocal("feature", [0, 1]);
+    fireEvent.mouseDown(await screen.findByText("old"), cmd());
+    fireEvent.click(screen.getByRole("button", { name: "Delete Branch" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Branches" });
+    expect(dialog).toHaveTextContent("front: feature");
+    expect(dialog).toHaveTextContent("back: feature");
+    expect(dialog).toHaveTextContent("back: origin/old (remote)");
+    expect(vcsDeleteBranch).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(remoteCalls()).toEqual([[BACK, { op: "deleteBranch", branch: "origin/old" }]]));
+    expect(vcsDeleteBranch.mock.calls).toEqual([
+      [FRONT, "feature"],
+      [BACK, "feature"],
+    ]);
+    // One confirmation: the remote branch is not confirmed again.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("cancelling the one confirmation deletes nothing", async () => {
+    render(
+      <>
+        <BranchesPanel />
+        <VcsDialogHost />
+        <MessagesHost />
+      </>,
+    );
+    await selectLocal("feature", [0, 1]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Branch" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Branches" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(vcsDeleteBranch).not.toHaveBeenCalled();
+    expect(vcsRemote).not.toHaveBeenCalled();
   });
 });
 
