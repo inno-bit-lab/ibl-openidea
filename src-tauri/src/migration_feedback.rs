@@ -368,6 +368,20 @@ mod platform {
 
 #[cfg(all(test, windows))]
 pub(crate) mod testing {
+    pub fn dialog_test_guard() -> std::fs::File {
+        // Re-exec DPI probes and W3 have the same executable/title under nextest too.
+        // This test-only OS lock keeps their native dialogs out of each other's witness.
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(std::env::temp_dir().join("iblopenidea-migration-dialog-tests.lock"))
+            .expect("dialog test lock file");
+        file.lock().expect("exclusive dialog test lock");
+        file
+    }
+
     pub fn visible_dialogs() -> Vec<isize> {
         super::platform::matching_dialogs()
     }
@@ -384,6 +398,88 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[cfg(windows)]
+    #[test]
+    fn helper_thread_dialog_preserves_main_thread_dpi_awareness() {
+        use std::process::{Command, Stdio};
+        use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
+        use windows_sys::Win32::UI::HiDpi::{
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetAwarenessFromDpiAwarenessContext,
+            GetThreadDpiAwarenessContext, SetProcessDpiAwarenessContext,
+        };
+
+        const CHILD_ENV: &str = "IBLOPENIDEA_MIGRATION_DPI_PROBE";
+        const TEST: &str = "migration_feedback::tests::helper_thread_dialog_preserves_main_thread_dpi_awareness";
+        if let Ok(mode) = std::env::var(CHILD_ENV) {
+            assert!(matches!(mode.as_str(), "control" | "dialog"));
+            if mode == "dialog" {
+                let progress = Arc::new(Progress::default());
+                progress.set_phase(ProgressPhase::Copying);
+                let feedback = super::start(progress.clone());
+                let ended = feedback.worker_ended_flag();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while progress.last_content().is_empty() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                let updated_content = !progress.last_content().is_empty();
+                progress.set_phase(ProgressPhase::Done);
+                feedback.finish();
+                assert!(updated_content, "DPI probe never displayed and updated the native dialog");
+                assert!(progress.dialog_shown_ms() > 0);
+                assert!(progress.feedback_error().is_none(), "{:?}", progress.feedback_error());
+                assert!(ended.load(Ordering::Acquire));
+            }
+            // Each re-exec has an untouched calling thread, like Tauri after the helper returns.
+            let (set_succeeded, last_error, awareness) = unsafe {
+                SetLastError(0);
+                let result = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+                let error = GetLastError();
+                let awareness = GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext());
+                (result != 0, error, awareness)
+            };
+            println!(
+                "MIGRATION_DPI {}",
+                serde_json::json!({"set_succeeded":set_succeeded,"last_error":last_error,"awareness":awareness})
+            );
+            return;
+        }
+
+        let _serial = super::testing::dialog_test_guard();
+        let mut records = Vec::new();
+        for mode in ["control", "dialog"] {
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD_ENV, mode)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut timed_out = false;
+            while child.try_wait().unwrap().is_none() {
+                if Instant::now() >= deadline {
+                    timed_out = true;
+                    child.kill().unwrap();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let output = child.wait_with_output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!(
+                "MIGRATION_DPI_CHILD mode={mode} status={} timed_out={timed_out}\n{stdout}\n{stderr}",
+                output.status
+            );
+            assert!(!timed_out && output.status.success(), "DPI child {mode} failed");
+            let line = stdout.lines().find_map(|line| line.strip_prefix("MIGRATION_DPI ")).expect("DPI record");
+            records.push(serde_json::from_str::<serde_json::Value>(line).unwrap());
+        }
+        assert_eq!(records[0]["set_succeeded"], true, "control cannot establish process DPI awareness");
+        assert_eq!(records[0]["awareness"], 2, "control is not per-monitor aware");
+        assert_eq!(records[1], records[0], "native feedback changed Tauri's later process-DPI setup");
+    }
 
     #[test]
     fn finish_without_a_migration_returns_at_once() {

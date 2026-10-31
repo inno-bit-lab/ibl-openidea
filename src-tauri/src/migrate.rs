@@ -1640,6 +1640,7 @@ mod tests {
     #[test]
     fn dialog_is_visible_while_the_copy_is_blocked_and_the_target_is_closed() {
         use crate::migration_feedback::{self, testing};
+        let _serial = testing::dialog_test_guard();
         let f = Fixture::new();
         let progress = std::sync::Arc::new(Progress::default());
         let feedback = migration_feedback::start(progress.clone());
