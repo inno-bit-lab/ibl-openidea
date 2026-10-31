@@ -364,9 +364,7 @@ export function useIncludedCount(): number {
 
 /** Files git ignores; `vcs_status` leaves them out. */
 function loadIgnored(): Promise<FileStatus[]> {
-  // The `vcsIgnored` binding comes with the registration of `vcs_ignored`.
-  const vcsIgnored = (commands as typeof commands & { vcsIgnored?: typeof commands.vcsStatus }).vcsIgnored;
-  return vcsIgnored ? call(vcsIgnored()) : Promise.resolve([]);
+  return call(commands.vcsIgnored());
 }
 
 /** View Options › Show › Ignored Files: loaded only while shown, again after each refresh. */
