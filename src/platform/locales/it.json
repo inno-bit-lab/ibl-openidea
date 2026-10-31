@@ -337,6 +337,7 @@
   "menu.vcs.addToVcs": "Aggiungi al VCS",
   "menu.vcs.compareWithBranch": "Confronta con branch o revisione…",
   "menu.vcs.showHistory": "Mostra cronologia",
+  "menu.vcs.showHistoryForSelection": "Mostra cronologia per la selezione…",
   "menu.build": "Build",
   "menu.build.buildProject": "Compila progetto",
   "menu.build.buildModule": "Compila modulo",
