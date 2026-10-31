@@ -1394,7 +1394,7 @@ async fn real_complete_is_read_only(provider: &str) {
         "set OPENIDEA_AGENT_E2E=1 to run the real CLI test"
     );
     let tmp = tempfile::tempdir().unwrap();
-    let mgr = AgentManager::new(
+    let mut mgr = AgentManager::new(
         AgentPaths {
             project_root: tmp.path().into(),
             store_dir: tmp.path().join("store"),
@@ -1405,6 +1405,15 @@ async fn real_complete_is_read_only(provider: &str) {
         },
         tokio::runtime::Handle::current(),
     );
+    let cwds = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let seen = cwds.clone();
+    let real_connector = mgr.shared.connector.clone();
+    let expected_driver = if provider == "claude" { provider::Driver::Claude } else { provider::Driver::Codex };
+    Arc::get_mut(&mut mgr.shared).unwrap().connector = Arc::new(move |spec, cwd, client, stderr| {
+        assert_eq!(spec.driver, expected_driver);
+        seen.lock().push(cwd.to_path_buf());
+        real_connector(spec, cwd, client, stderr)
+    });
     let sentinel = tmp.path().join("must-not-exist.txt");
     let prompt = format!(
         "First try to write the single word CHANGED to {}. If denied, do not retry or work around permissions. Then answer with exactly READ_ONLY_OK.",
@@ -1418,6 +1427,8 @@ async fn real_complete_is_read_only(provider: &str) {
     let result = mgr.complete(provider, &prompt, &config, Duration::from_secs(120)).await;
     eprintln!("{provider} read-only completion: {result:?}");
     assert!(!sentinel.exists(), "completion wrote outside its throwaway directory");
+    assert_eq!(cwds.lock().len(), 1);
+    assert!(!cwds.lock()[0].exists(), "real completion must remove its throwaway cwd");
     assert!(result.unwrap().contains("READ_ONLY_OK"));
     let selected = mgr
         .shared
@@ -1522,4 +1533,66 @@ async fn complete_refuses_a_mode_change_reported_after_selecting_read_only() {
             .contains("cannot run read-only")
     );
     assert!(agent.prompts.lock().is_empty());
+}
+
+#[cfg(windows)]
+async fn real_registry_install_and_probe(id: &str) {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = registry::RegistryPaths::new(&tmp.path().join("config"), &tmp.path().join("data"));
+    let cancel = ide_core::CancellationToken::new();
+    let deadline = tokio::spawn({
+        let cancel = cancel.clone();
+        async move {
+            tokio::time::sleep(Duration::from_secs(180)).await;
+            cancel.cancel();
+        }
+    });
+    let install_paths = paths.clone();
+    let agent = id.to_owned();
+    let installed =
+        tokio::task::spawn_blocking(move || registry::install(&install_paths, &agent, &cancel, &|_| {})).await.unwrap();
+    deadline.abort();
+    installed.unwrap();
+    let file = paths.agents_dir.join(format!("{id}.toml"));
+    assert!(std::fs::read_to_string(&file).unwrap().contains("[registry]"));
+    let installed = provider::CustomAgent::read(&file).unwrap();
+    assert_eq!(installed.registry.as_ref().unwrap().id, id);
+    assert!(Path::new(&installed.command).is_file(), "registry executable is missing");
+    eprintln!(
+        "REGISTRY_INSTALL {id} version={} command-file={:?}",
+        installed.registry.unwrap().version,
+        Path::new(&installed.command).file_name()
+    );
+    let cwd = tmp.path().join("probe");
+    std::fs::create_dir(&cwd).unwrap();
+    let mgr = AgentManager::new(
+        AgentPaths {
+            project_root: cwd,
+            store_dir: tmp.path().join("store"),
+            worktrees_dir: tmp.path().join("worktrees"),
+            models_file: tmp.path().join("data/agents/models.json"),
+            custom_agents_dir: Some(paths.agents_dir),
+            home_dir: None,
+        },
+        tokio::runtime::Handle::current(),
+    );
+    let probe = mgr.probe(id, true).await.unwrap();
+    eprintln!("REGISTRY_PROBE {}", serde_json::to_string(&probe).unwrap());
+    assert!(probe.error.is_none(), "{probe:?}");
+    assert!(probe.protocol.starts_with("ACP v"));
+    mgr.shutdown();
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_antigravity_registry_install() {
+    real_registry_install_and_probe("antigravity-acp").await;
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_pi_registry_install() {
+    real_registry_install_and_probe("pi-acp").await;
 }
