@@ -122,9 +122,11 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: ${{ env.TAG }}
-          args: --target ${{ matrix.target }}
+          # RPM rejects '-' in Version and Tauri has no RPM version override, so a
+          # pre-release tag (vX.Y.Z-N) builds the Linux deb and AppImage only.
+          args: --target ${{ matrix.target }}${{ matrix.os == 'ubuntu-22.04' && contains(env.TAG, '-') && ' --bundles deb,appimage' || '' }}
           # The parallel builds would race on one latest.json; `updater-manifest` writes it once.
-          uploadUpdaterJson: false
+          includeUpdaterJson: false
       # tauri-action notarizes the .app but not the DMG around it; notarize and
       # staple the DMG too, then replace the uploaded asset.
       - name: Notarize DMG
@@ -206,7 +208,8 @@ jobs:
             const kinds = [
               [/_amd64\.AppImage$/, ["linux-x86_64", "linux-x86_64-appimage"]],
               [/_amd64\.deb$/, ["linux-x86_64-deb"]],
-              [/\.x86_64\.rpm$/, ["linux-x86_64-rpm"]],
+              // Pre-release tags build no rpm (see the build job).
+              ...(tag.includes("-") ? [] : [[/\.x86_64\.rpm$/, ["linux-x86_64-rpm"]]]),
               [/_aarch64\.app\.tar\.gz$/, ["darwin-aarch64", "darwin-aarch64-app"]],
               [/_x64\.app\.tar\.gz$/, ["darwin-x86_64", "darwin-x86_64-app"]],
               [/_x64_en-US\.msi$/, ["windows-x86_64", "windows-x86_64-msi"]],
