@@ -1,8 +1,29 @@
 # IBLOpenIdea improvement roadmap
 
-- **Date**: 2026-10-30
-- **Status**: Agreed in brainstorming; sub-project 1 has a spec, sub-projects 2 and 3 do not yet
+- **Date**: 2026-10-30, updated 2026-10-31
+- **Status**: Sub-projects 1 and 2 are implemented and merged, and their release candidates are published. The final tags wait for the owner's acceptance tests. Sub-project 3 has not started.
 - **Inputs**: [`docs/intents/2026-10-30-browser-web-ide.md`](../../intents/2026-10-30-browser-web-ide.md), [`docs/upstream-sync.md`](../../upstream-sync.md), the state audit of 2026-10-30 (below)
+
+## Progress on 2026-10-31
+
+| Release | Where the code is | Candidate | Left before the final tag |
+|---|---|---|---|
+| v0.2.2 | MT-A (#2) and MT-B (#3) merged; `main` = `3ef089a` | `v0.2.2-2`, published as a prerelease; A1 passed | A3, A4 and A5 on the owner's PC |
+| v0.2.3 | MT-C (#4) merged into `fix/release-hardening` | `v0.2.3-2`, published as a prerelease; A1 passed | B1 to B3 on the owner's PC |
+| v0.3.0 | `port/v0.3.0` = `2847c42` (PRs #5 to #12), integrated CI green; `port/release-v0.3.0` = `904af48` | `v0.3.0-1`, published as a prerelease; C1 and C2 passed | C3, C4 and C5 on the owner's PC |
+| v0.3.x | Follow-ups collected (section "v0.3.x follow-ups") | none | none |
+| v0.4 to v0.6 | Not started | none | A design session with the owner |
+
+`releases/latest` is still `v0.2.1`, so the updater does not offer the candidates to anyone.
+
+**Order of the final tags**: v0.2.2, then v0.2.3, then v0.3.0. `main` stays on the 0.2.x line until v0.2.3 is final. After that, `port/release-v0.3.0` gets a `-s ours` merge of the new `main`, and `main` is fast-forwarded to it.
+
+**What changed from the plan**:
+
+- **Signing key.** The password of the original updater key was not available, so the key was replaced on 2026-10-31 (new key ID `A31A0E471F28FEEC`). Installs of 0.2.0 and 0.2.1 trust the old key: they must install 0.2.2 or later by hand once. Acceptance A2 was changed to match.
+- **Candidate names.** Candidates are numeric (`v0.2.2-2`, `v0.3.0-1`) because the MSI target rejects `rc.N`. They ship no rpm, because RPM rejects `-` in a version; the final releases have it.
+- **Team.** Codex and Claude Code were the developers. Antigravity reviewed only, by the owner's decision. Every member ran over ACP.
+- **Extra tranches in the sync.** MT-2 surfaced two problems that got their own PRs: a fail-closed hardening of the read-only commit suggestion (#10), and a Windows `PATH` budget (#11). Without #11, an app started with a normal user `PATH` went past cmd's 8,191-character limit, and native Codex, npx agents and npm language servers did not start.
 
 ## State on 2026-10-30
 
@@ -23,7 +44,7 @@ Three independent pieces of work, each with its own spec, plan and implementatio
 | # | Sub-project | Outcome | Spec |
 |---|---|---|---|
 | 1 | Release and hardening | CI green on the fork, complete release assets, blocking fixes, new identifier with migration, a fast local loop for parallel development; shipped by CI as v0.2.2 and v0.2.3 | [`2026-10-30-release-hardening-design.md`](2026-10-30-release-hardening-design.md) |
-| 2 | Upstream sync | The fork rebuilt on current upstream, released as v0.3.0 | to write |
+| 2 | Upstream sync | The fork rebuilt on current upstream, released as v0.3.0 | [`2026-10-31-upstream-sync-design.md`](2026-10-31-upstream-sync-design.md), with the [port map](2026-10-31-upstream-sync-port-map.md) and the [`PATH` budget design](2026-10-31-path-budget-design.md) |
 | 3 | Remote web IDE | Per-user `openidea-server` instances on a shared host, used from the browser and from the desktop app | to write |
 
 ### Order and dependencies
@@ -55,7 +76,8 @@ The sub-project 3 phases are a proposal; its spec confirms or changes them.
 
 **Rules**:
 
-- Every release goes through one or more candidates (`vX.Y.Z-rc.N`). GitHub marks them as prereleases, and the updater ignores them because it reads `releases/latest`. The team installs candidates by hand.
+- Every release goes through one or more candidates (`vX.Y.Z-N`, numeric, because the MSI target rejects `rc.N`). GitHub marks them as prereleases, and the updater ignores them because it reads `releases/latest`. The team installs candidates by hand.
+- Pushing a tag starts the release workflow. Do not also dispatch it for the same tag: the second run waits for the first and then skips.
 - Patch releases (`vX.Y.Z+1`) carry fixes at any time and do not wait for the next feature set.
 - `main` stays releasable. Unfinished work stays on its branch, or is merged behind a setting that is off by default.
 - Each release has curated release notes, including what changed for existing users (for example the data migration in v0.2.3).
@@ -64,10 +86,7 @@ The sub-project 3 phases are a proposal; its spec confirms or changes them.
 
 **Approach** (from `docs/upstream-sync.md`): create a branch from `upstream/main` and port the fork onto it subsystem by subsystem, rather than merging 201 upstream commits into the fork. The subsystems are identity and release, agents, VCS, and Italian locale. The sub-project 1 commits are separate per area so they can be ported the same way.
 
-**Decision still open: how the result reaches `main`.** A branch built from `upstream/main` cannot be merged into the current `main` with a normal merge without bringing back every conflict. The two options:
-
-- Reset `main` to the sync branch and force-push. History is rewritten; the `v0.2.x` tags keep pointing at their old commits.
-- Merge with `-s ours` after the port. History is kept, the merge commit records the switch, and `main` has the sync branch's tree.
+**Decided: how the result reaches `main`.** A branch built from `upstream/main` cannot be merged into the current `main` with a normal merge without bringing back every conflict. The port is merged with `-s ours` and `main` is fast-forwarded: history is kept, the merge commit records the switch, and the `v0.2.x` tags stay ancestors. Resetting `main` with a force-push was rejected. The details are in the [sync design](2026-10-31-upstream-sync-design.md).
 
 **Corrections to `docs/upstream-sync.md`** (checked against the repository on 2026-10-30):
 
@@ -78,6 +97,16 @@ The sub-project 3 phases are a proposal; its spec confirms or changes them.
 - The port should carry the sub-project 1 fixes. Copying the v0.2.1 code as it is would bring back the blocking problems.
 
 **Parallel work**: the four subsystem ports touch disjoint areas and can run as parallel units, following the conventions in sub-project 1 (section "Local development loop").
+
+### v0.3.x follow-ups
+
+Collected during the sync, none of them blocking v0.3.0:
+
+- **Windows process-tree teardown.** When an agent probe or a completion ends, the app stops the agent process but not always its children (a PyInstaller child of Antigravity, a `git` and credential-manager chain started by Codex's plugin update check). This needs a design of its own, for example with Job Objects, because it touches how every agent is started.
+- **Next upstream sync.** The port is frozen at upstream `504d859`. Upstream has moved on (`c5cb217c` on 2026-10-31).
+- **Small fixes.** `src/features/github/diff/reviewDiff.test.tsx:219` fails now and then. The module doc at `crates/ide-tools/src/lib.rs:9-10` still describes the old `PATH` behaviour.
+- **Possible upstream contributions**, if the owner wants them: the `PATH` budget fix, the Windows fix to `actionTitles.test.ts`, and the `release.yml` corrections (`includeUpdaterJson`, no rpm for pre-releases). Upstream has the same defects.
+- **Crew bugs**, for a session in the Crew repository: composer detection confused by Antigravity's teamwork rows; an ACP member taken for a pane member on retry; panes shrunk when the dashboard is opened from a phone; an ACP member's queue filling up with old messages and blocking new ones.
 
 ## Sub-project 3: remote web IDE
 
@@ -116,3 +145,4 @@ The sub-project 3 phases are a proposal; its spec confirms or changes them.
 - **Execution by macro tasks.** Each harness (Claude Code, Codex, Antigravity, Pi) receives a large, self-contained macro task and runs it with its own multi-agent mode (Antigravity in teamwork mode). A different harness reviews and consolidates. A Claude Code coordinator session talks to the Crew through a bridge session using cross-session messages. Defined in the sub-project 1 spec, section 8.
 - **Parallel local development**: worktrees under `<base>/.ibl-crew-worktree/<name>`, one data profile and dev port per worktree, a shared compile cache, and a machine-wide build slot. Defined in the sub-project 1 spec and documented for agents in `docs/development/parallel-local-dev.md`.
 - **Releases come only from CI.** Local installers are for testing only.
+- **pnpm 11.** Upstream's `pnpm-workspace.yaml` needs pnpm 10 or later, and CI uses pnpm 11. The machine-wide pnpm was moved to 11 on 2026-10-31.
