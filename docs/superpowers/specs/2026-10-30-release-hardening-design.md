@@ -75,8 +75,8 @@ Fix:
 ### 4.5 Release procedure
 
 1. Bump the version in `Cargo.toml` (workspace), `package.json` and `tauri.conf.json`, update `Cargo.lock`, and merge into `main`.
-2. Tag `vX.Y.Z-rc.1` and push the tag. The chain runs `create-release` (draft), `build` ×4, `server` ×4, `updater-manifest` and `publish`. The existing step already checks that the tag matches `tauri.conf.json`.
-3. Run the acceptance tests on the candidate. If they fail, fix and tag `rc.2`.
+2. Tag `vX.Y.Z-1` and push the tag. The pre-release part is numeric (`0.2.2-1`, not `0.2.2-rc.1`) because the MSI target rejects a non-numeric pre-release; if the tag push does not start `release.yml`, dispatch it with `gh workflow run release.yml -f tag=vX.Y.Z-1`. The chain runs `create-release` (draft), `build` ×4, `server` ×4, `updater-manifest` and `publish`. The existing step already checks that the tag matches `tauri.conf.json`.
+3. Run the acceptance tests on the candidate. If they fail, fix and tag `vX.Y.Z-2`.
 4. Bump to the final version, tag it, and publish curated release notes.
 
 A failed job leaves the release as a draft: fix it and re-run with `workflow_dispatch` on the same tag. A published release that turns out broken is not deleted; ship the next patch version instead, because the updater only moves forward.
