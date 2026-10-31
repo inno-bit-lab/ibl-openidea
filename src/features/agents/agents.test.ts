@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import type { AgentConfigOption, AgentEntry, AgentStatus, AgentTask } from "@/bindings";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentConfigOption, AgentEntry, AgentProvider, AgentStatus, AgentTask } from "@/bindings";
 import {
   applyCompletion,
   atEdgeLine,
@@ -32,6 +32,16 @@ import {
   type SubagentEntry,
 } from "./model";
 import { markdownHtml } from "./Markdown";
+
+const argsApi = vi.hoisted(() => ({ agentProviders: vi.fn(), agentSetArgs: vi.fn(), agentCreate: vi.fn() }));
+vi.mock("@/platform/ipc", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/platform/ipc")>();
+  return {
+    ...real,
+    isTauri: () => true,
+    commands: { ...real.commands, ...argsApi },
+  };
+});
 
 function task(id: string, status: AgentStatus, updatedMs: number): AgentTask {
   return {
@@ -290,5 +300,263 @@ describe("typed path references", () => {
     expect(resolveTyped("/r/idea", "/etc/hosts")).toBe("/etc/hosts");
     expect(resolveTyped("C:\\r\\idea", "../kalo/a.ts")).toBe("C:/r/kalo/a.ts");
     expect(resolveTyped("C:\\r", "../../x")).toBe("C:/x");
+  });
+});
+
+describe("fork agent selections and arguments", () => {
+  const argsKey = "openidea.agents.args.v1";
+  let backend: AgentProvider[];
+  const provider = (id: string, extraArgs: string[] = []): AgentProvider => ({
+    id,
+    name: id,
+    command: id,
+    extraArgs,
+    installed: true,
+    config: [],
+    commands: [],
+    source: { kind: "builtin" },
+  });
+  const preset = (id: string, agent: string) => ({
+    id,
+    name: id,
+    provider: agent,
+    model: "test-model",
+    effort: "high",
+    mode: "read-only",
+    instructions: "Run the relevant checks.",
+  });
+  const result = () => ({ status: "ok", data: backend.map((p) => ({ ...p, extraArgs: [...(p.extraArgs ?? [])] })) });
+
+  beforeEach(() => {
+    vi.resetModules();
+    localStorage.clear();
+    backend = [provider("antigravity-acp"), provider("pi-acp"), provider("codex")];
+    argsApi.agentProviders.mockReset().mockImplementation(async () => result());
+    argsApi.agentSetArgs.mockReset().mockImplementation(async (id: string, args: string[]) => {
+      backend = backend.map((p) =>
+        p.id === id ? { ...p, extraArgs: args.map((arg) => arg.trim()).filter(Boolean) } : p,
+      );
+      return result();
+    });
+    argsApi.agentCreate.mockReset();
+  });
+
+  it("maps only legacy user-selection ids and uses registry icons", async () => {
+    const { legacyAgentId, providerIcon } = await import("./model");
+    expect(["agy", "pi", "codex", "custom"].map(legacyAgentId)).toEqual([
+      "antigravity-acp",
+      "pi-acp",
+      "codex",
+      "custom",
+    ]);
+    expect(providerIcon("antigravity-acp")).toBe("agent-antigravity-acp");
+    expect(providerIcon("pi-acp")).toBe("agent-pi-acp");
+    expect(providerIcon("custom")).toBe("toolwindow-agents");
+  });
+
+  it("migrates presets, disabled ids and the selected draft once without touching prompt history", async () => {
+    localStorage.setItem("openidea.agents.presets.v1", JSON.stringify([preset("a", "agy"), preset("p", "pi")]));
+    localStorage.setItem("openidea.agents.disabled.v1", JSON.stringify(["agy", "antigravity-acp", "pi"]));
+    localStorage.setItem(
+      "openidea.agents.draft.v2",
+      JSON.stringify({
+        provider: "pi",
+        presetId: "p",
+        config: { model: "saved" },
+        isolation: "local",
+        base: null,
+        projectRoot: "/member",
+      }),
+    );
+    localStorage.setItem("openidea.agents.history.v1", JSON.stringify(["ask agy about pi"]));
+    const saved = vi.spyOn(Storage.prototype, "setItem");
+    const { useAgents, applyPreset } = await import("./store");
+    expect(useAgents.getState().presets.map((p) => p.provider)).toEqual(["antigravity-acp", "pi-acp"]);
+    expect(useAgents.getState().disabledProviders).toEqual(["antigravity-acp", "pi-acp"]);
+    expect(useAgents.getState().draft).toMatchObject({ provider: "pi-acp", presetId: "p", projectRoot: "/member" });
+    expect(useAgents.getState().history).toEqual(["ask agy about pi"]);
+    expect(saved).toHaveBeenCalledTimes(3);
+    saved.mockClear();
+    vi.resetModules();
+    await import("./store");
+    expect(saved).not.toHaveBeenCalled();
+    saved.mockRestore();
+    applyPreset("a");
+    expect(useAgents.getState().draft).toMatchObject({
+      provider: "antigravity-acp",
+      presetId: "a",
+      projectRoot: "/member",
+    });
+  });
+
+  it("parses quoted arguments while preserving Windows paths and formats them losslessly", async () => {
+    const { parseCliArgs, formatCliArgs, presetConfigFor, withInjectedInstructions } = await import("./store");
+    expect(parseCliArgs(`  --model test --prompt "hello world" 'single arg' `)).toEqual([
+      "--model",
+      "test",
+      "--prompt",
+      "hello world",
+      "single arg",
+    ]);
+    expect(parseCliArgs(String.raw`--config "C:\Users\Innotech\cfg.toml" --flag "say \"hi\""`)).toEqual([
+      "--config",
+      String.raw`C:\Users\Innotech\cfg.toml`,
+      "--flag",
+      'say "hi"',
+    ]);
+    expect(formatCliArgs(["--model", "two words"])).toBe('--model "two words"');
+    const args = [
+      "--flag",
+      "two words",
+      'say "hi"',
+      "don't",
+      "",
+      "C:\\Users\\Name With Spaces\\",
+      String.raw`\\server\share\folder`,
+      String.raw`a\b'c"d`,
+    ];
+    expect(parseCliArgs(formatCliArgs(args))).toEqual(args);
+    expect(parseCliArgs("\"\" ''")).toEqual(["", ""]);
+    expect(presetConfigFor({ model: "m", effort: "xhigh", mode: "read-only" })).toEqual({
+      model: "m",
+      thought_level: "xhigh",
+      mode: "read-only",
+    });
+    expect(withInjectedInstructions("Fix bug", "")).toBe("Fix bug");
+    expect(withInjectedInstructions("Fix bug", "  Run tests.  ")).toBe("Run tests.\n\nFix bug");
+  });
+
+  it("imports old arguments once and reads the server's returned values", async () => {
+    localStorage.setItem(argsKey, JSON.stringify({ agy: '--model "two words"', pi: "--fast" }));
+    const { refreshProviders, useAgents } = await import("./store");
+    await refreshProviders();
+    expect(argsApi.agentSetArgs.mock.calls).toEqual([
+      ["antigravity-acp", ["--model", "two words"]],
+      ["pi-acp", ["--fast"]],
+    ]);
+    expect(localStorage.getItem(argsKey)).toBeNull();
+    expect(useAgents.getState().providers.find((p) => p.id === "pi-acp")?.extraArgs).toEqual(["--fast"]);
+    await refreshProviders();
+    expect(argsApi.agentSetArgs).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists import progress and keeps failed or unknown entries pending", async () => {
+    localStorage.setItem(argsKey, JSON.stringify({ agy: "--ok", pi: "--retry", missing: "--keep" }));
+    const write = argsApi.agentSetArgs.getMockImplementation()!;
+    argsApi.agentSetArgs.mockImplementation(async (id, args) => {
+      if (id === "pi-acp") throw new Error("offline");
+      return write(id, args);
+    });
+    const { refreshProviders } = await import("./store");
+    await refreshProviders();
+    expect(JSON.parse(localStorage.getItem(argsKey)!)).toEqual({ pi: "--retry", missing: "--keep" });
+    argsApi.agentSetArgs.mockImplementation(write);
+    await refreshProviders();
+    expect(JSON.parse(localStorage.getItem(argsKey)!)).toEqual({ missing: "--keep" });
+    expect(argsApi.agentSetArgs.mock.calls.filter(([id]) => id === "antigravity-acp")).toHaveLength(1);
+  });
+
+  it("keeps alias collisions and server conflicts pending without overwriting them", async () => {
+    backend[0] = provider("antigravity-acp", ["--server"]);
+    const pending = { agy: "--legacy", pi: "--one", "pi-acp": "--two" };
+    localStorage.setItem(argsKey, JSON.stringify(pending));
+    const { refreshProviders } = await import("./store");
+    await refreshProviders();
+    expect(argsApi.agentSetArgs).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(argsKey)!)).toEqual(pending);
+    expect(backend[0]!.extraArgs).toEqual(["--server"]);
+  });
+
+  it("recognizes already-persisted arguments and preserves malformed storage", async () => {
+    backend[0] = provider("antigravity-acp", ["--same"]);
+    localStorage.setItem(argsKey, JSON.stringify({ agy: "--same" }));
+    const { refreshProviders } = await import("./store");
+    await refreshProviders();
+    expect(localStorage.getItem(argsKey)).toBeNull();
+    expect(argsApi.agentSetArgs).not.toHaveBeenCalled();
+    localStorage.setItem(argsKey, "{invalid");
+    await refreshProviders();
+    expect(localStorage.getItem(argsKey)).toBe("{invalid");
+  });
+
+  it("lets an explicit edit resolve all aliases but leaves unrelated pending values intact", async () => {
+    localStorage.setItem(argsKey, JSON.stringify({ pi: "--one", "pi-acp": "--two", missing: "--keep" }));
+    const { setProviderArgs, refreshProviders, useAgents } = await import("./store");
+    await setProviderArgs("pi", "--chosen");
+    expect(argsApi.agentSetArgs).toHaveBeenCalledWith("pi-acp", ["--chosen"]);
+    expect(JSON.parse(localStorage.getItem(argsKey)!)).toEqual({ missing: "--keep" });
+    await refreshProviders();
+    expect(useAgents.getState().providers.find((p) => p.id === "pi-acp")?.extraArgs).toEqual(["--chosen"]);
+    expect(argsApi.agentSetArgs).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves pending args on a failed edit and allows explicit clearing without reimport", async () => {
+    localStorage.setItem(argsKey, JSON.stringify({ agy: "--legacy" }));
+    const { setProviderArgs, refreshProviders } = await import("./store");
+    argsApi.agentSetArgs.mockRejectedValueOnce(new Error("offline"));
+    await expect(setProviderArgs("antigravity-acp", "--new")).rejects.toThrow("offline");
+    expect(JSON.parse(localStorage.getItem(argsKey)!)).toEqual({ agy: "--legacy" });
+    await setProviderArgs("antigravity-acp", "");
+    expect(localStorage.getItem(argsKey)).toBeNull();
+    await refreshProviders();
+    expect(backend[0]!.extraArgs).toEqual([]);
+    expect(argsApi.agentSetArgs).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not start a disabled provider through the programmatic entry point", async () => {
+    const { useAgents, updateComposer, startTask, HOME } = await import("./store");
+    useAgents.setState({
+      providers: backend,
+      disabledProviders: ["codex"],
+      draft: { provider: "codex", config: {}, isolation: "local", base: null },
+    });
+    updateComposer(HOME, { text: "Do something" });
+    await startTask();
+    expect(argsApi.agentCreate).not.toHaveBeenCalled();
+  });
+
+  it("imports identical aliases once and lets a queued explicit edit win", async () => {
+    localStorage.setItem(argsKey, JSON.stringify({ agy: "--old", "antigravity-acp": "--old" }));
+    const write = argsApi.agentSetArgs.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    argsApi.agentSetArgs.mockImplementationOnce(async (id, args) => {
+      await gate;
+      return write(id, args);
+    });
+    const { refreshProviders, setProviderArgs, useAgents } = await import("./store");
+    const importing = refreshProviders();
+    await vi.waitFor(() => expect(argsApi.agentSetArgs).toHaveBeenCalledTimes(1));
+    const editing = setProviderArgs("antigravity-acp", "--new");
+    release();
+    await Promise.all([importing, editing]);
+    expect(argsApi.agentSetArgs.mock.calls).toEqual([
+      ["antigravity-acp", ["--old"]],
+      ["antigravity-acp", ["--new"]],
+    ]);
+    expect(localStorage.getItem(argsKey)).toBeNull();
+    expect(backend[0]!.extraArgs).toEqual(["--new"]);
+    expect(useAgents.getState().providers.find((p) => p.id === "antigravity-acp")?.extraArgs).toEqual(["--new"]);
+  });
+
+  it("preserves a missing preset provider and refuses a mismatched fallback task", async () => {
+    const { useAgents, applyPreset, updateComposer, startTask, HOME } = await import("./store");
+    useAgents.setState({ providers: [provider("codex")], presets: [preset("a", "antigravity-acp")] });
+    applyPreset("a");
+    updateComposer(HOME, { text: "Work" });
+    await startTask();
+    expect(useAgents.getState().draft).toMatchObject({ provider: "antigravity-acp", presetId: "a" });
+    expect(argsApi.agentCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not import against stale provider data when the queued refresh fails", async () => {
+    localStorage.setItem(argsKey, JSON.stringify({ agy: "--keep" }));
+    argsApi.agentProviders.mockResolvedValueOnce(result()).mockRejectedValueOnce(new Error("offline"));
+    const { refreshProviders } = await import("./store");
+    await refreshProviders();
+    expect(argsApi.agentSetArgs).not.toHaveBeenCalled();
+    expect(JSON.parse(localStorage.getItem(argsKey)!)).toEqual({ agy: "--keep" });
   });
 });

@@ -114,6 +114,7 @@ describe("agent picker", () => {
     command: p.id,
     installed: true,
     config: [],
+    extraArgs: [],
     commands: [],
     ...p,
   });

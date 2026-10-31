@@ -13,7 +13,17 @@ import { canSend, emptyDraft } from "./composerModel";
 import { ConfigPickers } from "./ConfigPickers";
 import { providerIcon } from "./model";
 import { ADD_AGENT, providerOptions as agentOptions } from "./providerOptions";
-import { HOME, NO_COMMANDS, refreshProviders, startTask, updateDraft, useAgentCommands, useAgents } from "./store";
+import {
+  HOME,
+  NO_COMMANDS,
+  applyPreset,
+  openCatalog,
+  refreshProviders,
+  startTask,
+  updateDraft,
+  useAgentCommands,
+  useAgents,
+} from "./store";
 import styles from "./Home.module.css";
 
 export function HomeEditor() {
@@ -21,6 +31,8 @@ export function HomeEditor() {
   const txTemplate = useTxTemplate();
   const draft = useAgents((s) => s.draft);
   const providers = useAgents((s) => s.providers);
+  const presets = useAgents((s) => s.presets);
+  const disabledProviders = useAgents((s) => s.disabledProviders);
   const history = useAgents((s) => s.history);
   const composer = useAgents((s) => s.composers.get(HOME)) ?? emptyDraft();
   const project = useProject((s) => s.project);
@@ -63,16 +75,46 @@ export function HomeEditor() {
     };
   }, [root, project?.workspace]);
 
-  const provider = providers.find((p) => p.id === draft.provider) ?? providers[0];
+  const provider = providers.find((p) => p.id === draft.provider);
   const probe = useProbe(provider?.installed ? provider.id : null);
   const agentCommands = useAgentCommands(provider?.id, null, provider?.commands ?? NO_COMMANDS);
-  const providerOptions: SelectOption[] = agentOptions(providers, tx, providerIcon);
+  const agents = agentOptions(
+    providers.filter((p) => !disabledProviders.includes(p.id) || p.id === provider?.id),
+    tx,
+    providerIcon,
+  );
+  const availablePresets = presets.filter((p) => !disabledProviders.includes(p.provider));
+  const providerOptions: SelectOption[] = [
+    ...agents.slice(0, -1),
+    ...(availablePresets.length ? [{ value: "__presets__", label: tx("Presets"), section: true }] : []),
+    ...availablePresets.map((preset) => ({
+      value: `preset:${preset.id}`,
+      label: preset.name,
+      icon: providerIcon(preset.provider),
+      disabled: !providers.some((p) => p.id === preset.provider && p.installed),
+      detail: providers.some((p) => p.id === preset.provider && p.installed) ? undefined : tx("Not installed"),
+    })),
+    ...(!provider && !draft.presetId && draft.provider
+      ? [{ value: draft.provider, label: draft.provider, disabled: true, detail: tx("Not installed") }]
+      : []),
+    ...agents.slice(-1),
+    { value: "__manage__", label: tx("Manage Agents…"), icon: "settings" },
+  ];
+  const selectedAgentValue =
+    draft.presetId && availablePresets.some((p) => p.id === draft.presetId)
+      ? `preset:${draft.presetId}`
+      : (provider?.id ?? draft.provider);
+  const providerDisabled = !!provider && disabledProviders.includes(provider.id);
   // Without git under the project there are no worktrees: force the local checkout.
   const isGit = project?.workspace ? repoState?.root === root && repoState.isGit : (project?.isGit ?? false);
   const isolation = isGit ? draft.isolation : "local";
   const base = draft.base ?? current;
   const canStart =
-    canSend(composer) && !!provider?.installed && !starting && (!project?.workspace || repoState?.root === root);
+    canSend(composer) &&
+    !!provider?.installed &&
+    !providerDisabled &&
+    !starting &&
+    (!project?.workspace || repoState?.root === root);
 
   const start = () => {
     if (!canStart) return;
@@ -107,11 +149,14 @@ export function HomeEditor() {
               <Select
                 variant="ghost"
                 aria-label="Agent"
-                value={provider?.id ?? null}
+                value={selectedAgentValue}
                 options={providerOptions}
-                onChange={(id) =>
-                  id === ADD_AGENT ? void executeAction("agents.addAgent") : updateDraft({ provider: id, config: {} })
-                }
+                onChange={(id) => {
+                  if (id === ADD_AGENT) void executeAction("agents.addAgent");
+                  else if (id === "__manage__") openCatalog();
+                  else if (id.startsWith("preset:")) applyPreset(id.slice("preset:".length));
+                  else updateDraft({ provider: id, presetId: null, config: {} });
+                }}
               />
               <ConfigPickers config={provider?.config ?? []} values={draft.config} onChange={setOption} />
             </>
@@ -185,6 +230,16 @@ export function HomeEditor() {
             {probe.error
               ? txTemplate(`${provider?.name ?? probe.provider} didn't start: ${probe.error}`)
               : [probe.name, probe.version, probe.protocol].filter(Boolean).join(" · ")}
+          </p>
+        )}
+        {!provider && (
+          <p className={styles.warning}>
+            <T>Not installed</T>
+          </p>
+        )}
+        {providerDisabled && (
+          <p className={styles.warning}>
+            <T>This agent is disabled. Enable it in Manage Agents.</T>
           </p>
         )}
         {(error || (provider && !provider.installed) || (provider && !provider.config.length)) && (

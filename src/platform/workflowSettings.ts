@@ -3,6 +3,7 @@
  * consume them: every field present and in range (mirrors
  * `ide-core::workflow_settings` defaults). Normalisation never throws.
  */
+import { legacyAgentId } from "@/features/agents/model";
 import { useProject } from "./project";
 import { DEFAULT_REMOTE, validateRemote, type RemoteSettings } from "./remoteSettings";
 
@@ -49,6 +50,10 @@ export interface CommitSettingsValid {
   bodyLimit: number;
   showRightMargin: boolean;
   wrapAtMargin: boolean;
+  suggestAgent: string;
+  suggestModel: string;
+  suggestThinking: string;
+  suggestRules: string;
 }
 
 export interface VcsSettingsValid {
@@ -213,6 +218,10 @@ export const DEFAULT_WORKFLOW: WorkflowSettings = {
       bodyLimit: 72,
       showRightMargin: true,
       wrapAtMargin: false,
+      suggestAgent: "",
+      suggestModel: "",
+      suggestThinking: "",
+      suggestRules: "",
     },
     confirmation: {
       onCreate: "ask",
@@ -339,6 +348,10 @@ export function validateVcs(raw: unknown): VcsSettingsValid {
       bodyLimit: num(c.bodyLimit, d.commit.bodyLimit, L.messageLimit, true),
       showRightMargin: bool(c.showRightMargin, d.commit.showRightMargin),
       wrapAtMargin: bool(c.wrapAtMargin, d.commit.wrapAtMargin),
+      suggestAgent: legacyAgentId(text(c.suggestAgent, d.commit.suggestAgent).trim()),
+      suggestModel: text(c.suggestModel, d.commit.suggestModel).trim(),
+      suggestThinking: text(c.suggestThinking, d.commit.suggestThinking).trim(),
+      suggestRules: text(c.suggestRules, d.commit.suggestRules),
     },
     confirmation: {
       onCreate: oneOf(conf.onCreate, confirm, d.confirmation.onCreate),

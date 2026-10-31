@@ -5,6 +5,8 @@ import type { AgentCommand, AgentProvider } from "@/bindings";
 
 const agentCommands = vi.fn();
 const agentCreate = vi.fn();
+const agentSetArgs = vi.fn();
+const openInput = vi.fn();
 const vcsBranches = vi.fn();
 const vcsBranchInfo = vi.fn();
 
@@ -17,6 +19,7 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
       ...real.commands,
       agentCommands: (provider: string, task: string | null) => agentCommands(provider, task),
       agentCreate: (request: unknown) => agentCreate(request),
+      agentSetArgs: (provider: string, args: string[]) => agentSetArgs(provider, args),
       vcsBranchInfo: (root: string | null) => vcsBranchInfo(root),
       vcsBranches: (root: string | null) => vcsBranches(root),
     },
@@ -30,7 +33,10 @@ import { isTauri } from "@/platform/ipc";
 import { useProject } from "@/platform/project";
 import type { ProjectInfo } from "@/bindings";
 import { defaultTaskProject } from "./project";
+import { provideEditorService } from "@/workbench/contributions";
+import { CATALOG_KEY, CATALOG_KIND } from "./model";
 import { HomeEditor } from "./HomeEditor";
+import { AcpArgumentsDialog, AgentsCatalogEditor, ManagePresetsDialog } from "./AgentsCatalogEditor";
 import { HOME, updateComposer, useAgents } from "./store";
 import { emptyDraft } from "./composerModel";
 
@@ -42,6 +48,7 @@ const claude: AgentProvider = {
   installed: true,
   config: [],
   source: { kind: "builtin" },
+  extraArgs: [],
   // Offered by the agent's last session in this project.
   commands: [command("compact", "Free up context")],
 };
@@ -49,6 +56,15 @@ const claude: AgentProvider = {
 beforeEach(() => {
   vi.mocked(isTauri).mockReturnValue(true);
   useProject.setState({ project: null });
+  openInput.mockReset().mockResolvedValue(undefined);
+  provideEditorService({
+    openFile: async () => {},
+    openInput,
+    activePath: () => null,
+    activeCursor: () => null,
+    saveAll: async () => {},
+  });
+  agentSetArgs.mockReset().mockResolvedValue({ status: "ok", data: [claude] });
   vcsBranches.mockReset().mockResolvedValue({ status: "ok", data: [] });
   vcsBranchInfo
     .mockReset()
@@ -59,6 +75,8 @@ beforeEach(() => {
   agentCreate.mockReset().mockResolvedValue({ status: "error", error: { kind: "invalid", message: "stop here" } });
   useAgents.setState({
     providers: [claude],
+    presets: [],
+    disabledProviders: [],
     draft: { provider: "claude", config: {}, isolation: "local", base: null },
   });
   updateComposer(HOME, emptyDraft());
@@ -155,5 +173,143 @@ describe("workspace task project", () => {
     expect(vcsBranchInfo).toHaveBeenLastCalledWith("/project-a");
     expect(vcsBranches).toHaveBeenLastCalledWith("/project-a");
     await vi.dynamicImportSettled();
+  });
+});
+
+describe("agent preferences and presets", () => {
+  const italianPreset = {
+    id: "italian",
+    name: "Italian",
+    provider: "claude",
+    model: "",
+    effort: "",
+    mode: "",
+    instructions: "  Always reply in Italian.  ",
+  };
+
+  it("sends a selected preset's instructions separately from the user's prompt", async () => {
+    agentCommands.mockResolvedValue({ status: "ok", data: [] });
+    useAgents.setState({ presets: [italianPreset] });
+    render(<HomeEditor />);
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+    fireEvent.click(screen.getByRole("option", { name: "Italian" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Fix the login bug" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await waitFor(() => expect(agentCreate).toHaveBeenCalledOnce());
+    expect(agentCreate.mock.calls[0]![0]).toMatchObject({
+      provider: "claude",
+      instructions: "Always reply in Italian.",
+      prompt: { text: "Fix the login bug" },
+    });
+  });
+
+  it("opens the slimmed Agents tab from the picker and keeps the registry link", async () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    agentCommands.mockResolvedValue({ status: "ok", data: [] });
+    const home = render(<HomeEditor />);
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+    fireEvent.click(screen.getByRole("option", { name: "Manage Agents…" }));
+    expect(openInput).toHaveBeenCalledWith(
+      { kind: CATALOG_KIND, key: CATALOG_KEY, data: { openPresets: false } },
+      { focus: true },
+    );
+    home.unmount();
+    render(<AgentsCatalogEditor input={openInput.mock.calls[0]![0]} />);
+    expect(screen.getByRole("checkbox", { name: "Enable Claude Code" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Edit arguments for Claude Code" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More agents…" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Enable Claude Code" }));
+    expect(useAgents.getState().disabledProviders).toEqual(["claude"]);
+  });
+
+  it("cannot start a disabled agent retained in the draft", () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    agentCommands.mockResolvedValue({ status: "ok", data: [] });
+    useAgents.setState({ disabledProviders: ["claude"] });
+    render(<HomeEditor />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Fix a bug" } });
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    expect(agentCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not display a fallback agent when the saved provider is absent", () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    useAgents.setState({ draft: { ...useAgents.getState().draft, provider: "antigravity-acp", presetId: null } });
+    render(<HomeEditor />);
+    expect(screen.getByRole("button", { name: "Agent" })).toHaveTextContent("antigravity-acp");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Fix a bug" } });
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    expect(agentCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not substitute another provider for a preset whose agent is missing", () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    const preset = { ...italianPreset, provider: "antigravity-acp" };
+    useAgents.setState({
+      presets: [preset],
+      draft: { ...useAgents.getState().draft, presetId: preset.id, provider: preset.provider },
+    });
+    render(<HomeEditor />);
+    expect(screen.getByRole("button", { name: "Agent" })).toHaveTextContent("Italian");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Fix a bug" } });
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    expect(agentCreate).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed argument edits open and resets an abandoned edit on reopen", async () => {
+    const provider = { ...claude, extraArgs: ["--model", "two words"] };
+    const onClose = vi.fn();
+    const view = render(<AcpArgumentsDialog provider={provider} onClose={onClose} />);
+    const field = screen.getByLabelText("Enter command-line arguments");
+    expect(field).toHaveValue('--model "two words"');
+    fireEvent.change(field, { target: { value: "--unsaved" } });
+    view.rerender(<AcpArgumentsDialog provider={null} onClose={onClose} />);
+    view.rerender(<AcpArgumentsDialog provider={provider} onClose={onClose} />);
+    expect(screen.getByLabelText("Enter command-line arguments")).toHaveValue('--model "two words"');
+    fireEvent.change(screen.getByLabelText("Enter command-line arguments"), { target: { value: "--trace" } });
+    agentSetArgs.mockResolvedValueOnce({
+      status: "error",
+      error: { kind: "invalid", message: "Cannot save arguments" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cannot save arguments");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(agentSetArgs).toHaveBeenCalledWith("claude", ["--trace"]);
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  });
+
+  it("duplicates presets with distinct identities and discards cancelled edits", () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    useAgents.setState({ presets: [italianPreset] });
+    const view = render(<ManagePresetsDialog open onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Duplicate Preset" }));
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    const saved = useAgents.getState().presets;
+    expect(saved).toHaveLength(2);
+    expect(new Set(saved.map((p) => p.id)).size).toBe(2);
+    expect(saved[1]?.instructions).toBe(italianPreset.instructions);
+    view.rerender(<ManagePresetsDialog open={false} onClose={() => {}} />);
+    view.rerender(<ManagePresetsDialog open onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Unsaved name" } });
+    view.rerender(<ManagePresetsDialog open={false} onClose={() => {}} />);
+    view.rerender(<ManagePresetsDialog open onClose={() => {}} />);
+    expect(screen.getByLabelText("Name")).toHaveValue("Italian");
+  });
+
+  it("reopens Manage Presets only for a new catalog request", () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    useAgents.setState({ presets: [italianPreset] });
+    const data = { openPresets: true };
+    const view = render(<AgentsCatalogEditor input={{ data }} />);
+    expect(screen.getByRole("dialog", { name: "Manage Presets" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.change(screen.getByLabelText("Search agents"), { target: { value: "claude" } });
+    expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
+    view.rerender(<AgentsCatalogEditor input={{ data: { openPresets: true } }} />);
+    expect(screen.getByRole("dialog", { name: "Manage Presets" })).toBeInTheDocument();
   });
 });

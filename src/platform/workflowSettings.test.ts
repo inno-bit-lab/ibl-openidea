@@ -32,6 +32,36 @@ describe("validateWorkflow", () => {
       ["x_", "Again"],
     ]);
   });
+  it.each([
+    ["agy", "antigravity-acp"],
+    ["pi", "pi-acp"],
+    ["codex", "codex"],
+    ["my-agent", "my-agent"],
+  ])("normalizes the commit-suggestion agent %s to %s", (stored, expected) => {
+    const v = validateWorkflow({
+      vcs: {
+        commit: {
+          suggestAgent: ` ${stored} `,
+          suggestModel: " native-model ",
+          suggestThinking: " high ",
+          suggestRules: "  Keep the ticket id.\nUse English.  ",
+        },
+      },
+    });
+    expect(v.vcs.commit).toMatchObject({
+      suggestAgent: expected,
+      suggestModel: "native-model",
+      suggestThinking: "high",
+      suggestRules: "  Keep the ticket id.\nUse English.  ",
+    });
+  });
+
+  it("defaults malformed commit-suggestion settings to empty strings", () => {
+    const v = validateWorkflow({
+      vcs: { commit: { suggestAgent: 42, suggestModel: null, suggestThinking: {}, suggestRules: false } },
+    });
+    expect(v.vcs.commit).toMatchObject({ suggestAgent: "", suggestModel: "", suggestThinking: "", suggestRules: "" });
+  });
 });
 
 describe("splitCommandLine", () => {
