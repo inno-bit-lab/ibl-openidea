@@ -977,12 +977,16 @@ async fn codex_native_launch_puts_extra_args_after_app_server() {
     assert_eq!(spec.driver, crate::provider::Driver::Codex);
     // Exercise connect's real process spawn with a harmless shell recorder.
     spec.command = "sh".into();
-    std::fs::write(dir.path().join("app-server"), "printf '%s\\n' \"$0\" \"$@\" > native-args.txt\n").unwrap();
+    std::fs::write(
+        dir.path().join("app-server"),
+        "printf '%s\\n' \"$0\" \"$@\" > native-args.txt\n: > native-args.done\n",
+    )
+    .unwrap();
     let peer = connect(&spec, dir.path(), Arc::new(Client::default()), Box::new(|_| {})).unwrap();
     let output = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            if let Ok(text) = std::fs::read_to_string(dir.path().join("native-args.txt")) {
-                break text;
+            if dir.path().join("native-args.done").exists() {
+                break std::fs::read_to_string(dir.path().join("native-args.txt")).unwrap();
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

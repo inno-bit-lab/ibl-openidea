@@ -1643,7 +1643,7 @@ impl Task {
 #[derive(Default)]
 struct Collector {
     text: Mutex<String>,
-    config_updates: Mutex<Vec<Value>>,
+    settings_updates: Mutex<Vec<Value>>,
 }
 
 impl Handler for Collector {
@@ -1655,10 +1655,8 @@ impl Handler for Collector {
                     self.text.lock().push_str(text);
                 }
             }
-            Some("config_option_update") => {
-                if let Some(opts) = update.get("configOptions") {
-                    self.config_updates.lock().push(opts.clone());
-                }
+            Some("config_option_update" | "current_mode_update") => {
+                self.settings_updates.lock().push(update.clone());
             }
             _ => {}
         }
@@ -1800,10 +1798,9 @@ async fn ask(
     let Some(target) = options.iter().find(|o| is_mode_option(o)).cloned() else {
         return Err(read_only("none".into()));
     };
-    if target.current.as_deref() != Some(mode.as_str()) {
-        set_option(peer, id, &mut options, &target, &mode).await?;
-        collector.merge_config(&mut options).await;
-    }
+    // Restore it explicitly even when the setup snapshot already named this mode.
+    set_option(peer, id, &mut options, &target, &mode).await?;
+    collector.merge_config(&mut options).await;
     // A setting response or notification can withdraw the mode; fail closed before prompting.
     if !options.iter().any(|o| {
         is_mode_option(o) && o.current.as_deref() == Some(mode.as_str()) && o.values.iter().any(|v| v.value == mode)
@@ -1821,8 +1818,14 @@ impl Collector {
     async fn merge_config(&self, options: &mut Vec<AgentConfigOption>) {
         // Notifications are dispatched separately and can trail the response that reports them.
         tokio::time::sleep(TURN_GRACE).await;
-        for update in self.config_updates.lock().drain(..) {
-            config::merge_update(options, &update);
+        for update in self.settings_updates.lock().drain(..) {
+            if let Some(fresh) = update.get("configOptions") {
+                config::merge_update(options, fresh);
+            } else if let Some(mode) = update.get("currentModeId").and_then(Value::as_str)
+                && let Some(option) = options.iter_mut().find(|option| is_mode_option(option))
+            {
+                option.current = Some(mode.to_owned());
+            }
         }
     }
 }

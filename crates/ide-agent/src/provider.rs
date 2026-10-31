@@ -213,10 +213,10 @@ fn write_extra_args(dir: &Path, args: &ExtraArgs) -> io::Result<()> {
 /// Persists only user arguments, so native drivers and registry metadata stay untouched.
 pub(crate) fn set_custom_args(custom_dir: &Path, id: &str, args: &[String]) -> io::Result<()> {
     let _guard = EXTRA_ARGS_LOCK.lock();
+    let mut map = read_extra_args(custom_dir)?;
     if !load(Some(custom_dir)).iter().any(|spec| spec.id == id) {
         return Err(io::Error::new(io::ErrorKind::NotFound, "unknown agent"));
     }
-    let mut map = read_extra_args(custom_dir)?;
     let before = map.clone();
     let cleaned: Vec<String> = args.iter().map(|arg| arg.trim().to_owned()).filter(|arg| !arg.is_empty()).collect();
     if cleaned.is_empty() {
@@ -862,6 +862,8 @@ mod tests {
         let before = files(dir.path());
         assert!(load(Some(dir.path())).iter().any(|s| s.id == "claude"));
         let error = set_custom_args(dir.path(), "claude", &["--x".into()]).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let error = set_custom_args(dir.path(), "unknown-provider", &[]).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert!(migrate_legacy(dir.path(), &dir.path().join("tools")).is_err());
         assert_eq!(files(dir.path()), before);

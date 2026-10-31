@@ -16,6 +16,8 @@ struct FakeAgent {
     modes: Mutex<FakeModes>,
     fail_set_mode: AtomicBool,
     drops_mode_on_set: AtomicBool,
+    notifies_mode_change_on_set: AtomicBool,
+    notifies_mode_change_after_mode_set: AtomicBool,
     cwds: Mutex<Vec<PathBuf>>,
     requests: Mutex<Vec<(String, Value)>>,
     permissions: Mutex<Vec<Value>>,
@@ -177,6 +179,18 @@ impl Handler for FakeAgent {
                     return Err((codes::INTERNAL_ERROR, "cannot set mode".into()));
                 }
                 self.calls.lock().push(format!("{method} {}", params.get("value").or(params.get("modeId")).unwrap()));
+                if is_mode && self.notifies_mode_change_after_mode_set.load(Ordering::Relaxed) {
+                    self.update(
+                        &session,
+                        json!({"sessionUpdate":"current_mode_update","currentModeId":"bypassPermissions"}),
+                    );
+                }
+                if !is_mode && self.notifies_mode_change_on_set.load(Ordering::Relaxed) {
+                    self.update(
+                        &session,
+                        json!({"sessionUpdate":"current_mode_update","currentModeId":"bypassPermissions"}),
+                    );
+                }
                 if !is_mode && self.drops_mode_on_set.load(Ordering::Relaxed) {
                     return Ok(json!({"configOptions": [{"id": "model", "category": "model", "type": "select",
                         "currentValue": "small", "options": [{"value": "big"}, {"value": "small"}]}]}));
@@ -1405,6 +1419,19 @@ async fn real_complete_is_read_only(provider: &str) {
     eprintln!("{provider} read-only completion: {result:?}");
     assert!(!sentinel.exists(), "completion wrote outside its throwaway directory");
     assert!(result.unwrap().contains("READ_ONLY_OK"));
+    let selected = mgr
+        .shared
+        .known
+        .lock()
+        .get(provider)
+        .unwrap()
+        .config
+        .iter()
+        .find(|option| is_mode_option(option))
+        .and_then(|option| option.current.clone());
+    let expected = if provider == "claude" { "default" } else { "read-only" };
+    eprintln!("{provider} selected mode: {selected:?}");
+    assert_eq!(selected.as_deref(), Some(expected));
     assert!(mgr.tasks.read().is_empty());
     assert!(!tmp.path().join("store").exists());
     mgr.shutdown();
@@ -1420,4 +1447,79 @@ async fn real_claude_complete_is_read_only() {
 #[ignore]
 async fn real_codex_complete_is_read_only() {
     real_complete_is_read_only("codex").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_sets_the_restrictive_mode_after_a_setting_changes_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default"), ("bypassPermissions", "Bypass")]));
+    agent.notifies_mode_change_on_set.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    mgr.complete(
+        "claude",
+        "Name this change",
+        &[AgentConfigChoice { id: "model".into(), value: "small".into() }],
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    let requests = agent.requests.lock();
+    let model = requests.iter().position(|(m, p)| m == "session/set_config_option" && p["value"] == "small").unwrap();
+    let mode = requests
+        .iter()
+        .position(|(m, p)| m == "session/set_mode" && p["modeId"] == "default")
+        .expect("must restore the restrictive mode after settings");
+    let prompt = requests.iter().position(|(m, _)| m == "session/prompt").unwrap();
+    assert!(model < mode && mode < prompt);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_removes_its_temporary_directory_when_launch_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwds = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let seen = cwds.clone();
+    let connector: Connector = Arc::new(move |_, cwd, _, _| {
+        seen.lock().push(cwd.into());
+        Err(std::io::Error::other("fixture launch failed"))
+    });
+    let mgr = AgentManager::with_connector(
+        AgentPaths {
+            project_root: tmp.path().into(),
+            store_dir: tmp.path().join("store"),
+            worktrees_dir: tmp.path().join("worktrees"),
+            models_file: tmp.path().join("models.json"),
+            custom_agents_dir: None,
+            home_dir: None,
+        },
+        tokio::runtime::Handle::current(),
+        connector,
+    );
+    assert!(
+        mgr.complete("claude", "question", &[], Duration::from_secs(5))
+            .await
+            .unwrap_err()
+            .message
+            .contains("fixture launch failed")
+    );
+    assert_eq!(cwds.lock().len(), 1);
+    assert!(!cwds.lock()[0].exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_a_mode_change_reported_after_selecting_read_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("default", "Default"), ("bypassPermissions", "Bypass")],
+    ));
+    agent.notifies_mode_change_after_mode_set.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    assert!(
+        mgr.complete("claude", "Name this change", &[], Duration::from_secs(5))
+            .await
+            .unwrap_err()
+            .message
+            .contains("cannot run read-only")
+    );
+    assert!(agent.prompts.lock().is_empty());
 }
