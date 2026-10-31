@@ -70,17 +70,31 @@ try {
     . (Join-Path $PSScriptRoot 'env.ps1')
     $env:CARGO_PROFILE_DEV_DEBUG = $debugInfo
     $env:IBLOPENIDEA_SEED_FROM = $SeedFrom
-    & (Join-Path $PSScriptRoot 'cargo-slot.ps1') -- cargo build -p openidea
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $overlayPath)) | Out-Null
+    $overlay = [ordered]@{
+        build = [ordered]@{ devUrl = "http://localhost:$devPort" }
+        identifier = $identifier
+        app = [ordered]@{ withGlobalTauri = $true }
+    }
+    $overlay | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $overlayPath -Encoding utf8NoBOM
+    # Match `tauri dev`'s feature set (--no-default-features) and TAURI_CONFIG env var
+    # so the post-slot `tauri dev` launch does not invalidate and recompile openidea.
+    $env:TAURI_CONFIG = $overlay | ConvertTo-Json -Depth 4 -Compress
+    try {
+        & (Join-Path $PSScriptRoot 'cargo-slot.ps1') -- cargo build -p openidea --no-default-features
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    finally {
+        Remove-Item Env:TAURI_CONFIG -ErrorAction SilentlyContinue
+    }
 
     # Re-check after compilation: another worktree may have started in the meantime.
-    $devPort = Get-FreeDevPort $repoRoot
-    [IO.Directory]::CreateDirectory((Split-Path -Parent $overlayPath)) | Out-Null
-    @{
-        identifier = $identifier
-        build = @{ devUrl = "http://localhost:$devPort" }
-        app = @{ withGlobalTauri = $true }
-    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $overlayPath -Encoding utf8NoBOM
+    $postBuildPort = Get-FreeDevPort $repoRoot
+    if ($postBuildPort -ne $devPort) {
+        $devPort = $postBuildPort
+        $overlay.build.devUrl = "http://localhost:$devPort"
+        $overlay | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $overlayPath -Encoding utf8NoBOM
+    }
     $env:OPENIDEA_DEV_PORT = [string]$devPort
     Write-Host "Starting $identifier on port $devPort outside the build slot."
     & pnpm tauri dev --config $overlayPath

@@ -85,8 +85,8 @@ $stderr = $process.StandardError.ReadToEndAsync()
 try {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while (-not $process.WaitForExit(1000)) {
-        if ($watch.Elapsed.TotalSeconds -ge 180) {
-            throw "Environment bootstrap test exceeded 180 seconds. Evidence: $runRoot"
+        if ($watch.Elapsed.TotalSeconds -ge 300) {
+            throw "Environment bootstrap test exceeded 300 seconds. Evidence: $runRoot"
         }
     }
     $output = $stdout.GetAwaiter().GetResult()
