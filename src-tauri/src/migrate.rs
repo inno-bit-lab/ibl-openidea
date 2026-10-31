@@ -62,6 +62,8 @@ pub struct Progress {
 }
 
 impl Progress {
+    // Native feedback reads phase/counters on Windows; portable migration tests also use them.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn phase(&self) -> ProgressPhase {
         match self.phase.load(Ordering::Acquire) {
             0 => ProgressPhase::Checking,
@@ -76,10 +78,12 @@ impl Progress {
         self.phase.store(phase as u8, Ordering::Release);
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn files(&self) -> u64 {
         self.files.load(Ordering::Relaxed)
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn bytes(&self) -> u64 {
         self.bytes.load(Ordering::Relaxed)
     }
@@ -200,7 +204,7 @@ pub fn seed_source(debug: bool, env_value: Option<&str>, to: &str) -> Option<Str
 /// none of them. Never panics, never changes `from`, and returns once this or
 /// another process has finished the job.
 // Retained entry point for callers that do not need bootstrap feedback.
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub fn seed_profile(bases: &[PathBuf], from: &str, to: &str) -> SeedReport {
     seed_profile_with_progress(bases, from, to, &Progress::default())
 }
