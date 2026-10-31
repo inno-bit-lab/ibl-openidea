@@ -378,10 +378,17 @@ function viewerEditorLook(): Extension {
 /**
  * Base extensions for a read-only (or editable) viewer pane. `findBar`: the
  * viewer shows the editor's find bar (FindPanel) instead of CodeMirror's panel.
+ * `firstLine`: the number shown for the pane's first line (an excerpt of a file).
  */
-export function viewerBase(opts: { readOnly: boolean; lineNumbers?: boolean; findBar?: boolean }): Extension[] {
+export function viewerBase(opts: {
+  readOnly: boolean;
+  lineNumbers?: boolean;
+  findBar?: boolean;
+  firstLine?: number;
+}): Extension[] {
+  const offset = opts.firstLine && opts.firstLine > 1 ? Math.floor(opts.firstLine) - 1 : 0;
   return [
-    opts.lineNumbers === false ? [] : lineNumbers(),
+    opts.lineNumbers === false ? [] : lineNumbers(offset > 0 ? { formatNumber: (n) => String(n + offset) } : undefined),
     viewerEditorLook(),
     highlightActiveLine(),
     opts.findBar

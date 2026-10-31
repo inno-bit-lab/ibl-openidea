@@ -38,8 +38,9 @@ import {
   showRebaseDialog,
   showWorktrees,
 } from "./gitMenuDialogs";
+import { showSelectionHistory } from "./SelectionHistory";
 import { stripSlash } from "./model";
-import { refreshNow, repoName, repoOf, useVcs } from "./store";
+import { currentRepoRoot, refreshNow, repoName, repoOf, useVcs } from "./store";
 import { tx } from "@/platform/i18n";
 
 import { addToIgnore } from "./ignore";
@@ -125,6 +126,7 @@ const OPERATIONS: MenuItem[] = [
   { kind: "action", action: "vcs.rollback" },
   { kind: "separator" },
   { kind: "action", action: "vcs.showHistory" },
+  { kind: "action", action: "vcs.showHistoryForSelection" },
   { kind: "action", action: "vcs.annotate" },
   { kind: "action", action: "vcs.showDiff" },
   { kind: "separator" },
@@ -366,6 +368,40 @@ export function registerVcsActions(): () => void {
       },
     },
     {
+      id: "vcs.showCurrentRevision",
+      title: "Show Current Revision",
+      category: "Git",
+      icon: "commit",
+      when: VCS,
+      run: ({ arg }) => {
+        // The HEAD of the file's repository (the selected one without a file).
+        const path = contextPaths(arg)[0];
+        const repo = (path ? repoOf(path) : null) ?? currentRepoRoot();
+        const { branch, heads } = useVcs.getState();
+        const head = (repo ? heads[repo] : undefined) ?? branch;
+        if (!head) return;
+        const name = head.head ?? "HEAD";
+        const headLabel = head.headCommit ? `${name} (${head.headCommit.slice(0, 8)})` : name;
+        const commit = head.headCommit;
+        notifications().notify({
+          group: "vcs",
+          level: "info",
+          title: tx`Current revision: ${headLabel}`,
+          actions: commit
+            ? [
+                {
+                  label: "Show in Git Log",
+                  run: () => {
+                    showGitWindow();
+                    void revealCommit(commit, repo);
+                  },
+                },
+              ]
+            : undefined,
+        });
+      },
+    },
+    {
       id: "vcs.nextChange",
       title: "Next Change",
       category: "Git",
@@ -474,6 +510,15 @@ export function registerVcsActions(): () => void {
         openLogTab("history", path);
         showGitWindow();
       },
+    },
+    {
+      id: "vcs.showHistoryForSelection",
+      title: "Show History for Selection…",
+      category: "Git",
+      icon: "history",
+      when: VCS,
+      keywords: ["history", "selection", "line history"],
+      run: ({ arg }) => showSelectionHistory(arg),
     },
     {
       id: "vcs.showCommit",
