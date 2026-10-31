@@ -259,11 +259,7 @@ fn hex_color(hex: &str) -> Option<Color> {
 /// the same directory. Keeping dev builds in `webview-dev` avoids colliding
 /// with a running release build.
 fn default_webview_data_dir(base: Option<PathBuf>, identifier: &str, debug_build: bool) -> Option<PathBuf> {
-    if debug_build {
-        base.map(|d| d.join(identifier).join("webview-dev"))
-    } else {
-        None
-    }
+    if debug_build { base.map(|d| d.join(identifier).join("webview-dev")) } else { None }
 }
 
 /// Process-isolated WebView user-data directory used when the primary directory
@@ -325,7 +321,8 @@ fn build_webview_window(
     match attempt(primary.clone()) {
         Ok(window) => Ok(window),
         Err(first_err) => {
-            let fallback = fallback_webview_data_dir(dirs::data_local_dir(), &app.config().identifier, std::process::id());
+            let fallback =
+                fallback_webview_data_dir(dirs::data_local_dir(), &app.config().identifier, std::process::id());
             if primary.as_ref() == Some(&fallback) {
                 return Err(first_err);
             }
@@ -358,8 +355,8 @@ fn build_project_window(app: &AppHandle, mut config: WindowConfig) -> IdeResult<
     } else if let Some(a) = &appearance {
         config.background_color = Some(frame_color(a, false));
     }
-    let window =
-        build_webview_window(app, &config, None).map_err(|e| IdeError::internal(format!("cannot create window: {e}")))?;
+    let window = build_webview_window(app, &config, None)
+        .map_err(|e| IdeError::internal(format!("cannot create window: {e}")))?;
     apply_zoom(app, &window);
     // "Sync with OS" needs the OS mode, known once the window exists.
     if let Some(a) = appearance.filter(|a| plugin_frame.is_none() && (a.sync_with_os || a.theme == "system"))

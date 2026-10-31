@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 const host = process.env.TAURI_DEV_HOST;
+const port = Number(process.env.OPENIDEA_DEV_PORT ?? 1420);
 
 export default defineConfig(() => ({
   plugins: [react()],
@@ -15,13 +16,15 @@ export default defineConfig(() => ({
       { find: /^@tauri-apps\/api\/core$/, replacement: fileURLToPath(new URL("./src/platform/tauriCore.ts", import.meta.url)) },
     ],
   },
-  // Tauri: keep Rust errors visible, fixed port, don't watch the backend.
+  // Tauri: keep Rust errors visible, require the selected port, don't watch the backend.
   clearScreen: false,
   server: {
-    port: 1420,
+    port,
     strictPort: true,
     host: host || false,
-    hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
+    hmr: host || process.env.OPENIDEA_DEV_PORT
+      ? { protocol: "ws", host: host || "localhost", port: port + 1 }
+      : undefined,
     watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/target/**"] },
   },
   build: {
