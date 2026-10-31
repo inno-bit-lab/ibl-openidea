@@ -67,9 +67,11 @@ export function findInLines(
     while ((found = re.exec(text))) {
       const start = found.index;
       const end = start + found[0].length;
-      // Empty matches (e.g. `x*`) would otherwise loop forever.
+      // Empty matches (e.g. `x*`) would otherwise loop forever. Step a whole code
+      // point: with the `u` flag, an index inside a surrogate pair matches at the pair again.
       if (end === start) {
-        re.lastIndex = start + 1;
+        if (start >= text.length) break;
+        re.lastIndex = start + (text.codePointAt(start)! > 0xffff ? 2 : 1);
         continue;
       }
       if (options.wholeWord && !wholeWord(text, start, end)) continue;
