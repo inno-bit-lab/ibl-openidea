@@ -1270,6 +1270,26 @@ fn restrictive_mode(options: &[AgentConfigOption]) -> Result<String, String> {
     Err(opt.values.iter().map(|v| v.value.as_str()).collect::<Vec<_>>().join(", "))
 }
 
+/// Sets `target` to `value` in session `id` and records it in `options`.
+async fn set_option(
+    peer: &Peer,
+    id: &str,
+    options: &mut Vec<AgentConfigOption>,
+    target: &AgentConfigOption,
+    value: &str,
+) -> Result<(), RpcError> {
+    let (method, mut params) = config::set_request(target, value);
+    params["sessionId"] = json!(id);
+    let reply: Value = peer.request(method, params, None).await?;
+    if let Some(fresh) = reply.get("configOptions") {
+        config::merge_update(options, fresh);
+    }
+    if let Some(o) = options.iter_mut().find(|o| o.id == target.id) {
+        o.current = Some(value.to_owned());
+    }
+    Ok(())
+}
+
 /// One question in a new session (`initialize`, `session/new`, mandatory restrictive mode +
 /// optional `session/set_*`, `session/prompt`).
 async fn ask(
@@ -1301,12 +1321,14 @@ async fn ask(
     for update in collector.config_updates.lock().drain(..) {
         config::merge_update(&mut options, &update);
     }
-    let chosen_mode = restrictive_mode(&options).map_err(|modes| {
+    let read_only = |modes: String| {
         AskError::ReadOnly(format!(
             "{} cannot run read-only (modes: {modes}). Choose Claude, Codex or Antigravity for commit suggestions.",
             spec.name
         ))
-    })?;
+    };
+    // Checked before any setting is sent, so an agent without a restrictive mode gets none.
+    let chosen_mode = restrictive_mode(&options).map_err(read_only)?;
     tracing::info!(
         agent = %spec.id,
         mode = %chosen_mode,
@@ -1314,59 +1336,48 @@ async fn ask(
         "running read-only completion"
     );
     let has_reported = !options.is_empty();
-    let mut effective_choices: Vec<(bool, AgentConfigChoice)> = Vec::new();
     for choice in config {
-        let matches = |o: &AgentConfigOption| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str());
-        let is_caller_mode = choice.id == "mode"
-            || options.iter().any(|o| matches(o) && is_mode_option(o))
-            || fallback_config.iter().any(|o| matches(o) && is_mode_option(o));
-        if !is_caller_mode {
-            effective_choices.push((false, choice.clone()));
-        }
-    }
-    // The mode goes last, so no other setting the agent applies after it can change it.
-    effective_choices.push((true, AgentConfigChoice { id: "mode".into(), value: chosen_mode }));
-    for (is_mode, choice) in &effective_choices {
         let value = choice.value.trim();
         if value.is_empty() {
             continue;
         }
         let matches = |o: &AgentConfigOption| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str());
-        let target = if *is_mode {
-            options.iter().find(|o| is_mode_option(o)).cloned().expect("restrictive_mode verified mode option")
-        } else {
-            options
-                .iter()
-                .find(|o| matches(o))
-                .cloned()
-                .or_else(|| fallback_config.iter().find(|o| matches(o)).cloned())
-                .unwrap_or_else(|| AgentConfigOption {
-                    id: choice.id.clone(),
-                    name: choice.id.clone(),
-                    description: None,
-                    category: Some(choice.id.clone()),
-                    current: None,
-                    values: Vec::new(),
-                    via: AgentConfigVia::Option,
-                })
-        };
+        // The caller cannot choose the mode.
+        if choice.id == "mode"
+            || options.iter().any(|o| matches(o) && is_mode_option(o))
+            || fallback_config.iter().any(|o| matches(o) && is_mode_option(o))
+        {
+            continue;
+        }
+        let target = options
+            .iter()
+            .find(|o| matches(o))
+            .cloned()
+            .or_else(|| fallback_config.iter().find(|o| matches(o)).cloned())
+            .unwrap_or_else(|| AgentConfigOption {
+                id: choice.id.clone(),
+                name: choice.id.clone(),
+                description: None,
+                category: Some(choice.id.clone()),
+                current: None,
+                values: Vec::new(),
+                via: AgentConfigVia::Option,
+            });
         if has_reported && target.current.as_deref() == Some(value) {
             continue;
         }
-        let (method, mut params) = config::set_request(&target, value);
-        params["sessionId"] = json!(id);
-        match peer.request::<_, Value>(method, params, None).await {
-            Ok(reply) => {
-                if let Some(fresh) = reply.get("configOptions") {
-                    config::merge_update(&mut options, fresh);
-                }
-                if let Some(o) = options.iter_mut().find(|o| o.id == target.id) {
-                    o.current = Some(value.to_owned());
-                }
-            }
-            Err(e) if *is_mode => return Err(AskError::Rpc(e)),
-            Err(e) => tracing::warn!("complete: setting {} to {} failed: {e}", target.id, value),
+        if let Err(e) = set_option(peer, id, &mut options, &target, value).await {
+            tracing::warn!("complete: setting {} to {} failed: {e}", target.id, value);
         }
+    }
+    // The mode goes last, so no other setting can change it afterwards. It is picked again because
+    // a reply to an earlier setting can replace the modes the agent reports.
+    let mode = restrictive_mode(&options).map_err(read_only)?;
+    let Some(target) = options.iter().find(|o| is_mode_option(o)).cloned() else {
+        return Err(read_only("none".into()));
+    };
+    if target.current.as_deref() != Some(mode.as_str()) {
+        set_option(peer, id, &mut options, &target, &mode).await?;
     }
     let reply: Value = peer
         .request("session/prompt", json!({ "sessionId": id, "prompt": [{ "type": "text", "text": prompt }] }), None)
