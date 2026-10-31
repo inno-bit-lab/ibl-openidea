@@ -56,10 +56,11 @@ git rm -r --cached -q . ; git reset -q --hard          # rewrite every tracked f
 git ls-files --eol | Select-String -NotMatch '^i/crlf' | Select-String 'w/crlf' | Measure-Object   # Count must be 0
 $wtHooks = Join-Path (git rev-parse --absolute-git-dir) 'hooks'
 git config --worktree core.hooksPath $wtHooks
-pnpm install --frozen-lockfile                           # simple-git-hooks postinstall writes pre-commit
+pnpm --version                                           # must be 11.x, as in CI (ci.yml:28); pnpm 9 rejects upstream's pnpm-workspace.yaml
+pnpm install --frozen-lockfile --config.confirmModulesPurge=false   # simple-git-hooks postinstall writes pre-commit; the flag replaces node_modules left by pnpm 9
 ```
 
-Gate: `Test-Path "$wtHooks\pre-commit"` is true and `Test-Path "$(git rev-parse --git-common-dir)\hooks\pre-commit"` is false. If simple-git-hooks wrote into the common `hooks` dir instead, move the file into `$wtHooks`. Report where it landed; MT-3 relies on this result.
+Gate: `Test-Path "$wtHooks\pre-commit"` is true and `Test-Path "$(git rev-parse --git-common-dir)\hooks\pre-commit"` is false. If simple-git-hooks wrote into the common `hooks` dir instead, move the file into `$wtHooks`. Repeat this check after every later `pnpm install`: a `pre-commit` in the common dir runs `pnpm lint-staged` in every fork-line worktree, where `lint-staged` does not exist, and breaks their commits (it happened on 2026-10-31 at 05:02). Report where it landed; MT-3 relies on this result.
 
 ### 3.2 Identity and startup (`src-tauri/src/lib.rs`)
 
