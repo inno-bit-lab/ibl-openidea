@@ -56,6 +56,10 @@ Shared-file rules are in port map section 4: `src/bindings.ts` is always regener
 
 Tags follow the owner's rule: the coordinator pushes candidates itself, and pushes the final tag only when C1 to C6 pass.
 
+## 5a. PATH budget tranche (added 2026-10-31)
+
+Measured in MT-2: an app started with a normal user `PATH` of 4,586 characters runs with 8,296, because `ide_tools::extend_process_path` (src-tauri/src/lib.rs:69, crates/ide-tools/src/lib.rs:158-169) prepends every managed-tools bin directory, existing or not. Above cmd.exe's 8,191-character limit, `.cmd` shims (native Codex via npm, npx agents, npm language servers) cannot find `node`. This blocks C4 on real Windows machines, so a separate tranche fixes it before v0.3.0: design by `rev-claude`, implementation by `dev-codex` after MT-2, review by `rev-claude`. It is a candidate upstream contribution.
+
 ## 6. Risks
 
 Port map section 5: the agents rebuild on #151, the two multi-repo models, identity and dev-session ordering (seeding after `dev::configure`, and the `EXCLUDED` list against upstream's new profile contents such as `git-credentials.json`), Italian catalog volume, and CI gates that are new to fork code.
