@@ -2,7 +2,7 @@
 //!
 //! Up to v0.2.2 the fork used upstream's bundle identifier, so its settings,
 //! tools and WebView data live under `ai.l0ng.openidea`. On the first start
-//! under the new identifier, [`seed_profile`] copies those directories (never
+//! under the new identifier, [`seed_profile_with_progress`] copies those directories (never
 //! moves them: an installed upstream OpenIDEA keeps using its own) before
 //! anything reads or creates the new ones.
 //!
@@ -188,7 +188,7 @@ impl SeedReport {
 }
 
 /// The directories that hold a profile, config base first. On Windows the
-/// first two are the same; [`seed_profile`] deduplicates them.
+/// first two are the same; [`seed_profile_with_progress`] deduplicates them.
 pub fn profile_bases() -> Vec<PathBuf> {
     [dirs::config_dir(), dirs::data_dir(), dirs::data_local_dir()].into_iter().flatten().collect()
 }
@@ -203,13 +203,7 @@ pub fn seed_source(debug: bool, env_value: Option<&str>, to: &str) -> Option<Str
 /// Copies the `from` profile into `to` in every base when `to` exists in
 /// none of them. Never panics, never changes `from`, and returns once this or
 /// another process has finished the job.
-// Retained entry point for callers that do not need bootstrap feedback.
-#[allow(dead_code)]
-pub fn seed_profile(bases: &[PathBuf], from: &str, to: &str) -> SeedReport {
-    seed_profile_with_progress(bases, from, to, &Progress::default())
-}
-
-/// The same migration, with an in-memory progress record for bootstrap feedback.
+/// Publishes an in-memory progress record for bootstrap feedback.
 pub fn seed_profile_with_progress(bases: &[PathBuf], from: &str, to: &str, progress: &Progress) -> SeedReport {
     seed_run(bases, from, to, progress, &mut |_| Ok(()), RENAME_DELAY)
 }
@@ -1197,7 +1191,7 @@ mod tests {
             assert_eq!(fs::metadata(&source).unwrap().permissions().mode() & 0o777, 0o600);
         }
         let sources = f.sources();
-        let report = seed_profile(&f.bases(), FROM, TO);
+        let report = seed_profile_with_progress(&f.bases(), FROM, TO, &Progress::default());
         assert_eq!(report.outcome, SeedOutcome::Seeded);
         for base in f.bases() {
             let copied = base.join(TO).join("git-credentials.json");
@@ -1481,6 +1475,37 @@ mod tests {
         for base in f.bases() {
             assert_eq!(target(&base), expected(&base));
         }
+    }
+
+    #[test]
+    fn not_needed_migration_interrupts_fresh_feedback_before_its_initial_delay() {
+        use crate::migration_feedback;
+        use std::sync::Arc;
+        use std::sync::atomic::Ordering;
+        use std::time::Instant;
+
+        let f = Fixture::new();
+        assert_eq!(seed(&f.bases()).outcome, SeedOutcome::Seeded);
+        let progress = Arc::new(Progress::default());
+        assert_eq!(progress.phase(), ProgressPhase::Checking);
+        let started = Instant::now();
+        let feedback = migration_feedback::start(progress.clone());
+        let ended = feedback.worker_ended_flag();
+        let report = seed_profile_with_progress(&f.bases(), FROM, TO, &progress);
+        feedback.finish();
+        let elapsed = started.elapsed();
+        eprintln!(
+            "FOLLOWUP_B1 outcome={:?} elapsed={elapsed:?} phase={:?} shown_ms={}",
+            report.outcome,
+            progress.phase(),
+            progress.dialog_shown_ms()
+        );
+        assert_eq!(report.outcome, SeedOutcome::NotNeeded);
+        assert_eq!(progress.phase(), ProgressPhase::Done);
+        assert!(elapsed < Duration::from_millis(50), "fresh feedback waited for its anti-flash delay: {elapsed:?}");
+        assert!(ended.load(Ordering::Acquire));
+        assert_eq!(progress.dialog_shown_ms(), 0);
+        assert!(progress.feedback_error().is_none());
     }
 
     struct ProgressCopyGate {

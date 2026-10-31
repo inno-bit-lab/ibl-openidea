@@ -17,13 +17,13 @@ impl ProcessTree {
         Ok(Self)
     }
     pub fn kill(&self) {}
+    pub fn kill_after_exit(&self) {}
 }
 
 #[cfg(windows)]
 mod windows {
     use std::io;
     use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
-    use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
     use std::time::Duration;
     use windows_sys::Win32::Foundation::{
@@ -42,6 +42,11 @@ mod windows {
         PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, ResumeThread, THREAD_SUSPEND_RESUME, TerminateProcess,
         WaitForSingleObject,
     };
+
+    #[cfg(test)]
+    thread_local! {
+        static TASKKILL_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
 
     /// Owns the job containing one agent and its descendants. Closing its last job
     /// handle also tears the tree down on IDE exit. Explicit breakaway is permitted.
@@ -62,8 +67,9 @@ mod windows {
 
     impl ProcessTree {
         /// Call after `process::prepare`: no child code runs before job assignment.
+        /// Reuses prepare's complete flag mask because creation_flags replaces it.
         pub fn contain(command: &mut Command) {
-            command.creation_flags(crate::process::CREATE_NO_WINDOW | CREATE_SUSPENDED);
+            crate::process::set_creation_flags(command, crate::process::PREPARE_CREATION_FLAGS | CREATE_SUSPENDED);
         }
 
         /// Adopts a live child spawned with `contain`. Its handle stays borrowed
@@ -114,6 +120,8 @@ mod windows {
             let system = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
             let mut command = Command::new(std::path::PathBuf::from(system).join("System32/taskkill.exe"));
             crate::process::prepare(&mut command);
+            #[cfg(test)]
+            TASKKILL_CALLS.with(|calls| calls.set(calls.get() + 1));
             let result = command
                 .args(["/T", "/F", "/PID", &self.pid.to_string()])
                 .stdin(Stdio::null())
@@ -122,6 +130,19 @@ mod windows {
                 .status();
             if !matches!(result, Ok(status) if status.success()) {
                 tracing::warn!(pid = self.pid, ?result, "agent taskkill fallback failed");
+            }
+        }
+
+        /// After the leader exits, only a job can identify and terminate its descendants.
+        /// Async callers must await this blocking job termination before marking closed.
+        pub fn kill_after_exit(&self) {
+            if self.job.is_some() {
+                self.kill();
+            } else {
+                static NOTICE: std::sync::Once = std::sync::Once::new();
+                NOTICE.call_once(|| {
+                    tracing::info!("agent descendants of an exited leader are not tracked without a job");
+                });
             }
         }
     }
@@ -337,11 +358,11 @@ mod windows {
         }
 
         #[derive(Clone, Default)]
-        struct Warnings(Arc<Mutex<Vec<String>>>);
+        struct Warnings(Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>);
 
         impl tracing::Subscriber for Warnings {
             fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
-                *metadata.level() == tracing::Level::WARN
+                matches!(*metadata.level(), tracing::Level::WARN | tracing::Level::INFO)
             }
             fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
                 tracing::span::Id::from_u64(1)
@@ -359,7 +380,11 @@ mod windows {
                 }
                 let mut message = Message(String::new());
                 event.record(&mut message);
-                self.0.lock().unwrap().push(message.0);
+                if *event.metadata().level() == tracing::Level::WARN {
+                    self.0.lock().unwrap().push(message.0);
+                } else {
+                    self.1.lock().unwrap().push(message.0);
+                }
             }
             fn enter(&self, _: &tracing::span::Id) {}
             fn exit(&self, _: &tracing::span::Id) {}
@@ -382,6 +407,50 @@ mod windows {
             assert!(wait_for_pid_exit(pid, Duration::from_secs(5)).unwrap(), "grandchild survived fallback");
             fixture.child.wait().unwrap();
             std::fs::remove_dir_all(fixture.cwd.path()).expect("cwd remains locked after fallback");
+        }
+
+        #[test]
+        fn contain_keeps_the_flags_applied_by_prepare() {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            crate::process::take_creation_flags_for_test();
+            crate::process::prepare(&mut command);
+            let prepared = crate::process::take_creation_flags_for_test().expect("prepare did not apply flags");
+            ProcessTree::contain(&mut command);
+            let contained = crate::process::take_creation_flags_for_test().expect("contain did not apply flags");
+            eprintln!("FOLLOWUP_A2 prepared={prepared:#010x} contained={contained:#010x}");
+            assert_ne!(prepared & crate::process::CREATE_NO_WINDOW, 0);
+            assert_eq!(contained & prepared, prepared, "contain dropped a prepare flag");
+            assert_ne!(contained & CREATE_SUSPENDED, 0);
+        }
+
+        #[test]
+        fn assignment_failure_natural_exit_skips_taskkill_without_warning() {
+            let mut fixture = OwnedFixture::suspended();
+            let tree = ProcessTree::adopt_with(&fixture.child, Faults { assignment: true, zero_resumes: false })
+                .expect("assignment failure must fail open");
+            let grandchild = fixture.ready();
+            writeln!(fixture.child.stdin.as_mut().unwrap(), "exit").unwrap();
+            fixture.child.wait().unwrap();
+            let logs = Warnings::default();
+            let before = TASKKILL_CALLS.with(|calls| calls.get());
+            tracing::subscriber::with_default(logs.clone(), || {
+                tree.kill_after_exit();
+                tree.kill_after_exit();
+            });
+            let calls = TASKKILL_CALLS.with(|calls| calls.get()) - before;
+            let warnings = logs.0.lock().unwrap().clone();
+            let info = logs.1.lock().unwrap().clone();
+            let descendant_survived = !wait_for_pid_exit(grandchild, Duration::from_millis(100)).unwrap();
+            eprintln!(
+                "FOLLOWUP_A1 taskkill_calls={calls} warnings={warnings:?} info={info:?} descendant_survived={descendant_survived}"
+            );
+            assert_eq!(calls, 0, "natural fallback tried taskkill on its exited leader");
+            assert!(warnings.is_empty(), "natural fallback emitted a warning: {warnings:?}");
+            assert_eq!(
+                info.iter().filter(|line| line.contains("descendants of an exited leader are not tracked")).count(),
+                1
+            );
+            assert!(descendant_survived, "the fixture did not exercise untracked descendants");
         }
 
         #[test]
