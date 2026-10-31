@@ -1,7 +1,8 @@
 //! Upload, download, delete and synchronise project files with a deployment
-//! server over SFTP.
+//! server through a shared filesystem interface.
 
 use crate::mapping::{Excludes, Mappings, posix};
+use ide_core::remote_settings::DeploymentServer;
 use ide_core::{CancellationToken, IdeError, IdeResult};
 use ide_ssh::RemoteFs;
 use ide_ssh::sftp::mtime_of;
@@ -9,6 +10,120 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Mapping eligibility uses a common synthetic server root: mapping and exclusion
+/// paths are both relative to that root, so checking never opens a connection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DeploymentCoverage {
+    pub server: String,
+    pub paths: Vec<String>,
+    pub skipped: Vec<TransferError>,
+}
+
+pub fn coverage(settings: &ide_core::settings::Settings, root: &Path, paths: &[PathBuf]) -> Vec<DeploymentCoverage> {
+    settings
+        .deployment
+        .servers
+        .iter()
+        .map(|server| {
+            let selection = Selection::new(settings, server, root);
+            let mut result = DeploymentCoverage { server: server.id.clone(), paths: Vec::new(), skipped: Vec::new() };
+            for path in paths {
+                match selection.deployable(path) {
+                    Ok(found) => {
+                        for p in found {
+                            let name = ide_core::ipc_path::to_ipc(&p);
+                            if !result.paths.contains(&name) {
+                                result.paths.push(name);
+                            }
+                        }
+                    }
+                    Err(message) => result
+                        .skipped
+                        .push(TransferError { path: ide_core::ipc_path::to_ipc(path), message: message.into() }),
+                }
+            }
+            result
+        })
+        .collect()
+}
+
+/// `paths` with every selected folder outside all mappings replaced by the mapped folders inside
+/// it, as [`coverage`] reports them. Other paths stay, so the transfer still reports them.
+pub(crate) fn expand_selection(
+    settings: &ide_core::settings::Settings,
+    server: &DeploymentServer,
+    root: &Path,
+    paths: &[PathBuf],
+) -> Vec<PathBuf> {
+    let selection = Selection::new(settings, server, root);
+    let mut out: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        for p in selection.deployable(path).unwrap_or_else(|_| vec![path.clone()]) {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Eligibility of selected paths on one server, checked locally.
+struct Selection {
+    map: Mappings,
+    exclude: Excludes,
+    /// Local folders of the server's mappings, resolved as [`Mappings::new`] does. Only
+    /// candidates: [`Selection::deployable`] keeps those the mappings accept.
+    folders: Vec<PathBuf>,
+}
+
+impl Selection {
+    fn new(settings: &ide_core::settings::Settings, server: &DeploymentServer, root: &Path) -> Self {
+        let folders = server
+            .mappings
+            .iter()
+            .map(|m| {
+                let local = m.local.trim().trim_matches('/');
+                if local.is_empty() { root.to_path_buf() } else { root.join(local) }
+            })
+            .collect();
+        Self {
+            map: Mappings::new(server, root, "/"),
+            exclude: Excludes::new(&settings.deployment, server, "/"),
+            folders,
+        }
+    }
+
+    /// What `path` deploys as: itself when a mapping covers it, or for a folder outside every
+    /// mapping the mapped folders inside it. Otherwise why nothing under it deploys.
+    fn deployable(&self, path: &Path) -> Result<Vec<PathBuf>, &'static str> {
+        let reason = match mapped_path(&self.map, &self.exclude, path) {
+            Ok(_) => return Ok(vec![path.to_path_buf()]),
+            Err(reason) => reason,
+        };
+        // Covered but excluded: what is under it stays excluded.
+        if self.map.remote(path).is_some() {
+            return Err(reason);
+        }
+        let inner: Vec<PathBuf> = self
+            .folders
+            .iter()
+            .filter(|f| f.starts_with(path) && f.as_path() != path)
+            .filter(|f| mapped_path(&self.map, &self.exclude, f).is_ok())
+            .cloned()
+            .collect();
+        if inner.is_empty() { Err(reason) } else { Ok(inner) }
+    }
+}
+
+fn mapped_path(map: &Mappings, exclude: &Excludes, local: &Path) -> Result<String, &'static str> {
+    let remote = map.remote(local).ok_or("Not covered by this server's mappings")?;
+    if exclude.local(local.strip_prefix(map.project_root()).unwrap_or(local)) || exclude.remote(&remote) {
+        return Err("Excluded from deployment");
+    }
+    Ok(remote)
+}
 
 /// Modification times closer than this count as equal (FAT, rounding by servers).
 const MTIME_SLACK: u32 = 2;
@@ -96,7 +211,7 @@ pub fn status(local: Option<FileStamp>, remote: Option<FileStamp>) -> SyncStatus
     }
 }
 
-/// Operations on one server through one SFTP session.
+/// Operations on one server through its filesystem.
 pub struct Deployment<'a> {
     pub fs: &'a RemoteFs,
     pub map: &'a Mappings,
@@ -171,7 +286,7 @@ impl Deployment<'_> {
                 break;
             }
             let rel = self.rel(local);
-            let Some(remote) = self.map.remote(local).filter(|r| !self.exclude.remote(r)) else {
+            let Some(remote) = mapped_path(self.map, self.exclude, local).ok() else {
                 report.skipped += 1;
                 continue;
             };
@@ -193,7 +308,7 @@ impl Deployment<'_> {
         let mut report = TransferReport::default();
         let mut jobs: Vec<(String, PathBuf)> = Vec::new();
         for p in paths {
-            let Some(remote) = self.map.remote(p).filter(|r| !self.exclude.remote(r)) else {
+            let Some(remote) = mapped_path(self.map, self.exclude, p).ok() else {
                 report.skipped += 1;
                 continue;
             };
@@ -234,35 +349,69 @@ impl Deployment<'_> {
         report
     }
 
-    /// Deletes the remote counterparts of `paths`.
+    /// Deletes the remote counterparts of `paths`. A folder goes with what is under it, except
+    /// excluded entries and mapping roots: those stay, with the folders that lead to them, and
+    /// each one kept counts as skipped.
     pub async fn delete_remote(&self, paths: &[PathBuf]) -> TransferReport {
         let mut report = TransferReport::default();
         for p in paths {
             // Never a whole mapping (the project folder went away, or a mapped folder did).
-            let Some(remote) = self.map.remote(p).filter(|r| !self.exclude.remote(r) && !self.map.is_root(r)) else {
+            let Some(remote) = mapped_path(self.map, self.exclude, p).ok().filter(|r| !self.map.is_root(r)) else {
                 report.skipped += 1;
                 continue;
             };
-            match self.fs.stat(&remote).await {
-                Ok(None) => {}
-                Ok(Some(_)) => match self.fs.remove(&remote).await {
-                    Ok(()) => report.files += 1,
-                    Err(e) => report.fail(self.rel(p), e),
-                },
+            // `lstat`: a symlink is removed itself, never the folder it points to.
+            let removed = match self.fs.lstat(&remote).await {
+                Ok(None) => continue,
+                Ok(Some(e)) if e.is_dir && !e.is_symlink => self.remove_tree(&remote, &mut report).await.map(|_| ()),
+                Ok(Some(_)) => self.fs.remove(&remote).await,
+                Err(e) => Err(e),
+            };
+            match removed {
+                Ok(()) => report.files += 1,
                 Err(e) => report.fail(self.rel(p), e),
             }
         }
         report
     }
 
+    /// What a folder deletion keeps: excluded entries and mapping roots.
+    fn protected(&self, remote: &str) -> bool {
+        self.exclude.remote(remote) || self.map.is_root(remote)
+    }
+
+    /// Removes what `dir` holds, then `dir` once nothing protected is left in it. Returns whether
+    /// `dir` itself went.
+    async fn remove_tree(&self, dir: &str, report: &mut TransferReport) -> IdeResult<bool> {
+        let mut kept = false;
+        for e in self.fs.list(dir).await? {
+            if self.cancel.is_cancelled() {
+                return Err(IdeError::cancelled());
+            }
+            if self.protected(&e.path) {
+                report.skipped += 1;
+                kept = true;
+            } else if e.is_dir && !e.is_symlink {
+                kept |= !Box::pin(self.remove_tree(&e.path, report)).await?;
+            } else {
+                self.fs.remove(&e.path).await?;
+            }
+        }
+        if !kept {
+            // Not recursive: anything the listing missed keeps the folder, with an error.
+            self.fs.remove_empty_dir(dir).await?;
+        }
+        Ok(!kept)
+    }
+
     /// Sync with Deployed: local and remote files under `local` side by side.
     pub async fn compare(&self, local: &Path) -> IdeResult<Vec<SyncEntry>> {
-        let remote_root =
-            self.map.remote(local).ok_or_else(|| IdeError::invalid(format!("{} is not mapped", local.display())))?;
+        let remote_root = mapped_path(self.map, self.exclude, local)
+            .map_err(|reason| IdeError::invalid(format!("{}: {reason}", local.display())))?;
         let mut by_rel: BTreeMap<String, SyncEntry> = BTreeMap::new();
         let mut ignored = TransferReport::default();
         for f in self.local_files(&[local.to_path_buf()], &mut ignored) {
-            let Some(remote_path) = self.map.remote(&f) else { continue };
+            let Ok(remote_path) = mapped_path(self.map, self.exclude, &f) else { continue };
             let size = std::fs::metadata(&f).map(|m| m.len()).unwrap_or(0);
             let stamp = FileStamp { size, mtime: mtime_of(&f) };
             by_rel.insert(
@@ -319,9 +468,7 @@ impl Deployment<'_> {
                 break;
             }
             let local = step.path.split('/').filter(|s| !s.is_empty()).fold(root.clone(), |p, s| p.join(s));
-            let Some(remote) =
-                self.map.remote(&local).filter(|r| !self.exclude.remote(r) && !self.excluded_local(&local))
-            else {
+            let Some(remote) = mapped_path(self.map, self.exclude, &local).ok() else {
                 report.skipped += 1;
                 continue;
             };

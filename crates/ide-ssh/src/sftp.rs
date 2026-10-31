@@ -41,7 +41,7 @@ pub fn parent(path: &str) -> Option<&str> {
     Some(if i == 0 { "/" } else { &trimmed[..i] })
 }
 
-fn mode_string(mode: u32) -> String {
+pub(crate) fn mode_string(mode: u32) -> String {
     let bits = [
         (0o400, 'r'),
         (0o200, 'w'),
@@ -78,11 +78,11 @@ fn err(path: &str, e: SftpError) -> IdeError {
 }
 
 /// Higher-level operations on an [`SftpSession`].
-pub struct RemoteFs {
+pub struct SftpFs {
     sftp: SftpSession,
 }
 
-impl RemoteFs {
+impl SftpFs {
     pub fn new(sftp: SftpSession) -> Self {
         Self { sftp }
     }
@@ -112,6 +112,20 @@ impl RemoteFs {
             Ok(a) => {
                 let name = path.rsplit('/').next().unwrap_or(path).to_owned();
                 Ok(Some(entry(path.to_owned(), name, &a, false)))
+            }
+            Err(e) if err(path, e.clone()).kind == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(err(path, e)),
+        }
+    }
+
+    /// Like [`Self::stat`], without following a final symlink.
+    pub async fn lstat(&self, path: &str) -> IdeResult<Option<RemoteEntry>> {
+        match self.sftp.symlink_metadata(path).await {
+            Ok(a) => {
+                let name = path.rsplit('/').next().unwrap_or(path).to_owned();
+                let target_is_dir =
+                    a.is_symlink() && self.sftp.metadata(path).await.map(|m| m.is_dir()).unwrap_or(false);
+                Ok(Some(entry(path.to_owned(), name, &a, target_is_dir)))
             }
             Err(e) if err(path, e.clone()).kind == ErrorKind::NotFound => Ok(None),
             Err(e) => Err(err(path, e)),
@@ -213,6 +227,11 @@ impl RemoteFs {
         } else {
             self.sftp.remove_file(path).await.map_err(|e| err(path, e))
         }
+    }
+
+    /// Removes an empty folder; the server refuses while anything is still in it.
+    pub async fn remove_empty_dir(&self, path: &str) -> IdeResult<()> {
+        self.sftp.remove_dir(path).await.map_err(|e| err(path, e))
     }
 
     pub async fn rename(&self, from: &str, to: &str) -> IdeResult<()> {
