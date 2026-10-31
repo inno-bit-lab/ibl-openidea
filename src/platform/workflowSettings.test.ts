@@ -62,6 +62,17 @@ describe("validateWorkflow", () => {
     });
     expect(v.vcs.commit).toMatchObject({ suggestAgent: "", suggestModel: "", suggestThinking: "", suggestRules: "" });
   });
+
+  it("runs Update Project without its options dialog unless asked", () => {
+    expect(DEFAULT_WORKFLOW.vcs.confirmation.showUpdateOptions).toBe(false);
+    expect(validateWorkflow(undefined).vcs.confirmation.showUpdateOptions).toBe(false);
+    expect(validateWorkflow({ vcs: { confirmation: { showUpdateOptions: "yes" } } }).vcs.confirmation).toMatchObject({
+      showUpdateOptions: false,
+    });
+    expect(validateWorkflow({ vcs: { confirmation: { showUpdateOptions: true } } }).vcs.confirmation).toMatchObject({
+      showUpdateOptions: true,
+    });
+  });
 });
 
 describe("splitCommandLine", () => {

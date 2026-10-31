@@ -160,7 +160,7 @@ impl Default for VcsConfirmationSettings {
         Self {
             on_create: "ask".into(),
             on_delete: "ask".into(),
-            show_update_options: true,
+            show_update_options: false,
             confirm_drop_commits: true,
             on_patch_created: "ask".into(),
         }
@@ -421,5 +421,14 @@ mod tests {
             ("codex", "small", "low", "Use conventional commits.")
         );
         assert_eq!(serde_json::to_value(settings).unwrap()["suggestRules"], "Use conventional commits.");
+    }
+
+    #[test]
+    fn update_project_runs_without_its_options_dialog_by_default() {
+        let settings: VcsConfirmationSettings = serde_json::from_str("{}").unwrap();
+        assert!(!settings.show_update_options);
+        assert!(!VcsConfirmationSettings::default().show_update_options);
+        let settings: VcsConfirmationSettings = serde_json::from_str(r#"{"showUpdateOptions":true}"#).unwrap();
+        assert!(settings.show_update_options);
     }
 }
