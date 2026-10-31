@@ -1407,12 +1407,23 @@ async fn real_complete_is_read_only(provider: &str) {
     );
     let cwds = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
     let seen = cwds.clone();
+    let stderr_lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let captured_stderr = stderr_lines.clone();
     let real_connector = mgr.shared.connector.clone();
     let expected_driver = if provider == "claude" { provider::Driver::Claude } else { provider::Driver::Codex };
     Arc::get_mut(&mut mgr.shared).unwrap().connector = Arc::new(move |spec, cwd, client, stderr| {
         assert_eq!(spec.driver, expected_driver);
         seen.lock().push(cwd.to_path_buf());
-        real_connector(spec, cwd, client, stderr)
+        let lines = captured_stderr.clone();
+        real_connector(
+            spec,
+            cwd,
+            client,
+            Box::new(move |line| {
+                lines.lock().push(line.clone());
+                stderr(line);
+            }),
+        )
     });
     let sentinel = tmp.path().join("must-not-exist.txt");
     let prompt = format!(
@@ -1426,9 +1437,13 @@ async fn real_complete_is_read_only(provider: &str) {
     };
     let result = mgr.complete(provider, &prompt, &config, Duration::from_secs(120)).await;
     eprintln!("{provider} read-only completion: {result:?}");
+    if result.is_err() {
+        eprintln!("{provider} launch stderr: {:?}", stderr_lines.lock());
+    }
     assert!(!sentinel.exists(), "completion wrote outside its throwaway directory");
     assert_eq!(cwds.lock().len(), 1);
-    assert!(!cwds.lock()[0].exists(), "real completion must remove its throwaway cwd");
+    let completion_cwd = cwds.lock()[0].clone();
+    let removed_on_return = !completion_cwd.exists();
     assert!(result.unwrap().contains("READ_ONLY_OK"));
     let selected = mgr
         .shared
@@ -1443,6 +1458,7 @@ async fn real_complete_is_read_only(provider: &str) {
     let expected = if provider == "claude" { "default" } else { "read-only" };
     eprintln!("{provider} selected mode: {selected:?}");
     assert_eq!(selected.as_deref(), Some(expected));
+    assert!(removed_on_return, "real completion must remove its throwaway cwd");
     assert!(mgr.tasks.read().is_empty());
     assert!(!tmp.path().join("store").exists());
     mgr.shutdown();
@@ -1536,6 +1552,49 @@ async fn complete_refuses_a_mode_change_reported_after_selecting_read_only() {
 }
 
 #[cfg(windows)]
+#[tokio::test]
+async fn completion_cleanup_retries_until_a_windows_handle_releases_the_directory() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("completion");
+    std::fs::create_dir(&cwd).unwrap();
+    let held = std::fs::OpenOptions::new().read(true).share_mode(1 | 2).custom_flags(0x02000000).open(&cwd).unwrap();
+    assert!(std::fs::remove_dir_all(&cwd).is_err());
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(80));
+        drop(held);
+    });
+    super::remove_completion_dir(&cwd).await;
+    release.join().unwrap();
+    assert!(!cwd.exists());
+}
+
+#[cfg(windows)]
+fn cleanup_owned_registry_executable(root: &Path, executable: &str) {
+    let root = dunce::canonicalize(root).unwrap();
+    let executable = dunce::canonicalize(executable).unwrap();
+    // Never match a global node.exe or any existing Crew executable.
+    if !executable.starts_with(&root) {
+        return;
+    }
+    let script = r#"$ErrorActionPreference = 'Stop'
+$ownedExecutable = [IO.Path]::GetFullPath($env:IBLOPENIDEA_MT2_TEST_EXECUTABLE)
+$ownedProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $ownedExecutable })
+foreach ($ownedProcess in $ownedProcesses) { Stop-Process -Id $ownedProcess.ProcessId -Force -ErrorAction Stop }
+Write-Output ('REGISTRY_TEST_TEARDOWN exact-owned-executable processes=' + $ownedProcesses.Count)
+"#;
+    let mut command = std::process::Command::new("powershell.exe");
+    ide_core::process::prepare(&mut command);
+    let output = command
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("IBLOPENIDEA_MT2_TEST_EXECUTABLE", &executable)
+        .output()
+        .unwrap();
+    eprintln!("{}", String::from_utf8_lossy(&output.stdout));
+    assert!(output.status.success(), "owned test cleanup failed: {}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[cfg(windows)]
 async fn real_registry_install_and_probe(id: &str) {
     let tmp = tempfile::tempdir().unwrap();
     let paths = registry::RegistryPaths::new(&tmp.path().join("config"), &tmp.path().join("data"));
@@ -1560,7 +1619,7 @@ async fn real_registry_install_and_probe(id: &str) {
     assert!(Path::new(&installed.command).is_file(), "registry executable is missing");
     eprintln!(
         "REGISTRY_INSTALL {id} version={} command-file={:?}",
-        installed.registry.unwrap().version,
+        installed.registry.as_ref().unwrap().version,
         Path::new(&installed.command).file_name()
     );
     let cwd = tmp.path().join("probe");
@@ -1577,6 +1636,7 @@ async fn real_registry_install_and_probe(id: &str) {
         tokio::runtime::Handle::current(),
     );
     let probe = mgr.probe(id, true).await.unwrap();
+    cleanup_owned_registry_executable(tmp.path(), &installed.command);
     eprintln!("REGISTRY_PROBE {}", serde_json::to_string(&probe).unwrap());
     assert!(probe.error.is_none(), "{probe:?}");
     assert!(probe.protocol.starts_with("ACP v"));

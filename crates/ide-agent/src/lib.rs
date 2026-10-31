@@ -464,7 +464,7 @@ impl AgentManager {
         // Only raw reported settings identify mode aliases. Never inject client options or bypass defaults.
         let fallback_config =
             self.shared.known.lock().get(&spec.id).map(|known| known.config.clone()).unwrap_or_default();
-        let mut scope = CompletionScope { cwd, peer: None };
+        let mut scope = CompletionScope { cwd, peer: None, finished: false };
         let dialect = acp::Dialect::wrap(collector.clone());
         let peer = match (self.shared.connector)(&spec, &scope.cwd, dialect.clone(), on_stderr) {
             Ok(p) => p,
@@ -502,7 +502,7 @@ impl AgentManager {
             Ok(Err(AskError::Rpc(e))) => Err(describe_error(e, &stderr.lock())),
             Err(_) => Err(format!("{} didn't answer within {} seconds.", spec.name, timeout.as_secs())),
         };
-        drop(scope);
+        scope.finish().await;
         match outcome {
             Ok(text) if !text.is_empty() => Ok(text),
             Ok(_) => Err(IdeError::unavailable(format!("{} returned no text.", spec.name))),
@@ -1883,15 +1883,59 @@ impl Collector {
 struct CompletionScope {
     cwd: PathBuf,
     peer: Option<Peer>,
+    finished: bool,
+}
+
+async fn remove_completion_dir(cwd: &Path) {
+    // On Windows a killed CLI can retain its cwd until process shutdown finishes.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut delay = Duration::from_millis(20);
+    loop {
+        match std::fs::remove_dir_all(cwd) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if tokio::time::Instant::now() >= deadline => {
+                tracing::warn!("complete: removing temporary cwd {} failed: {error}", cwd.display());
+                return;
+            }
+            Err(_) => {
+                tokio::time::sleep(delay.min(deadline.saturating_duration_since(tokio::time::Instant::now()))).await;
+                delay = (delay * 2).min(Duration::from_millis(250));
+            }
+        }
+    }
+}
+
+impl CompletionScope {
+    async fn finish(&mut self) {
+        if let Some(peer) = self.peer.take() {
+            peer.kill();
+        }
+        remove_completion_dir(&self.cwd).await;
+        self.finished = true;
+    }
 }
 
 impl Drop for CompletionScope {
     fn drop(&mut self) {
-        if let Some(peer) = &self.peer {
+        if let Some(peer) = self.peer.take() {
             peer.kill();
         }
-        if let Err(error) = std::fs::remove_dir_all(&self.cwd) {
-            tracing::warn!("complete: removing temporary cwd {} failed: {error}", self.cwd.display());
+        if self.finished {
+            return;
+        }
+        // Cancellation still cleans an unlocked cwd synchronously. A CLI holding it needs
+        // the runtime to finish killing its process before the background retry succeeds.
+        match std::fs::remove_dir_all(&self.cwd) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => match tokio::runtime::Handle::try_current() {
+                Ok(runtime) => {
+                    let cwd = self.cwd.clone();
+                    runtime.spawn(async move { remove_completion_dir(&cwd).await });
+                }
+                Err(_) => tracing::warn!("complete: removing temporary cwd {} failed: {error}", self.cwd.display()),
+            },
         }
     }
 }
