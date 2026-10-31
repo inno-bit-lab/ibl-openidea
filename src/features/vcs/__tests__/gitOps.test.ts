@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Branch, BranchInfo, Commit, FileStatus } from "@/bindings";
@@ -44,8 +44,11 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
   },
 }));
 
+import { executeAction } from "@/platform/actions";
+import { setContext } from "@/platform/context";
 import { useProject } from "@/platform/project";
 import { provideNotificationService, provideToolWindowService } from "@/workbench/contributions";
+import { registerVcsActions } from "../actions";
 import { addToVcsTargets, rollbackPlan, stashChanges } from "../changeOps";
 import { planCommit, renamedFromPath } from "../changes";
 import { VcsDialogHost } from "../dialogs";
@@ -504,6 +507,10 @@ describe("Git dialogs: repository picker", () => {
           : [{ ...branch("main", "c3"), current: true }, branch("feature", "c4"), branch("origin/main", "c3", true)],
       );
     remotesOf.mockReset().mockImplementation(() => [{ name: "origin", url: "https://example.com/r.git" }]);
+    // Refreshes after an operation keep the three repositories.
+    vcsRoots
+      .mockReset()
+      .mockReturnValue(ROOTS.map((root) => ({ root, operation: null, head: "main", headCommit: "c3" })));
     provideNotificationService({ notify: () => {} });
     useProject.setState({ settings: {} });
     useVcs.setState({
@@ -599,6 +606,46 @@ describe("Git dialogs: repository picker", () => {
         ["/p/b", { op: "add", name: "origin", url: "https://example.com/b.git" }],
       ]),
     );
+  });
+
+  describe("Git actions resolve their argument to repositories", () => {
+    let off: () => void = () => {};
+    beforeEach(() => {
+      off = registerVcsActions();
+      setContext("vcsAvailable", true);
+      useProject.setState({ settings: { vcs: { confirmation: { showUpdateOptions: false } } } });
+    });
+    afterEach(() => off());
+    const fetched = () => vcsRemote.mock.calls.map(([repo]) => repo);
+
+    it("a file opens Merge in its repository", async () => {
+      render(createElement(VcsDialogHost));
+      await executeAction("vcs.merge", "/p/b/src/x.ts");
+      const dialog = await screen.findByRole("dialog", { name: /^Merge into/ });
+      await pick(dialog, "Branch to merge", /^feature/);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+      await waitFor(() => expect(repoCalls("merge")).toEqual(["/p/b"]));
+    });
+
+    it("a folder holding repositories fetches each of them, a repository folder only itself", async () => {
+      await executeAction("vcs.fetch", "/p");
+      await waitFor(() => expect(fetched()).toEqual(ROOTS));
+      vcsRemote.mockClear();
+      await executeAction("vcs.fetch", "/p/c");
+      await waitFor(() => expect(fetched()).toEqual(["/p/c"]));
+    });
+
+    it("selected files update their repositories only", async () => {
+      await executeAction("vcs.update", ["/p/a/x.ts", "/p/c/y.ts"]);
+      await waitFor(() => expect(fetched()).toEqual(["/p/a", "/p/c"]));
+    });
+
+    it("a single-repository project keeps the default target", async () => {
+      vcsRoots.mockReturnValue([{ root: "/p", operation: null, head: "main", headCommit: "c3" }]);
+      useVcs.setState({ roots: ["/p"], repo: "/p" });
+      await executeAction("vcs.fetch", "/p/src/x.ts");
+      await waitFor(() => expect(fetched()).toEqual(["/p"]));
+    });
   });
 
   it("shows no picker for a single repository", async () => {

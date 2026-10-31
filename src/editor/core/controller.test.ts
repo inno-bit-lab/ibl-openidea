@@ -272,7 +272,7 @@ describe("EditorController", () => {
       "vcs.showCurrentRevision",
       "vcs.rollback",
       "vcs.push",
-      "vcs.update",
+      "vcs.pull",
       "vcs.fetch",
       "vcs.merge",
       "vcs.rebase",

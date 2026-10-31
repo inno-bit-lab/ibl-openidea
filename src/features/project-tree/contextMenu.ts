@@ -341,7 +341,7 @@ export function contextMenuItems(nodes: ProjectNode[]): MenuItem[] {
           act("vcs.rollback", arg, "Rollback…"),
           { kind: "separator" },
           act("vcs.push", arg, "Push…"),
-          act("vcs.update", arg, "Pull…"),
+          act("vcs.pull", arg, "Pull…"),
           act("vcs.fetch", arg, "Fetch"),
           act("vcs.merge", arg, "Merge…"),
           act("vcs.rebase", arg, "Rebase…"),

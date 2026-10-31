@@ -1745,7 +1745,7 @@ function gitMenu(path: string, sel?: { startLine: number; endLine: number }): Me
       { kind: "action", action: "vcs.rollback", arg: [path], label: "Rollback…" },
       { kind: "separator" },
       { kind: "action", action: "vcs.push", label: "Push…" },
-      { kind: "action", action: "vcs.update", label: "Pull…" },
+      { kind: "action", action: "vcs.pull", label: "Pull…" },
       { kind: "action", action: "vcs.fetch", label: "Fetch" },
       { kind: "action", action: "vcs.merge", label: "Merge…" },
       { kind: "action", action: "vcs.rebase", label: "Rebase…" },

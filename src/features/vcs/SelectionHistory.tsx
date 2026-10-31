@@ -1,5 +1,5 @@
-/** Git `Show History for Selection…` dialog and a chooser of a file's revisions. */
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+/** Git `Show History for Selection…` dialog. */
+import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import { Text, type EditorState } from "@codemirror/state";
 import { Chunk } from "@codemirror/merge";
@@ -7,22 +7,7 @@ import type { Commit } from "@/bindings";
 import { activeEditor, editorsFor } from "@/editor/api";
 import { tx } from "@/platform/i18n";
 import { call, commands } from "@/platform/ipc";
-import {
-  Checkbox,
-  Dialog,
-  HighlightedText,
-  Icon,
-  IconButton,
-  List,
-  SearchField,
-  Spinner,
-  SplitGroup,
-  SplitHandle,
-  SplitPanel,
-  T,
-  fuzzyMatch,
-  listNavigate,
-} from "@/ui";
+import { Checkbox, Dialog, Icon, IconButton, Spinner, SplitGroup, SplitHandle, SplitPanel, T } from "@/ui";
 import { maybeEditorService, notifications } from "@/workbench/contributions";
 import { DiffEditor, mapLine } from "./DiffEditor";
 import { openDialog } from "./dialogs";
@@ -598,162 +583,6 @@ export function SelectionHistoryDialog({ target, onClose }: { target: SelectionH
             </div>
           </SplitPanel>
         </SplitGroup>
-      </div>
-    </Dialog>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Revision chooser (file-specific commit history)
-
-export function chooseFileRevision(path: string, title: string): Promise<{ id: string; shortId: string } | null> {
-  return new Promise((resolve) => {
-    const close = openDialog(() => (
-      <FileRevisionChooser
-        path={path}
-        title={title}
-        onDone={(r) => {
-          close();
-          resolve(r);
-        }}
-      />
-    ));
-  });
-}
-
-function FileRevisionChooser({
-  path,
-  title,
-  onDone,
-}: {
-  path: string;
-  title: string;
-  onDone: (rev: { id: string; shortId: string } | null) => void;
-}) {
-  const repo = repoOf(path) ?? currentRepo();
-  const [commits, setCommits] = useState<Commit[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
-
-  useEffect(() => {
-    let alive = true;
-    call(
-      commands.vcsLog(repo, {
-        branch: null,
-        path,
-        author: null,
-        text: null,
-        range: null,
-        skip: 0,
-        limit: 200,
-      }),
-    )
-      .then((list) => alive && setCommits(list))
-      .catch(() => undefined)
-      .finally(() => alive && setLoading(false));
-    return () => {
-      alive = false;
-    };
-  }, [path, repo]);
-
-  const items = useMemo(() => {
-    const q = query.trim();
-    const base = commits.map((c) => ({
-      rev: c.id,
-      shortId: c.shortId,
-      summary: c.summary,
-      author: c.author,
-      timeMs: c.timeMs,
-      matches: null as number[] | null,
-    }));
-    const filtered = q
-      ? base.flatMap((it) => {
-          const m = fuzzyMatch(`${it.shortId} ${it.summary} ${it.author}`, q);
-          return m ? [{ ...it, matches: m }] : [];
-        })
-      : base;
-    if (q && !filtered.some((i) => i.rev === q || i.shortId === q)) {
-      filtered.push({
-        rev: q,
-        shortId: q.slice(0, 8),
-        summary: tx("Custom revision"),
-        author: "",
-        timeMs: 0,
-        matches: null,
-      });
-    }
-    return filtered;
-  }, [commits, query]);
-
-  const idx = Math.min(active, Math.max(0, items.length - 1));
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const it = items[idx];
-      if (it) onDone({ id: it.rev, shortId: it.shortId });
-      return;
-    }
-    const n = listNavigate(e.key, { items, active: idx, wrap: true });
-    if (n !== null) {
-      e.preventDefault();
-      setActive(n);
-    }
-  };
-
-  return (
-    <Dialog open title={tx(title)} onClose={() => onDone(null)} width={580} position="top">
-      <div style={{ padding: "8px 10px", borderBottom: "1px solid var(--border-popup)" }}>
-        <SearchField
-          data-autofocus
-          value={query}
-          onChange={(v) => {
-            setQuery(v);
-            setActive(0);
-          }}
-          onKeyDown={onKeyDown}
-          placeholder="Filter revisions by hash, message or author"
-          aria-label="Revision"
-          variant="bare"
-        />
-      </div>
-      <div style={{ height: 300, display: "flex", flexDirection: "column", padding: "4px 0" }}>
-        {loading && !commits.length ? (
-          <div className={styles.message}>
-            <Spinner size={14} />
-          </div>
-        ) : (
-          <List
-            items={items}
-            getKey={(i) => i.rev}
-            activeIndex={idx}
-            onActiveChange={setActive}
-            onActivate={(i) => onDone({ id: i.rev, shortId: i.shortId })}
-            focusable={false}
-            hoverSelects
-            rowHeight={24}
-            aria-label="Revisions"
-            className={styles.grow}
-            empty={
-              <span>
-                <T>No revisions found</T>
-              </span>
-            }
-            renderItem={(i) => (
-              <span className={styles.fileRow} style={{ flex: 1, padding: 0, gap: 8 }}>
-                <Icon name="commit" size={14} />
-                <span className={styles.hash} style={{ width: 68, flex: "none" }}>
-                  {i.shortId}
-                </span>
-                <HighlightedText className={styles.fileName} text={i.summary} indices={i.matches} tone="accent" />
-                <span className={styles.fileDir} style={{ marginLeft: "auto" }}>
-                  {i.author}
-                  {i.timeMs ? ` · ${formatTime(i.timeMs)}` : ""}
-                </span>
-              </span>
-            )}
-          />
-        )}
       </div>
     </Dialog>
   );
