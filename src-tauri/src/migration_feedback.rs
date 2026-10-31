@@ -32,6 +32,8 @@ mod platform {
     use crate::migrate::{Progress, ProgressPhase};
     use std::cell::Cell;
     use std::os::windows::ffi::OsStrExt;
+    #[cfg(test)]
+    use std::sync::atomic::AtomicU8;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, OnceLock, mpsc};
     use std::thread::{self, JoinHandle};
@@ -60,6 +62,8 @@ mod platform {
         worker: Option<JoinHandle<()>>,
         #[cfg(test)]
         ended: Arc<AtomicBool>,
+        #[cfg(test)]
+        state: Arc<AtomicU8>,
     }
 
     pub fn start(progress: Arc<Progress>) -> Feedback {
@@ -71,6 +75,8 @@ mod platform {
             worker: None,
             #[cfg(test)]
             ended: Arc::new(AtomicBool::new(true)),
+            #[cfg(test)]
+            state: Arc::new(AtomicU8::new(0)),
         };
         if feedback.progress.phase() == ProgressPhase::Done {
             return feedback;
@@ -82,8 +88,13 @@ mod platform {
         #[cfg(test)]
         let ended = feedback.ended.clone();
         #[cfg(test)]
+        let state = feedback.state.clone();
+        #[cfg(test)]
         ended.store(false, Ordering::Release);
         match thread::Builder::new().name("profile-migration-feedback".into()).spawn(move || {
+            #[cfg(test)]
+            run(progress, done, interrupted, state);
+            #[cfg(not(test))]
             run(progress, done, interrupted);
             #[cfg(test)]
             ended.store(true, Ordering::Release);
@@ -130,9 +141,19 @@ mod platform {
         pub(crate) fn worker_ended_flag(&self) -> Arc<AtomicBool> {
             self.ended.clone()
         }
+
+        #[cfg(test)]
+        pub(crate) fn worker_state_flag(&self) -> Arc<AtomicU8> {
+            self.state.clone()
+        }
     }
 
-    fn run(progress: Arc<Progress>, done: Arc<AtomicBool>, interrupted: mpsc::Receiver<()>) {
+    fn run(
+        progress: Arc<Progress>,
+        done: Arc<AtomicBool>,
+        interrupted: mpsc::Receiver<()>,
+        #[cfg(test)] state: Arc<AtomicU8>,
+    ) {
         if interrupted.recv_timeout(Duration::from_millis(500)) != Err(mpsc::RecvTimeoutError::Timeout)
             || progress.phase() == ProgressPhase::Done
             || done.load(Ordering::Acquire)
@@ -141,13 +162,36 @@ mod platform {
         }
         // Only this native UI thread changes DPI awareness; Tauri keeps its own bootstrap.
         unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
-        if progress.phase() == ProgressPhase::WaitingForOtherStart
-            && let Some(window) = matching_dialogs().first()
-        {
-            unsafe { SetForegroundWindow(*window as HWND) };
-            let _ = interrupted.recv();
-            return;
+        let mut focused = None;
+        loop {
+            let phase = progress.phase();
+            if phase == ProgressPhase::Done || done.load(Ordering::Acquire) {
+                return;
+            }
+            if phase != ProgressPhase::Checking
+                && let Some(window) = matching_dialogs().first().copied()
+            {
+                if focused != Some(window) {
+                    unsafe { SetForegroundWindow(window as HWND) };
+                    focused = Some(window);
+                }
+                #[cfg(test)]
+                state.store(super::testing::FOLLOWING, Ordering::Release);
+            } else if matches!(phase, ProgressPhase::Copying | ProgressPhase::Publishing) {
+                break;
+            } else {
+                // Only the start that owns the copy opens a dialog. A waiter keeps
+                // checking: its peer can disappear before it acquires the lock.
+                focused = None;
+                #[cfg(test)]
+                state.store(super::testing::WAITING, Ordering::Release);
+            }
+            if interrupted.recv_timeout(Duration::from_millis(100)) != Err(mpsc::RecvTimeoutError::Timeout) {
+                return;
+            }
         }
+        #[cfg(test)]
+        state.store(super::testing::OWN_DIALOG, Ordering::Release);
         let texts = texts();
         let title = wide(texts.title);
         let instruction = wide(texts.instruction);
@@ -368,6 +412,10 @@ mod platform {
 
 #[cfg(all(test, windows))]
 pub(crate) mod testing {
+    pub const WAITING: u8 = 1;
+    pub const FOLLOWING: u8 = 2;
+    pub const OWN_DIALOG: u8 = 3;
+
     pub fn dialog_test_guard() -> std::fs::File {
         // Re-exec DPI probes and W3 have the same executable/title under nextest too.
         // This test-only OS lock keeps their native dialogs out of each other's witness.
@@ -398,6 +446,175 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
     use std::time::{Duration, Instant};
+
+    #[cfg(windows)]
+    struct NativeFeedback {
+        progress: Arc<Progress>,
+        feedback: Option<super::Feedback>,
+        ended: Arc<std::sync::atomic::AtomicBool>,
+        state: Arc<std::sync::atomic::AtomicU8>,
+    }
+
+    #[cfg(windows)]
+    impl NativeFeedback {
+        fn new(phase: ProgressPhase) -> Self {
+            let progress = Arc::new(Progress::default());
+            progress.set_phase(phase);
+            let feedback = super::start(progress.clone());
+            let ended = feedback.worker_ended_flag();
+            let state = feedback.worker_state_flag();
+            Self { progress, feedback: Some(feedback), ended, state }
+        }
+
+        fn finish(&mut self) {
+            self.progress.set_phase(ProgressPhase::Done);
+            if let Some(feedback) = self.feedback.take() {
+                feedback.finish();
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for NativeFeedback {
+        fn drop(&mut self) {
+            self.finish();
+        }
+    }
+
+    #[cfg(windows)]
+    fn observe_until(mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if condition() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(windows)]
+    const PEER_ROLE: &str = "IBLOPENIDEA_FEEDBACK_PEER_FIXTURE";
+
+    #[cfg(windows)]
+    #[test]
+    fn peer_dialog_fixture() {
+        if std::env::var(PEER_ROLE).ok().as_deref() != Some("leader") {
+            return;
+        }
+        // The parent owns the test lock; taking it here would deadlock the re-exec.
+        let mut leader = NativeFeedback::new(ProgressPhase::Copying);
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).unwrap();
+        leader.finish();
+    }
+
+    #[cfg(windows)]
+    struct NativePeer(std::process::Child);
+
+    #[cfg(windows)]
+    impl NativePeer {
+        fn spawn() -> Self {
+            use std::process::{Command, Stdio};
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            ide_core::process::prepare(&mut command);
+            let child = command
+                .args(["--exact", "migration_feedback::tests::peer_dialog_fixture", "--nocapture"])
+                .env(PEER_ROLE, "leader")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap();
+            eprintln!("FOLLOWUP_B2_PEER spawned_pid={}", child.id());
+            Self(child)
+        }
+
+        fn kill(&mut self) {
+            let _ = self.0.kill();
+            let status = self.0.wait().expect("recorded peer did not exit");
+            eprintln!("FOLLOWUP_B2_PEER exited_pid={} status={status}", self.0.id());
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for NativePeer {
+        fn drop(&mut self) {
+            self.kill();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn waiting_feedback_opens_its_own_dialog_after_the_peer_disappears() {
+        use super::testing;
+        let _serial = testing::dialog_test_guard();
+        let mut leader = NativePeer::spawn();
+        let leader_visible = observe_until(|| testing::visible_dialogs().len() == 1);
+        let mut waiter = NativeFeedback::new(ProgressPhase::WaitingForOtherStart);
+        let followed = observe_until(|| waiter.state.load(Ordering::Acquire) == testing::FOLLOWING);
+        let before_takeover = testing::visible_dialogs();
+        leader.kill();
+        let peer_gone = observe_until(|| testing::visible_dialogs().is_empty());
+        waiter.progress.set_phase(ProgressPhase::Copying);
+        let takeover = observe_until(|| {
+            waiter.state.load(Ordering::Acquire) == testing::OWN_DIALOG
+                && testing::visible_dialogs().len() == 1
+                && !waiter.progress.last_content().is_empty()
+        });
+        let content = waiter.progress.last_content();
+        waiter.finish();
+        let after_finish = testing::visible_dialogs();
+        eprintln!(
+            "FOLLOWUP_B2 leader_visible={leader_visible} followed={followed} before={before_takeover:?} peer_gone={peer_gone} takeover={takeover} content={content:?} after={after_finish:?}"
+        );
+        assert!(leader_visible && followed && peer_gone);
+        assert_eq!(before_takeover.len(), 1);
+        assert!(takeover, "waiter stayed parked after its peer disappeared and its phase became Copying");
+        assert!(content.contains(" MB"));
+        assert!(waiter.progress.dialog_shown_ms() > 0);
+        assert!(after_finish.is_empty());
+        assert!(waiter.ended.load(Ordering::Acquire));
+        assert!(waiter.progress.feedback_error().is_none(), "{:?}", waiter.progress.feedback_error());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn checking_feedback_waits_for_the_peer_instead_of_opening_an_early_dialog() {
+        use super::testing;
+        let _serial = testing::dialog_test_guard();
+        let mut waiter = NativeFeedback::new(ProgressPhase::Checking);
+        let decided = observe_until(|| waiter.state.load(Ordering::Acquire) != 0);
+        let first_decision = waiter.state.load(Ordering::Acquire);
+        waiter.progress.set_phase(ProgressPhase::WaitingForOtherStart);
+        let mut leader = NativeFeedback::new(ProgressPhase::Copying);
+        let leader_visible =
+            observe_until(|| testing::visible_dialogs().len() == 1 && !leader.progress.last_content().is_empty());
+        let followed = observe_until(|| waiter.state.load(Ordering::Acquire) == testing::FOLLOWING);
+        let during = testing::visible_dialogs();
+        waiter.finish();
+        leader.finish();
+        let after = testing::visible_dialogs();
+        eprintln!(
+            "FOLLOWUP_B2_EARLY decided={decided} first_decision={first_decision} leader_visible={leader_visible} followed={followed} during={during:?} after={after:?}"
+        );
+        assert!(decided);
+        assert_eq!(
+            first_decision,
+            testing::WAITING,
+            "Checking opened a dialog before deciding whether this start owns the copy"
+        );
+        assert!(leader_visible && followed);
+        assert_eq!(during.len(), 1);
+        assert_eq!(waiter.progress.dialog_shown_ms(), 0);
+        assert!(after.is_empty());
+        for run in [&leader, &waiter] {
+            assert!(run.ended.load(Ordering::Acquire));
+            assert!(run.progress.feedback_error().is_none(), "{:?}", run.progress.feedback_error());
+        }
+    }
 
     #[cfg(windows)]
     #[test]
