@@ -3,8 +3,8 @@
 use crate::state::AppState;
 use ide_agent::registry::AgentRegistry;
 use ide_agent::{
-    AgentChange, AgentCommand, AgentEntry, AgentEvent, AgentProbe, AgentPrompt, AgentProvider, AgentQueued, AgentTask,
-    NewAgentTask,
+    AgentChange, AgentCommand, AgentConfigChoice, AgentEntry, AgentEvent, AgentProbe, AgentPrompt, AgentProvider,
+    AgentQueued, AgentTask, NewAgentTask,
 };
 use ide_core::{IdeResult, IpcPath, RequestId};
 use ide_host::ops::agent;
@@ -34,6 +34,31 @@ pub fn agent_subscribe(
 #[specta::specta]
 pub fn agent_providers(window: Window, state: State<'_, AppState>) -> IdeResult<Vec<AgentProvider>> {
     agent::providers(&state.host, window.label())
+}
+
+/// Stores additional CLI arguments without replacing agent definitions.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_set_args(
+    window: Window,
+    state: State<'_, AppState>,
+    provider: String,
+    args: Vec<String>,
+) -> IdeResult<Vec<AgentProvider>> {
+    agent::set_args(&state.host, window.label(), provider, args)
+}
+
+/// Answers one question in a read-only throwaway agent session.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_complete(
+    window: Window,
+    state: State<'_, AppState>,
+    provider: String,
+    prompt: String,
+    config: Vec<AgentConfigChoice>,
+) -> IdeResult<String> {
+    agent::complete(&state.host, window.label(), provider, prompt, config).await
 }
 
 /// Agents of the ACP Registry this machine can run, with what is installed; the list

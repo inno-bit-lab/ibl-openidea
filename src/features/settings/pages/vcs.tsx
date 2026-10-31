@@ -12,6 +12,7 @@ import { Button, Icon, Input, type SelectOption, T } from "@/ui";
 import { Row, SettingSelect } from "../components/Form";
 import { useSetting } from "../components/context";
 import type { PageSpec } from "./spec";
+import { MESSAGE_SUGGESTION_SECTION } from "./MessageSuggestion";
 import { BoundToggle, Grid, Indented, RadioRow, TableEditor, ToggleNumber } from "./workflowControls";
 import styles from "./Workflow.module.css";
 import { tx } from "@/platform/i18n";
@@ -405,6 +406,7 @@ export const VCS_PAGES: PageSpec[] = [
           },
         ],
       },
+      MESSAGE_SUGGESTION_SECTION,
       {
         title: "Commit Checks",
         options: [

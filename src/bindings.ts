@@ -77,6 +77,10 @@ export const commands = {
 	/**  Streams the project's agent events to this window; returns every task. */
 	agentSubscribe: (onEvent: Channel<AgentEvent>) => typedError<AgentTask[], IdeError>(__TAURI_INVOKE("agent_subscribe", { onEvent })),
 	agentProviders: () => typedError<AgentProvider[], IdeError>(__TAURI_INVOKE("agent_providers")),
+	/**  Stores additional CLI arguments without replacing agent definitions. */
+	agentSetArgs: (provider: string, args: string[]) => typedError<AgentProvider[], IdeError>(__TAURI_INVOKE("agent_set_args", { provider, args })),
+	/**  Answers one question in a read-only throwaway agent session. */
+	agentComplete: (provider: string, prompt: string, config: AgentConfigChoice[]) => typedError<string, IdeError>(__TAURI_INVOKE("agent_complete", { provider, prompt, config })),
 	/**
 	 *  Agents of the ACP Registry this machine can run, with what is installed; the list
 	 *  saved earlier when the registry is unreachable. Cancel with `cancel_request(request)`.
@@ -1235,6 +1239,8 @@ export type AgentPrompt = {
 };
 
 export type AgentProvider = {
+	/**  Additional user arguments, independent of the provider definition. */
+	extraArgs?: string[],
 	id: string,
 	name: string,
 	/**  The command line that starts its ACP server. */
@@ -1858,6 +1864,10 @@ export type CommitOptions = {
 
 /**  Version Control › Commit: commit checks and commit-message inspections. */
 export type CommitSettings = {
+	suggestAgent?: string,
+	suggestModel?: string,
+	suggestThinking?: string,
+	suggestRules?: string,
 	/**
 	 *  Commit from the Commit tool window; off = Local Changes in the Git tool
 	 *  window and a Commit dialog.
@@ -4274,6 +4284,8 @@ export type MethodStat = {
 };
 
 export type NewAgentTask = {
+	/**  Instructions prepended to the first wire prompt, outside the displayed conversation. */
+	instructions?: string | null,
 	/**  Validated by the host; defaults to the window project root. */
 	projectRoot?: IpcPath | null,
 	prompt: AgentPrompt,

@@ -5,11 +5,14 @@ use crate::Host;
 use crate::rpc::Dispatcher;
 use ide_agent::registry::{AgentRegistry, RegistryPaths};
 use ide_agent::{
-    AgentChange, AgentCommand, AgentEntry, AgentEvent, AgentProbe, AgentPrompt, AgentProvider, AgentQueued, AgentTask,
-    NewAgentTask,
+    AgentChange, AgentCommand, AgentConfigChoice, AgentEntry, AgentEvent, AgentProbe, AgentPrompt, AgentProvider,
+    AgentQueued, AgentTask, NewAgentTask,
 };
 use ide_core::{IdeError, IdeResult, IpcPath, RequestId};
 use ide_tools::InstallEvent;
+
+/// First use may download an adapter; completion itself always runs read-only.
+const COMPLETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Streams the project's agent events to this window; returns every task.
 pub fn subscribe(host: &Host, window: &str, on_event: Emit<AgentEvent>) -> IdeResult<Vec<AgentTask>> {
@@ -17,9 +20,38 @@ pub fn subscribe(host: &Host, window: &str, on_event: Emit<AgentEvent>) -> IdeRe
 }
 
 pub fn providers(host: &Host, window: &str) -> IdeResult<Vec<AgentProvider>> {
-    let mut providers = host.project(window)?.agents.providers();
+    let mut providers = match host.project(window) {
+        Ok(project) => project.agents.providers(),
+        Err(_) => ide_agent::providers_from(&host.config_dir.join("agents"), &host.data_dir.join("agents/models.json")),
+    };
     ide_agent::registry::mark_updates(&registry_paths(host), &mut providers);
     Ok(providers)
+}
+
+/// Stores additional arguments independently of native or registry agent definitions.
+pub fn set_args(host: &Host, window: &str, provider: String, args: Vec<String>) -> IdeResult<Vec<AgentProvider>> {
+    let mut providers = match host.project(window) {
+        Ok(project) => project.agents.set_custom_args(&provider, &args)?,
+        Err(_) => ide_agent::set_custom_args_in(
+            &host.config_dir.join("agents"),
+            &host.data_dir.join("agents/models.json"),
+            &provider,
+            &args,
+        )?,
+    };
+    ide_agent::registry::mark_updates(&registry_paths(host), &mut providers);
+    Ok(providers)
+}
+
+/// Answers one question in a throwaway session; no task is created.
+pub async fn complete(
+    host: &Host,
+    window: &str,
+    provider: String,
+    prompt: String,
+    config: Vec<AgentConfigChoice>,
+) -> IdeResult<String> {
+    host.project(window)?.agents.complete(&provider, &prompt, &config, COMPLETE_TIMEOUT).await
 }
 
 /// Where ACP Registry agents are saved (`<config>/agents`, like the user's own) and installed.
@@ -167,6 +199,10 @@ pub async fn base_text(host: &Host, window: &str, task: String, path: IpcPath) -
 pub(crate) fn register(d: &mut Dispatcher) {
     d.add("agent_subscribe", |c| async move { subscribe(&c.host, &c.window, c.channel("onEvent")?) });
     d.add("agent_providers", |c| async move { providers(&c.host, &c.window) });
+    d.add("agent_set_args", |c| async move { set_args(&c.host, &c.window, c.arg("provider")?, c.arg("args")?) });
+    d.add("agent_complete", |c| async move {
+        complete(&c.host, &c.window, c.arg("provider")?, c.arg("prompt")?, c.arg("config")?).await
+    });
     d.add("agent_registry_list", |c| async move { registry_list(&c.host, &c.window, c.arg("request")?).await });
     d.add("agent_registry_install", |c| async move {
         registry_install(&c.host, &c.window, c.arg("id")?, c.arg("request")?, c.sender("onEvent")?).await
@@ -223,6 +259,90 @@ fn validate_project_root(root: &std::path::Path, requested: Option<&std::path::P
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn profile_host(root: &std::path::Path) -> Host {
+        Host::new(crate::HostConfig {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            languages: std::sync::Arc::new(ide_language::LanguageRegistry::load(None).unwrap()),
+            syntax: std::sync::Arc::default(),
+            sink_for: Box::new(|_| std::sync::Arc::new(ide_core::NullSink)),
+            owner: |window| window,
+            runtime: tokio::runtime::Handle::current(),
+            project_environment: false,
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn welcome_agent_providers_migrate_the_profile_and_keep_registry_updates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let host = profile_host(tmp.path());
+        let paths = registry_paths(&host);
+        std::fs::create_dir_all(&paths.agents_dir).unwrap();
+        std::fs::create_dir_all(paths.cache_file.parent().unwrap()).unwrap();
+        std::fs::write(
+            paths.agents_dir.join("codex.toml"),
+            "command = \"npx\"\nargs = [\"-y\", \"@agentclientprotocol/codex-acp@2.3.0\", \"--legacy\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            paths.agents_dir.join("fixture.toml"),
+            format!(
+                "command = {}\n[registry]\nid = \"fixture\"\nversion = \"1.0.0\"\n",
+                serde_json::to_string(&std::env::current_exe().unwrap().to_string_lossy()).unwrap()
+            ),
+        )
+        .unwrap();
+        std::fs::write(&paths.cache_file, r#"{"agents":[{"id":"fixture","name":"Fixture","version":"2.0.0"}]}"#)
+            .unwrap();
+        std::fs::write(host.data_dir.join("agents/models.json"),r#"{"codex":{"config":[{"id":"model","name":"Model","category":"model","current":"cached-model","values":[{"value":"cached-model","name":"Cached model"}],"via":"option"}]}}"#).unwrap();
+        assert!(host.project("welcome").is_err());
+        let list = providers(&host, "welcome").unwrap();
+        let codex = list.iter().find(|provider| provider.id == "codex").unwrap();
+        assert!(codex.command.starts_with("codex app-server"));
+        assert!(codex.extra_args.is_empty());
+        assert!(codex.config.iter().any(|option| option.current.as_deref() == Some("cached-model")));
+        assert_eq!(list.iter().find(|provider| provider.id == "codex-acp").unwrap().extra_args, ["--legacy"]);
+        assert!(paths.agents_dir.join("codex.toml.v02").is_file());
+        assert!(!paths.agents_dir.join("codex.toml").exists());
+        let registry = list.iter().find(|provider| provider.id == "fixture").unwrap();
+        assert!(registry.installed);
+        assert_eq!(
+            registry.source,
+            ide_agent::AgentSource::Registry { version: "1.0.0".into(), update: Some("2.0.0".into()) }
+        );
+        assert_eq!(providers(&host, "welcome").unwrap().len(), list.len());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn welcome_agent_arguments_are_shared_with_an_open_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let host = profile_host(tmp.path());
+        assert!(host.project("welcome").is_err());
+        let list = set_args(&host, "welcome", "codex".into(), vec!["--fixture-extra".into()]).unwrap();
+        assert_eq!(list.iter().find(|provider| provider.id == "codex").unwrap().extra_args, ["--fixture-extra"]);
+        assert!(!host.config_dir.join("agents/codex.toml").exists());
+        let root = tmp.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let project = host.open_project("main", &root).unwrap();
+        let codex = project.agents.providers().into_iter().find(|provider| provider.id == "codex").unwrap();
+        assert_eq!(codex.extra_args, ["--fixture-extra"]);
+        set_args(&host, "main", "codex".into(), Vec::new()).unwrap();
+        assert!(
+            providers(&host, "welcome")
+                .unwrap()
+                .into_iter()
+                .find(|provider| provider.id == "codex")
+                .unwrap()
+                .extra_args
+                .is_empty()
+        );
+        let store = host.config_dir.join("agents/extra-args.json");
+        assert!(!store.exists());
+        std::fs::write(&store, "{ malformed store").unwrap();
+        assert!(set_args(&host, "welcome", "codex".into(), Vec::new()).is_err());
+        assert_eq!(std::fs::read_to_string(store).unwrap(), "{ malformed store");
+    }
+
     #[test]
     fn agent_roots_are_exact_window_or_workspace_members() {
         let tmp = tempfile::tempdir().unwrap();

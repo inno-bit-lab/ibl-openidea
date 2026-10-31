@@ -968,3 +968,31 @@ fn v_method(line: &str) -> Option<&str> {
     let at = line.find("\"method\":\"")? + 10;
     line[at..].split('"').next()
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn codex_native_launch_puts_extra_args_after_app_server() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::provider::set_custom_args(dir.path(), "codex", &["--fixture-extra".into(), "value".into()]).unwrap();
+    let mut spec = crate::provider::load(Some(dir.path())).into_iter().find(|p| p.id == "codex").unwrap();
+    assert_eq!(spec.driver, crate::provider::Driver::Codex);
+    // Exercise connect's real process spawn with a harmless shell recorder.
+    spec.command = "sh".into();
+    std::fs::write(
+        dir.path().join("app-server"),
+        "printf '%s\\n' \"$0\" \"$@\" > native-args.txt\n: > native-args.done\n",
+    )
+    .unwrap();
+    let peer = connect(&spec, dir.path(), Arc::new(Client::default()), Box::new(|_| {})).unwrap();
+    let output = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if dir.path().join("native-args.done").exists() {
+                break std::fs::read_to_string(dir.path().join("native-args.txt")).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("native recorder must start");
+    peer.kill();
+    assert_eq!(output.lines().collect::<Vec<_>>(), ["app-server", "--fixture-extra", "value"]);
+}

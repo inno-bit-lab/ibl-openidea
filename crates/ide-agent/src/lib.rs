@@ -102,6 +102,19 @@ struct Known {
     commands: HashMap<String, Vec<AgentCommand>>,
 }
 
+fn provider_options(provider: &str, mut config: Vec<AgentConfigOption>) -> Vec<AgentConfigOption> {
+    config::add_client_options(provider, &mut config);
+    if let Some((o, v)) = config::bypass_mode(&config).map(|(o, v)| (o.id.clone(), v.value.clone()))
+        && let Some(o) = config.iter_mut().find(|c| c.id == o)
+    {
+        o.current = Some(v);
+    }
+    if let Some(o) = config.iter_mut().find(|o| o.id == config::CURSOR_APPROVAL) {
+        o.current = Some("bypass".into());
+    }
+    config
+}
+
 impl Shared {
     fn spec(&self, id: &str) -> Option<provider::ProviderSpec> {
         self.providers.read().iter().find(|p| p.id == id).cloned()
@@ -115,17 +128,10 @@ impl Shared {
     }
 
     fn known_config(&self, provider: &str) -> Vec<AgentConfigOption> {
-        let mut config = self.known.lock().get(provider).map(|k| k.config.clone()).unwrap_or_default();
-        config::add_client_options(provider, &mut config);
-        if let Some((o, v)) = config::bypass_mode(&config).map(|(o, v)| (o.id.clone(), v.value.clone()))
-            && let Some(o) = config.iter_mut().find(|c| c.id == o)
-        {
-            o.current = Some(v);
-        }
-        if let Some(o) = config.iter_mut().find(|o| o.id == config::CURSOR_APPROVAL) {
-            o.current = Some("bypass".into());
-        }
-        config
+        provider_options(
+            provider,
+            self.known.lock().get(provider).map(|known| known.config.clone()).unwrap_or_default(),
+        )
     }
 
     /// The commands the agent offered last time in this project.
@@ -212,6 +218,8 @@ struct Task {
     shared: Arc<Shared>,
     state: Mutex<TaskState>,
     live: Mutex<Option<Live>>,
+    /// Kept across startup failures until the first prompt request has been sent.
+    pending_instructions: Mutex<Option<String>>,
     /// Serializes starting the agent.
     connecting: tokio::sync::Mutex<()>,
     /// Unanswered permission requests: where to send the chosen option id.
@@ -235,6 +243,60 @@ struct Task {
     deleted: Mutex<bool>,
 }
 
+fn migrate_agents(custom_dir: &Path, models_file: &Path) {
+    let tools = models_file.parent().unwrap_or(custom_dir).join("tools");
+    if let Err(error) = provider::migrate_legacy(custom_dir, &tools) {
+        tracing::warn!("could not migrate legacy agents in {}: {error}", custom_dir.display());
+    }
+}
+
+/// Lists the profile's agents for Settings opened from Welcome, without creating a project.
+pub fn providers_from(custom_dir: &Path, models_file: &Path) -> Vec<AgentProvider> {
+    migrate_agents(custom_dir, models_file);
+    let known: HashMap<String, Known> =
+        std::fs::read(models_file).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
+    let extra = provider::extra_args(Some(custom_dir));
+    provider::load(Some(custom_dir))
+        .into_iter()
+        .map(|spec| AgentProvider {
+            extra_args: extra.get(&spec.id).cloned().unwrap_or_default(),
+            id: spec.id.clone(),
+            name: spec.name,
+            command: std::iter::once(spec.command.as_str())
+                .chain(spec.args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" "),
+            installed: provider::installed(&spec.command),
+            config: provider_options(
+                &spec.id,
+                known.get(&spec.id).map(|entry| entry.config.clone()).unwrap_or_default(),
+            ),
+            commands: Vec::new(),
+            source: spec.source,
+        })
+        .collect()
+}
+
+/// Saves profile arguments through the same mutex-protected store used by open projects.
+pub fn set_custom_args_in(
+    custom_dir: &Path,
+    models_file: &Path,
+    provider: &str,
+    args: &[String],
+) -> IdeResult<Vec<AgentProvider>> {
+    migrate_agents(custom_dir, models_file);
+    provider::set_custom_args(custom_dir, provider, args).map_err(argument_store_error)?;
+    Ok(providers_from(custom_dir, models_file))
+}
+
+fn argument_store_error(error: std::io::Error) -> IdeError {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => IdeError::not_found(error.to_string()),
+        std::io::ErrorKind::InvalidData => IdeError::invalid(error.to_string()),
+        _ => IdeError::internal(error.to_string()),
+    }
+}
+
 impl AgentManager {
     /// Loads the project's saved tasks. Spawned work runs on `runtime`.
     pub fn new(paths: AgentPaths, runtime: tokio::runtime::Handle) -> Self {
@@ -251,6 +313,9 @@ impl AgentManager {
     fn with_connector(paths: AgentPaths, runtime: tokio::runtime::Handle, connector: Connector) -> Self {
         let known =
             std::fs::read(&paths.models_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        if let Some(custom_dir) = &paths.custom_agents_dir {
+            migrate_agents(custom_dir, &paths.models_file);
+        }
         let providers = RwLock::new(provider::load(paths.custom_agents_dir.as_deref()));
         let shared = Arc::new(Shared {
             paths,
@@ -299,9 +364,11 @@ impl AgentManager {
     /// The agents (custom ones re-read), whether each is installed, and what they offered last time.
     pub fn providers(&self) -> Vec<AgentProvider> {
         let specs = provider::load(self.shared.paths.custom_agents_dir.as_deref());
+        let extra_args = provider::extra_args(self.shared.paths.custom_agents_dir.as_deref());
         let list = specs
             .iter()
             .map(|p| AgentProvider {
+                extra_args: extra_args.get(&p.id).cloned().unwrap_or_default(),
                 id: p.id.clone(),
                 name: p.name.clone(),
                 command: std::iter::once(p.command.as_str())
@@ -316,6 +383,18 @@ impl AgentManager {
             .collect();
         *self.shared.providers.write() = specs;
         list
+    }
+
+    /// Saves additional CLI arguments without changing the agent definition.
+    pub fn set_custom_args(&self, provider: &str, args: &[String]) -> IdeResult<Vec<AgentProvider>> {
+        let dir = self
+            .shared
+            .paths
+            .custom_agents_dir
+            .as_deref()
+            .ok_or_else(|| IdeError::unavailable("custom agents directory is not configured"))?;
+        provider::set_custom_args(dir, provider, args).map_err(argument_store_error)?;
+        Ok(self.providers())
     }
 
     /// The slash commands to complete for `provider`, in `task`'s directory or (without one)
@@ -356,6 +435,89 @@ impl AgentManager {
         let s = task.state.lock();
         let timeline = s.conversation.timeline(&subagent).ok_or_else(|| IdeError::not_found("no such subagent"))?;
         Ok(timeline.entries.clone())
+    }
+
+    /// Asks `provider` one question and returns its answer. The agent runs in a throwaway
+    /// session in an empty temporary directory, which is not kept as a task, in a restrictive
+    /// (`read-only` / `read_only` / `default`) mode, and can only answer in text: every
+    /// permission it asks for is refused.
+    pub async fn complete(
+        &self,
+        provider: &str,
+        prompt: &str,
+        config: &[AgentConfigChoice],
+        timeout: Duration,
+    ) -> IdeResult<String> {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return Err(IdeError::invalid("nothing to ask"));
+        }
+        let spec = provider::load(self.shared.paths.custom_agents_dir.as_deref())
+            .into_iter()
+            .find(|p| p.id == provider)
+            .ok_or_else(|| IdeError::invalid(format!("unknown agent {provider}")))?;
+        let collector = Arc::new(Collector::default());
+        let stderr: Arc<Mutex<VecDeque<String>>> = Arc::default();
+        let on_stderr: Box<dyn Fn(String) + Send + Sync> = {
+            let stderr = stderr.clone();
+            Box::new(move |line| {
+                let mut buf = stderr.lock();
+                if buf.len() == STDERR_LINES {
+                    buf.pop_front();
+                }
+                buf.push_back(line);
+            })
+        };
+        let cwd = std::env::temp_dir().join(format!("ibl-suggest-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&cwd)
+            .map_err(|e| IdeError::internal(format!("cannot create temporary directory {}: {e}", cwd.display())))?;
+        // Only raw reported settings identify mode aliases. Never inject client options or bypass defaults.
+        let fallback_config =
+            self.shared.known.lock().get(&spec.id).map(|known| known.config.clone()).unwrap_or_default();
+        let mut scope = CompletionScope { cwd, peer: None, finished: false };
+        let dialect = acp::Dialect::wrap(collector.clone());
+        let peer = match (self.shared.connector)(&spec, &scope.cwd, dialect.clone(), on_stderr) {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(IdeError::unavailable(format!("Couldn't start {} (`{}`): {e}", spec.name, spec.command)));
+            }
+        };
+        scope.peer = Some(peer.clone());
+        let peer = acp::Conn::new(peer, dialect);
+        let outcome = match tokio::time::timeout(
+            timeout,
+            ask(&peer, &spec, &scope.cwd, prompt, config, &fallback_config, &collector),
+        )
+        .await
+        {
+            Ok(Ok((stop, options))) => {
+                if !options.is_empty() {
+                    self.shared.remember(&spec.id, Some(&options), None);
+                }
+                if stop == "refusal" {
+                    Err(format!("{} refused to answer.", spec.name))
+                } else if stop == "cancelled" {
+                    Err(format!("{} stopped before answering.", spec.name))
+                } else {
+                    // The last updates of a turn can trail its response.
+                    tokio::time::sleep(TURN_GRACE).await;
+                    Ok(collector.text.lock().trim().to_owned())
+                }
+            }
+            Ok(Err(AskError::ReadOnly(message))) => Err(message),
+            // Signed out, or the account was refused (Claude Code: "API Error: 403").
+            Ok(Err(AskError::Rpc(RpcError::Server { message, .. }))) if message.to_lowercase().contains("auth") => {
+                Err(format!("{} needs you to sign in. {}", spec.name, spec.login_hint))
+            }
+            Ok(Err(AskError::Rpc(e))) => Err(describe_error(e, &stderr.lock())),
+            Err(_) => Err(format!("{} didn't answer within {} seconds.", spec.name, timeout.as_secs())),
+        };
+        scope.finish().await;
+        match outcome {
+            Ok(text) if !text.is_empty() => Ok(text),
+            Ok(_) => Err(IdeError::unavailable(format!("{} returned no text.", spec.name))),
+            Err(message) => Err(IdeError::unavailable(message)),
+        }
     }
 
     /// Creates the task (and its worktree) and sends `req.prompt` as its first message.
@@ -421,6 +583,7 @@ impl AgentManager {
             resets_ms: None,
             retry: None,
         };
+        let instructions = req.instructions.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
         let file = TaskFile {
             task: task.clone(),
             session_id: None,
@@ -435,7 +598,7 @@ impl AgentManager {
         self.tasks.write().insert(task.id.clone(), handle.clone());
         handle.emit_task();
         handle.persist();
-        self.shared.runtime.spawn(async move { handle.run(prompt).await });
+        self.shared.runtime.spawn(async move { handle.run(prompt, instructions).await });
         Ok(task)
     }
 
@@ -472,7 +635,7 @@ impl AgentManager {
         };
         match start {
             Some(prompt) => {
-                self.shared.runtime.spawn(async move { task.run(prompt).await });
+                self.shared.runtime.spawn(async move { task.run(prompt, None).await });
             }
             None => {
                 task.persist();
@@ -520,7 +683,7 @@ impl AgentManager {
         task.emit_task();
         match idle {
             Some(item) => {
-                self.shared.runtime.spawn(async move { task.run(item.prompt).await });
+                self.shared.runtime.spawn(async move { task.run(item.prompt, None).await });
             }
             None => {
                 task.send_now.store(true, Ordering::Release);
@@ -860,6 +1023,7 @@ impl Task {
                 busy: false,
             }),
             live: Mutex::new(None),
+            pending_instructions: Mutex::new(None),
             connecting: tokio::sync::Mutex::new(()),
             permissions: Mutex::new(HashMap::new()),
             next_permission: AtomicU32::new(1),
@@ -977,9 +1141,13 @@ impl Task {
 
     /// Runs `prompt`, then the queued messages, until the queue is empty, a turn fails, or
     /// the user stops one. The caller set `busy`.
-    async fn run(self: Arc<Self>, mut prompt: AgentPrompt) {
+    async fn run(self: Arc<Self>, mut prompt: AgentPrompt, instructions: Option<String>) {
+        if instructions.is_some() {
+            *self.pending_instructions.lock() = instructions;
+        }
         loop {
-            let result = self.turn(&prompt).await;
+            let instructions = self.pending_instructions.lock().clone();
+            let result = self.turn(&prompt, instructions.as_deref()).await;
             self.cancel_pending.store(false, Ordering::Release);
             tokio::time::sleep(TURN_GRACE).await;
             let changed = self.state.lock().conversation.end_turn(Some(now_ms()));
@@ -1074,7 +1242,7 @@ impl Task {
     }
 
     /// Sends one prompt, starting the agent first if needed; returns the stop reason.
-    async fn turn(self: &Arc<Self>, prompt: &AgentPrompt) -> Result<String, Failure> {
+    async fn turn(self: &Arc<Self>, prompt: &AgentPrompt, instructions: Option<&str>) -> Result<String, Failure> {
         self.turn_started.store(false, Ordering::Release);
         self.state.lock().task.resets_ms = None;
         let attachments = prompt
@@ -1103,9 +1271,26 @@ impl Task {
         if !prompt.images.is_empty() && !live.capabilities.images {
             return Err(Failure::from("This agent can't read images.".to_owned()));
         }
-        let content = self.content(&live, prompt).await;
+        let wire_prompt;
+        let outgoing = match instructions.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(instructions) => {
+                wire_prompt = AgentPrompt {
+                    text: if prompt.text.is_empty() {
+                        instructions.to_owned()
+                    } else {
+                        format!("{instructions}\n\n{}", prompt.text)
+                    },
+                    files: prompt.files.clone(),
+                    images: prompt.images.clone(),
+                };
+                &wire_prompt
+            }
+            None => prompt,
+        };
+        let content = self.content(&live, outgoing).await;
         let result: Result<Value, RpcError> =
             live.peer.request("session/prompt", json!({ "sessionId": live.session, "prompt": content }), None).await;
+        self.pending_instructions.lock().take();
         match result {
             Ok(v) => Ok(v.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned()),
             Err(e) => Err(self.failure(e)),
@@ -1323,18 +1508,7 @@ impl Task {
 
     /// A user-facing message for a failed request, with the agent's last stderr lines when it died.
     fn describe(&self, e: RpcError) -> String {
-        match e {
-            RpcError::Closed => {
-                let tail: Vec<String> = self.stderr.lock().iter().cloned().collect();
-                if tail.is_empty() {
-                    "The agent process exited.".into()
-                } else {
-                    format!("The agent process exited:\n{}", tail.join("\n"))
-                }
-            }
-            RpcError::Server { message, .. } => message,
-            e => e.to_string(),
-        }
+        describe_error(e, &self.stderr.lock())
     }
 
     /// Applies a `session/update` of session `session` (the task's, or one of its subagents').
@@ -1530,6 +1704,267 @@ impl Task {
     }
 }
 
+/// Gathers what an agent says in a throwaway session and refuses whatever it asks for.
+#[derive(Default)]
+struct Collector {
+    text: Mutex<String>,
+    settings_updates: Mutex<Vec<Value>>,
+}
+
+impl Handler for Collector {
+    fn on_notification(&self, method: &str, params: Value) {
+        let Some(update) = params.get("update").filter(|_| method == "session/update") else { return };
+        match update.get("sessionUpdate").and_then(Value::as_str) {
+            Some("agent_message_chunk") => {
+                if let Some(text) = update.pointer("/content/text").and_then(Value::as_str) {
+                    self.text.lock().push_str(text);
+                }
+            }
+            Some("config_option_update" | "current_mode_update") => {
+                self.settings_updates.lock().push(update.clone());
+            }
+            _ => {}
+        }
+    }
+
+    fn on_request(&self, method: &str, _: Value) -> Result<Value, (i64, String)> {
+        match method {
+            "session/request_permission" => Ok(json!({ "outcome": { "outcome": "cancelled" } })),
+            _ => Err((codes::METHOD_NOT_FOUND, format!("unsupported method {method}"))),
+        }
+    }
+}
+
+enum AskError {
+    Rpc(RpcError),
+    ReadOnly(String),
+}
+
+impl From<RpcError> for AskError {
+    fn from(e: RpcError) -> Self {
+        Self::Rpc(e)
+    }
+}
+
+fn is_mode_option(o: &AgentConfigOption) -> bool {
+    o.id == "mode" || o.category.as_deref() == Some("mode")
+}
+
+/// Picks a restrictive mode (`read-only`, `read_only`, `default`) from the session's reported
+/// options, or returns `Err` naming the available values when none is allowlisted.
+fn restrictive_mode(options: &[AgentConfigOption]) -> Result<String, String> {
+    let Some(opt) = options.iter().find(|o| is_mode_option(o)) else {
+        return Err("none".into());
+    };
+    if opt.values.is_empty() {
+        return Err("none".into());
+    }
+    for candidate in ["read-only", "read_only", "default"] {
+        if opt.values.iter().any(|v| v.value == candidate) {
+            return Ok(candidate.to_owned());
+        }
+    }
+    Err(opt.values.iter().map(|v| v.value.as_str()).collect::<Vec<_>>().join(", "))
+}
+
+/// Sets `target` to `value`; returns a conflicting mode reported by the reply.
+async fn set_option(
+    peer: &acp::Conn,
+    id: &str,
+    options: &mut Vec<AgentConfigOption>,
+    target: &AgentConfigOption,
+    value: &str,
+) -> Result<Option<String>, RpcError> {
+    let (method, mut params) = config::set_request(target, value);
+    params["sessionId"] = json!(id);
+    let reply: Value = peer.request(method, params, None).await?;
+    let reported_current = reply
+        .get("configOptions")
+        .map(config::parse_options)
+        .and_then(|fresh| fresh.into_iter().find(|o| o.id == target.id))
+        .and_then(|o| o.current);
+    if let Some(fresh) = reply.get("configOptions") {
+        config::merge_update(options, fresh);
+    }
+    if let Some(o) = options.iter_mut().find(|o| o.id == target.id)
+        && (!is_mode_option(target) || reported_current.is_none())
+    {
+        o.current = Some(value.to_owned());
+    }
+    Ok(reported_current.filter(|current| is_mode_option(target) && current != value))
+}
+
+/// One question in a new session (`initialize`, `session/new`, mandatory restrictive mode +
+/// optional `session/set_*`, `session/prompt`).
+async fn ask(
+    peer: &acp::Conn,
+    spec: &provider::ProviderSpec,
+    cwd: &Path,
+    prompt: &str,
+    config: &[AgentConfigChoice],
+    fallback_config: &[AgentConfigOption],
+    collector: &Collector,
+) -> Result<(String, Vec<AgentConfigOption>), AskError> {
+    peer.initialize(&client_info()).await?;
+    let cwd_s = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf()).to_string_lossy().into_owned();
+    let session: Value = peer.request("session/new", json!({ "cwd": cwd_s, "mcpServers": [] }), None).await?;
+    let id = session
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::Protocol("the agent returned no session".into()))?;
+    let mut options = config::options_of(&session);
+    collector.merge_config(&mut options).await;
+    let read_only = |modes: String| {
+        AskError::ReadOnly(format!(
+            "{} cannot run read-only (modes: {modes}). Choose Claude, Codex or Antigravity for commit suggestions.",
+            spec.name
+        ))
+    };
+    // Checked before any setting is sent, so an agent without a restrictive mode gets none.
+    let chosen_mode = restrictive_mode(&options).map_err(read_only)?;
+    tracing::info!(
+        agent = %spec.id,
+        mode = %chosen_mode,
+        cwd = %cwd.display(),
+        "running read-only completion"
+    );
+    let has_reported = !options.is_empty();
+    for choice in config {
+        let value = choice.value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let matches = |o: &AgentConfigOption| o.id == choice.id || o.category.as_deref() == Some(choice.id.as_str());
+        // The caller cannot choose the mode.
+        if choice.id == "mode"
+            || options.iter().any(|o| matches(o) && is_mode_option(o))
+            || fallback_config.iter().any(|o| matches(o) && is_mode_option(o))
+        {
+            continue;
+        }
+        let target = options
+            .iter()
+            .find(|o| matches(o))
+            .cloned()
+            .or_else(|| fallback_config.iter().find(|o| matches(o)).cloned())
+            .unwrap_or_else(|| AgentConfigOption {
+                id: choice.id.clone(),
+                name: choice.id.clone(),
+                description: None,
+                category: Some(choice.id.clone()),
+                current: None,
+                values: Vec::new(),
+                via: AgentConfigVia::Option,
+            });
+        if has_reported && target.current.as_deref() == Some(value) {
+            continue;
+        }
+        if let Err(e) = set_option(peer, id, &mut options, &target, value).await {
+            tracing::warn!("complete: setting {} to {} failed: {e}", target.id, value);
+        }
+        collector.merge_config(&mut options).await;
+    }
+    // The mode goes last, so no other setting can change it afterwards. It is picked again because
+    // a reply to an earlier setting can replace the modes the agent reports.
+    let mode = restrictive_mode(&options).map_err(read_only)?;
+    let Some(target) = options.iter().find(|o| is_mode_option(o)).cloned() else {
+        return Err(read_only("none".into()));
+    };
+    // Restore it explicitly even when the setup snapshot already named this mode.
+    if let Some(reported) = set_option(peer, id, &mut options, &target, &mode).await? {
+        return Err(read_only(format!("reported {reported} after selecting {mode}")));
+    }
+    collector.merge_config(&mut options).await;
+    // A setting response or notification can withdraw the mode; fail closed before prompting.
+    if !options.iter().any(|o| {
+        is_mode_option(o) && o.current.as_deref() == Some(mode.as_str()) && o.values.iter().any(|v| v.value == mode)
+    }) {
+        return Err(read_only(restrictive_mode(&options).err().unwrap_or_else(|| "changed after selection".into())));
+    }
+    let reply: Value = peer
+        .request("session/prompt", json!({ "sessionId": id, "prompt": [{ "type": "text", "text": prompt }] }), None)
+        .await?;
+    let stop = reply.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned();
+    Ok((stop, options))
+}
+
+impl Collector {
+    async fn merge_config(&self, options: &mut Vec<AgentConfigOption>) {
+        // Notifications are dispatched separately and can trail the response that reports them.
+        tokio::time::sleep(TURN_GRACE).await;
+        for update in self.settings_updates.lock().drain(..) {
+            if let Some(fresh) = update.get("configOptions") {
+                config::merge_update(options, fresh);
+            } else if let Some(mode) = update.get("currentModeId").and_then(Value::as_str)
+                && let Some(option) = options.iter_mut().find(|option| is_mode_option(option))
+            {
+                option.current = Some(mode.to_owned());
+            }
+        }
+    }
+}
+
+/// Owns the throwaway session even if its caller drops the completion future.
+struct CompletionScope {
+    cwd: PathBuf,
+    peer: Option<Peer>,
+    finished: bool,
+}
+
+async fn remove_completion_dir(cwd: &Path) {
+    // On Windows a killed CLI can retain its cwd until process shutdown finishes.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut delay = Duration::from_millis(20);
+    loop {
+        match std::fs::remove_dir_all(cwd) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if tokio::time::Instant::now() >= deadline => {
+                tracing::warn!("complete: removing temporary cwd {} failed: {error}", cwd.display());
+                return;
+            }
+            Err(_) => {
+                tokio::time::sleep(delay.min(deadline.saturating_duration_since(tokio::time::Instant::now()))).await;
+                delay = (delay * 2).min(Duration::from_millis(250));
+            }
+        }
+    }
+}
+
+impl CompletionScope {
+    async fn finish(&mut self) {
+        if let Some(peer) = self.peer.take() {
+            peer.kill();
+        }
+        remove_completion_dir(&self.cwd).await;
+        self.finished = true;
+    }
+}
+
+impl Drop for CompletionScope {
+    fn drop(&mut self) {
+        if let Some(peer) = self.peer.take() {
+            peer.kill();
+        }
+        if self.finished {
+            return;
+        }
+        // Cancellation still cleans an unlocked cwd synchronously. A CLI holding it needs
+        // the runtime to finish killing its process before the background retry succeeds.
+        match std::fs::remove_dir_all(&self.cwd) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => match tokio::runtime::Handle::try_current() {
+                Ok(runtime) => {
+                    let cwd = self.cwd.clone();
+                    runtime.spawn(async move { remove_completion_dir(&cwd).await });
+                }
+                Err(_) => tracing::warn!("complete: removing temporary cwd {} failed: {error}", self.cwd.display()),
+            },
+        }
+    }
+}
+
 /// Answers the agent's requests on behalf of one task.
 struct Client {
     task: Weak<Task>,
@@ -1550,6 +1985,18 @@ impl Handler for Client {
             "session/request_permission" => Ok(task.ask_permission(&params)),
             _ => Err((codes::METHOD_NOT_FOUND, format!("unsupported method {method}"))),
         }
+    }
+}
+
+/// A user-facing message for a failed request, with the agent's last stderr lines when it died.
+fn describe_error(e: RpcError, stderr: &VecDeque<String>) -> String {
+    match e {
+        RpcError::Closed if stderr.is_empty() => "The agent process exited.".into(),
+        RpcError::Closed => {
+            format!("The agent process exited:\n{}", stderr.iter().map(String::as_str).collect::<Vec<_>>().join("\n"))
+        }
+        RpcError::Server { message, .. } => message,
+        e => e.to_string(),
     }
 }
 

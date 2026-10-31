@@ -318,6 +318,9 @@ pub enum AgentEntry {
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProvider {
+    /// Additional user arguments, independent of the provider definition.
+    #[serde(default)]
+    pub extra_args: Vec<String>,
     pub id: String,
     pub name: String,
     /// The command line that starts its ACP server.
@@ -367,6 +370,9 @@ pub struct AgentProbe {
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NewAgentTask {
+    /// Instructions prepended to the first wire prompt, outside the displayed conversation.
+    #[serde(default)]
+    pub instructions: Option<String>,
     /// Validated by the host; defaults to the window project root.
     #[serde(default)]
     pub project_root: Option<IpcPath>,

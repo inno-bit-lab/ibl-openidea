@@ -1015,3 +1015,35 @@ fn tool_calls_plans_and_subagents() {
     assert_eq!(finished[1].update["content"][0]["text"], "It is x");
     assert_eq!(finished[1].update["senderSessionId"], "ag");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claude_native_launch_puts_extra_args_before_shim_args() {
+    #[derive(Default)]
+    struct CaptureLaunch {
+        args: Mutex<Vec<Vec<String>>>,
+    }
+    impl Cli for CaptureLaunch {
+        fn launch(&self, launch: &Launch, _: OnStderr) -> std::io::Result<cli::CliIo> {
+            self.args.lock().push(launch.args.clone());
+            Err(std::io::Error::other("fixture captured launch"))
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    crate::provider::set_custom_args(dir.path(), "claude", &["--fixture-extra".into(), "value".into()]).unwrap();
+    let spec = crate::provider::load(Some(dir.path())).into_iter().find(|p| p.id == "claude").unwrap();
+    assert_eq!(spec.driver, crate::provider::Driver::Claude);
+    let cli = Arc::new(CaptureLaunch::default());
+    let h = Harness::connect(cli.clone(), dir.path().into(), dir.path().join("pending"), dir.path().into(), spec.args)
+        .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        h.request("session/new", json!({"cwd":dir.path(),"mcpServers":[]})),
+    )
+    .await;
+    h.client.kill();
+    assert!(result.expect("launch refusal must complete").is_err());
+    let launches = cli.args.lock();
+    assert_eq!(launches.len(), 1);
+    assert_eq!(&launches[0][..2], ["--fixture-extra", "value"]);
+    assert_eq!(&launches[0][2..2 + cli::BASE_ARGS.len()], cli::BASE_ARGS);
+}

@@ -3,15 +3,40 @@
 use super::*;
 use tokio::io::duplex;
 
+/// The modes reported by the fixture; None keeps upstream task-test defaults.
+type FakeModes = Option<(String, Vec<(&'static str, &'static str)>)>;
+
 /// Says "Hi", edits a file, asks to run a command and reports what it was allowed.
 #[derive(Default)]
 struct FakeAgent {
     /// Every connection's agent side, kept open.
     servers: Mutex<Vec<Peer>>,
     calls: Mutex<Vec<String>>,
+    prompts: Mutex<Vec<String>>,
+    modes: Mutex<FakeModes>,
+    fail_set_mode: AtomicBool,
+    drops_mode_on_set: AtomicBool,
+    notifies_mode_change_on_set: AtomicBool,
+    notifies_mode_change_after_mode_set: AtomicBool,
+    reports_previous_mode: AtomicBool,
+    reports_mode_without_current: AtomicBool,
+    reports_conflicting_legacy_mode: AtomicBool,
+    fails_new_once: AtomicBool,
+    cwds: Mutex<Vec<PathBuf>>,
+    requests: Mutex<Vec<(String, Value)>>,
+    permissions: Mutex<Vec<Value>>,
+    v2: AtomicBool,
 }
 
 impl FakeAgent {
+    fn with_modes(current: &str, available: &[(&'static str, &'static str)]) -> Self {
+        Self { modes: Mutex::new(Some((current.to_owned(), available.to_vec()))), ..Self::default() }
+    }
+
+    fn without_modes() -> Self {
+        Self { modes: Mutex::new(Some((String::new(), Vec::new()))), ..Self::default() }
+    }
+
     /// The connection opened last: the agent restarted, or a fork's.
     fn latest(&self) -> Peer {
         self.servers.lock().last().cloned().expect("a connection")
@@ -23,10 +48,15 @@ impl FakeAgent {
     }
 
     fn say(&self, session: &str, text: &str) {
-        self.update(
-            session,
-            json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}),
-        );
+        if self.v2.load(Ordering::Relaxed) {
+            self.update(
+                session,
+                json!({"sessionUpdate":"agent_message", "messageId":uuid::Uuid::new_v4().to_string(),
+                "content":[{"type":"text","text":text}]}),
+            );
+        } else {
+            self.update(session, json!({"sessionUpdate":"agent_message_chunk", "content":{"type":"text","text":text}}));
+        }
     }
 }
 
@@ -83,19 +113,62 @@ impl Handler for FakeAgent {
 
     fn on_request(&self, method: &str, params: Value) -> Result<Value, (i64, String)> {
         self.calls.lock().push(method.to_owned());
+        self.requests.lock().push((method.to_owned(), params.clone()));
         let session = params.get("sessionId").and_then(Value::as_str).unwrap_or("s1").to_owned();
         match method {
             "initialize" => {
+                if self.v2.load(Ordering::Relaxed) {
+                    return Ok(
+                        json!({"protocolVersion":2,"info":{"name":"fixture","version":"2"},"capabilities":{"session":{}}}),
+                    );
+                }
                 if params.pointer("/clientCapabilities/subagents").is_some_and(Value::is_object) {
                     self.calls.lock().push("subagents".into());
                 }
                 Ok(json!({"protocolVersion": 1, "agentCapabilities": {"loadSession": true,
                     "sessionCapabilities": {"fork": {}}, "_meta": {"openidea": {"rollback": true, "steer": true}}}}))
             }
-            "session/new" => Ok(json!({"sessionId": "s1",
-                "modes": {"currentModeId": "ask", "availableModes": [{"id": "ask", "name": "Ask"}, {"id": "code", "name": "Code"}]},
-                "configOptions": [{"id": "model", "category": "model", "type": "select", "currentValue": "big",
-                    "options": [{"value": "big", "name": "Big"}, {"value": "small", "name": "Small"}]}]})),
+            "session/new" => {
+                if self.fails_new_once.swap(false, Ordering::Relaxed) {
+                    return Err((codes::INTERNAL_ERROR, "fixture startup failed".into()));
+                }
+                let mut reply = json!({
+                    "sessionId": "s1",
+                    "configOptions": [{"id": "model", "category": "model", "type": "select", "currentValue": "big",
+                        "options": [{"value": "big", "name": "Big"}, {"value": "small", "name": "Small"}]}]
+                });
+                let modes_cfg = self.modes.lock().clone();
+                match modes_cfg {
+                    None => {
+                        reply["modes"] = json!({
+                            "currentModeId": "ask",
+                            "availableModes": [{"id": "ask", "name": "Ask"}, {"id": "code", "name": "Code"}]
+                        });
+                    }
+                    Some((_, ref avail)) if avail.is_empty() => {}
+                    Some((current, avail)) => {
+                        let available: Vec<Value> =
+                            avail.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect();
+                        reply["modes"] = json!({
+                            "currentModeId": current,
+                            "availableModes": available,
+                        });
+                    }
+                }
+                if (self.drops_mode_on_set.load(Ordering::Relaxed) || self.v2.load(Ordering::Relaxed))
+                    && let Some(modes) = reply.as_object_mut().unwrap().remove("modes")
+                {
+                    let values: Vec<Value> = modes["availableModes"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|m| json!({"value": m["id"], "name": m["name"]}))
+                        .collect();
+                    reply["configOptions"].as_array_mut().unwrap().push(json!({"id": "mode", "category": "mode",
+                        "type": "select", "currentValue": modes["currentModeId"], "options": values}));
+                }
+                Ok(reply)
+            }
             "session/fork" => Ok(json!({"sessionId": "s2"})),
             "_openidea/rollback" | "_openidea/steer" => {
                 let detail = params.get("turns").cloned().unwrap_or_else(|| params["prompt"][0]["text"].clone());
@@ -107,11 +180,54 @@ impl Handler for FakeAgent {
                 Ok(json!({}))
             }
             "session/set_config_option" | "session/set_mode" => {
+                let is_mode =
+                    method == "session/set_mode" || params.get("configId").and_then(Value::as_str) == Some("mode");
+                if is_mode && self.fail_set_mode.load(Ordering::Relaxed) {
+                    return Err((codes::INTERNAL_ERROR, "cannot set mode".into()));
+                }
                 self.calls.lock().push(format!("{method} {}", params.get("value").or(params.get("modeId")).unwrap()));
+                if is_mode && self.reports_conflicting_legacy_mode.load(Ordering::Relaxed) {
+                    return Ok(json!({"configOptions":[{"id":"mode", "category":"permissions", "type":"select",
+                        "currentValue":"bypassPermissions",
+                        "options":[{"value":"read-only"},{"value":"bypassPermissions"}]}]}));
+                }
+                if is_mode
+                    && (self.reports_previous_mode.load(Ordering::Relaxed)
+                        || self.reports_mode_without_current.load(Ordering::Relaxed))
+                {
+                    let modes = self.modes.lock();
+                    let (current, available) = modes.as_ref().unwrap();
+                    let options: Vec<Value> =
+                        available.iter().map(|(id, name)| json!({"value": id, "name": name})).collect();
+                    let current = if self.reports_mode_without_current.load(Ordering::Relaxed) {
+                        json!(123)
+                    } else {
+                        json!(current)
+                    };
+                    return Ok(json!({"configOptions":[{"id":"mode", "category":"mode", "type":"select",
+                        "currentValue":current, "options":options}]}));
+                }
+                if is_mode && self.notifies_mode_change_after_mode_set.load(Ordering::Relaxed) {
+                    self.update(
+                        &session,
+                        json!({"sessionUpdate":"current_mode_update","currentModeId":"bypassPermissions"}),
+                    );
+                }
+                if !is_mode && self.notifies_mode_change_on_set.load(Ordering::Relaxed) {
+                    self.update(
+                        &session,
+                        json!({"sessionUpdate":"current_mode_update","currentModeId":"bypassPermissions"}),
+                    );
+                }
+                if !is_mode && self.drops_mode_on_set.load(Ordering::Relaxed) {
+                    return Ok(json!({"configOptions": [{"id": "model", "category": "model", "type": "select",
+                        "currentValue": "small", "options": [{"value": "big"}, {"value": "small"}]}]}));
+                }
                 Ok(json!({}))
             }
             "session/prompt" => {
                 let text = params.pointer("/prompt/0/text").and_then(Value::as_str).unwrap_or_default().to_owned();
+                self.prompts.lock().push(text.clone());
                 if text == "again" {
                     self.say(&session, "second turn");
                     return Ok(json!({"stopReason": "end_turn"}));
@@ -135,7 +251,7 @@ impl Handler for FakeAgent {
                 }
                 if text == "wait" {
                     // Works until cancelled.
-                    while !self.calls.lock().iter().any(|c| c == "session/cancel") {
+                    while !self.latest().is_closed() && !self.calls.lock().iter().any(|c| c == "session/cancel") {
                         std::thread::sleep(Duration::from_millis(5));
                     }
                     return Ok(json!({"stopReason": "cancelled"}));
@@ -155,17 +271,28 @@ impl Handler for FakeAgent {
                     "content": [{"type": "diff", "path": "/p/a.rs", "oldText": "a\n", "newText": "b\n"}]}),
                 );
                 let peer = self.latest();
+                let mut permission = json!({"sessionId":session,
+                    "toolCall":{"toolCallId":"t1","title":"Run cargo test"},
+                    "options":[{"optionId":"yes","name":"Allow","kind":"allow_once"},
+                               {"optionId":"no","name":"Reject","kind":"reject_once"}]});
+                if self.v2.load(Ordering::Relaxed) {
+                    permission.as_object_mut().unwrap().remove("toolCall");
+                    permission["subject"] = json!({"type":"tool_call","toolCall":{"toolCallId":"t1","kind":"execute"}});
+                    permission["title"] = json!("Run cargo test");
+                }
                 let answer: Value = tokio::runtime::Handle::current()
-                    .block_on(peer.request(
-                        "session/request_permission",
-                        json!({"sessionId": session, "toolCall": {"toolCallId": "t1", "title": "Run cargo test"},
-                            "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"},
-                                        {"optionId": "no", "name": "Reject", "kind": "reject_once"}]}),
-                        None,
-                    ))
+                    .block_on(peer.request("session/request_permission", permission, None))
                     .unwrap();
+                self.permissions.lock().push(answer.clone());
                 let chosen = answer.pointer("/outcome/optionId").and_then(Value::as_str).unwrap_or("none");
                 self.say(&session, &format!("chose {chosen}"));
+                if self.v2.load(Ordering::Relaxed) {
+                    self.update(
+                        &session,
+                        json!({"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}),
+                    );
+                    return Ok(json!({}));
+                }
                 Ok(json!({"stopReason": "end_turn"}))
             }
             _ => Err((codes::METHOD_NOT_FOUND, method.to_owned())),
@@ -178,7 +305,8 @@ fn manager(dir: &Path, agent: Arc<FakeAgent>) -> AgentManager {
 }
 
 fn manager_at(dir: &Path, models_file: &Path, agent: Arc<FakeAgent>) -> AgentManager {
-    let connector: Connector = Arc::new(move |_spec, _cwd, client, _stderr| {
+    let connector: Connector = Arc::new(move |_spec, cwd, client, _stderr| {
+        agent.cwds.lock().push(cwd.to_path_buf());
         let (a, b) = duplex(1 << 20);
         let (ar, aw) = tokio::io::split(a);
         let (br, bw) = tokio::io::split(b);
@@ -214,6 +342,7 @@ async fn commands_are_remembered_per_project_and_merged_with_skills_on_disk() {
     assert_eq!(names(mgr_a.commands("claude", None).await.unwrap()), ["triage"]);
     let task = mgr_a
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("Fix the lexer"),
             provider: "claude".into(),
@@ -254,6 +383,7 @@ async fn builtin_commands_only_fill_verified_gaps_and_preserve_advertised_metada
     assert_eq!(commands.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["compact"]);
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("Hello"),
             provider: "opencode".into(),
@@ -311,6 +441,7 @@ async fn a_task_runs_asks_for_permission_and_survives_a_restart() {
 
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("Fix the lexer\nmore detail"),
             provider: "claude".into(),
@@ -418,6 +549,7 @@ async fn messages_sent_while_busy_are_queued_and_send_now_interrupts() {
     let mgr = manager(tmp.path(), agent.clone());
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("wait"),
             provider: "claude".into(),
@@ -473,6 +605,7 @@ async fn subagents_get_their_own_conversation() {
     let mgr = manager(tmp.path(), agent.clone());
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("delegate"),
             provider: "claude".into(),
@@ -567,6 +700,7 @@ async fn cancelling_resolves_the_open_permission_and_delete_forgets_the_task() {
     let mgr = manager(tmp.path(), Arc::new(FakeAgent::default()));
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("do it"),
             provider: "codex".into(),
@@ -589,6 +723,7 @@ async fn cancelling_resolves_the_open_permission_and_delete_forgets_the_task() {
     assert!(!tmp.path().join("store").join(format!("{}.json", task.id)).exists());
     assert!(
         mgr.create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text(" "),
             provider: "codex".into(),
@@ -635,6 +770,7 @@ async fn real_claude_task_in_a_worktree() {
     );
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("Create a file named hello.txt containing the single word hi. Do nothing else."),
             provider: "claude".into(),
@@ -684,6 +820,7 @@ async fn forks_rollbacks_and_steering() {
     let agent = Arc::new(FakeAgent::default());
     let mgr = manager(tmp.path(), agent.clone());
     let new = |prompt: &str| NewAgentTask {
+        instructions: None,
         project_root: None,
         prompt: text(prompt),
         provider: "claude".into(),
@@ -735,6 +872,7 @@ async fn usage_limits_and_late_settings() {
     let mgr = manager(tmp.path(), agent.clone());
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("limit"),
             provider: "claude".into(),
@@ -778,6 +916,7 @@ async fn cursor_approval_switch_resolves_pending_and_survives_restart() {
     let agent = Arc::new(FakeAgent::default());
     let mgr = manager(tmp.path(), agent.clone());
     let new = || NewAgentTask {
+        instructions: None,
         project_root: None,
         prompt: text("Fix"),
         provider: "cursor".into(),
@@ -824,6 +963,7 @@ async fn cursor_approval_choice_applies_before_first_prompt() {
     let mgr = manager(tmp.path(), Arc::new(FakeAgent::default()));
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("Fix"),
             provider: "cursor".into(),
@@ -844,6 +984,7 @@ async fn archived_tasks_can_be_restored_and_continue_their_session() {
     let mgr = manager(tmp.path(), agent.clone());
     let task = mgr
         .create(NewAgentTask {
+            instructions: None,
             project_root: None,
             prompt: text("again"),
             provider: "claude".into(),
@@ -895,6 +1036,7 @@ async fn task_project_root_controls_local_and_worktree_repositories() {
     for isolation in [Isolation::Local, Isolation::Worktree] {
         let task = mgr
             .create(NewAgentTask {
+                instructions: None,
                 project_root: Some(IpcPath(member.clone())),
                 prompt: text("member task"),
                 provider: "claude".into(),
@@ -941,4 +1083,709 @@ async fn task_project_root_controls_local_and_worktree_repositories() {
         std::fs::write(member.join("file.txt"), "original\n").unwrap();
     }
     assert_eq!(git(&["worktree", "list", "--porcelain"]).matches("worktree ").count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_answers_in_a_throwaway_session_and_refuses_permissions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("ask", &[("ask", "Ask"), ("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    let choices = vec![
+        AgentConfigChoice { id: "model".into(), value: "small".into() },
+        AgentConfigChoice { id: "thought_level".into(), value: "low".into() },
+    ];
+    let answer = mgr.complete("claude", "  Name this change  ", &choices, Duration::from_secs(5)).await.unwrap();
+    // Only the agent's text is kept (not its tool calls), and the permission it asked for was refused.
+    assert_eq!(answer, "Hichose none");
+    assert_eq!(agent.calls.lock().iter().filter(|c| *c == "session/prompt").count(), 1);
+    assert!(agent.calls.lock().contains(&"session/set_mode \"default\"".to_owned()));
+    assert!(agent.calls.lock().contains(&"session/set_config_option \"small\"".to_owned()));
+    assert!(agent.calls.lock().contains(&"session/set_config_option \"low\"".to_owned()));
+    // No task was created or saved.
+    assert!(mgr.tasks.read().is_empty());
+    assert!(!tmp.path().join("store").exists());
+    assert!(mgr.complete("claude", "   ", &[], Duration::from_secs(5)).await.is_err());
+    assert!(mgr.complete("no-such-agent", "hi", &[], Duration::from_secs(5)).await.is_err());
+}
+
+#[test]
+fn restrictive_mode_prefers_read_only_variants_before_default() {
+    let make_opts = |vals: &[&str]| {
+        vec![AgentConfigOption {
+            id: "mode".into(),
+            name: "Mode".into(),
+            description: None,
+            category: Some("mode".into()),
+            current: None,
+            values: vals
+                .iter()
+                .map(|v| AgentConfigValue { value: (*v).into(), name: (*v).into(), description: None })
+                .collect(),
+            via: AgentConfigVia::Mode,
+        }]
+    };
+    assert_eq!(restrictive_mode(&make_opts(&["default", "read_only", "read-only"])), Ok("read-only".to_owned()));
+    assert_eq!(restrictive_mode(&make_opts(&["default", "read_only"])), Ok("read_only".to_owned()));
+    assert_eq!(restrictive_mode(&make_opts(&["yolo", "default", "plan"])), Ok("default".to_owned()));
+    assert_eq!(restrictive_mode(&make_opts(&["yolo", "auto_edit"])), Err("yolo, auto_edit".to_owned()));
+    assert_eq!(restrictive_mode(&make_opts(&[])), Err("none".to_owned()));
+    assert_eq!(restrictive_mode(&[]), Err("none".to_owned()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_picks_an_allowlisted_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("bypassPermissions", "Bypass"), ("default", "Default"), ("plan", "Plan")],
+    ));
+    let mgr = manager(tmp.path(), agent.clone());
+    let answer = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap();
+    assert_eq!(answer, "Hichose none");
+    assert!(agent.calls.lock().contains(&"session/set_mode \"default\"".to_owned()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_an_agent_with_only_permissive_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("yolo", &[("yolo", "YOLO"), ("auto_edit", "Auto Edit")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    let err = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert_eq!(
+        err.message,
+        "Claude Code cannot run read-only (modes: yolo, auto_edit). Choose Claude, Codex or Antigravity for commit suggestions."
+    );
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_an_agent_without_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::without_modes());
+    let mgr = manager(tmp.path(), agent.clone());
+    let err = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert_eq!(
+        err.message,
+        "Claude Code cannot run read-only (modes: none). Choose Claude, Codex or Antigravity for commit suggestions."
+    );
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_when_the_mode_cannot_be_set() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("ask", &[("ask", "Ask"), ("default", "Default")]));
+    agent.fail_set_mode.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let err = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert!(err.message.contains("cannot set mode"), "unexpected error: {}", err.message);
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_when_the_mode_reply_reports_another_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("read-only", "Read only"), ("bypassPermissions", "Bypass")],
+    ));
+    agent.v2.store(true, Ordering::Relaxed);
+    agent.reports_previous_mode.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let error = mgr.complete("claude", "Name this change", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert!(error.message.contains("cannot run read-only"), "{error}");
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_accepts_a_mode_reply_without_a_parseable_current_value() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("read-only", "Read only"), ("bypassPermissions", "Bypass")],
+    ));
+    agent.v2.store(true, Ordering::Relaxed);
+    agent.reports_mode_without_current.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    assert!(!mgr.complete("claude", "Name this change", &[], Duration::from_secs(5)).await.unwrap().is_empty());
+    assert_eq!(agent.prompts.lock().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_a_conflicting_mode_reply_with_a_stale_legacy_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent =
+        Arc::new(FakeAgent::with_modes("read-only", &[("read-only", "Read only"), ("bypassPermissions", "Bypass")]));
+    agent.reports_conflicting_legacy_mode.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let error = mgr.complete("claude", "Name this change", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert!(error.message.contains("cannot run read-only"), "{error}");
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_when_another_setting_drops_the_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("ask", &[("ask", "Ask"), ("default", "Default")]));
+    agent.drops_mode_on_set.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let choices = vec![AgentConfigChoice { id: "model".into(), value: "small".into() }];
+    let err = mgr.complete("claude", "Suggest commit message", &choices, Duration::from_secs(5)).await.unwrap_err();
+    assert_eq!(
+        err.message,
+        "Claude Code cannot run read-only (modes: none). Choose Claude, Codex or Antigravity for commit suggestions."
+    );
+    let calls = agent.calls.lock().clone();
+    assert!(calls.contains(&"session/set_config_option \"small\"".to_owned()), "{calls:?}");
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_ignores_a_caller_mode_choice() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("yolo", &[("yolo", "YOLO"), ("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    let choices = vec![AgentConfigChoice { id: "mode".into(), value: "yolo".into() }];
+    let answer = mgr.complete("claude", "Suggest commit message", &choices, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(answer, "Hichose none");
+    let calls = agent.calls.lock().clone();
+    assert!(calls.contains(&"session/set_mode \"default\"".to_owned()), "{calls:?}");
+    assert!(!calls.iter().any(|c| c.contains("yolo")), "{calls:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_runs_outside_the_project_and_cleans_up() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("ask", &[("ask", "Ask"), ("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    let _ = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await.unwrap();
+    let cwds = agent.cwds.lock().clone();
+    assert_eq!(cwds.len(), 1);
+    let cwd = &cwds[0];
+    assert_ne!(cwd, tmp.path());
+    assert!(!cwd.starts_with(tmp.path()));
+    assert!(!cwd.exists(), "temporary cwd {} should be removed after complete", cwd.display());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_never_selects_the_bypass_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("bypassPermissions", "Bypass"), ("default", "Default")],
+    ));
+    let mgr = manager(tmp.path(), agent.clone());
+    let raw = config::options_of(&json!({"configOptions":[{"id":"approval","category":"mode","type":"select",
+        "currentValue":"bypassPermissions","options":[{"value":"bypassPermissions"},{"value":"default"}]}]}));
+    mgr.shared.known.lock().insert("claude".into(), Known { config: raw, ..Default::default() });
+    mgr.complete(
+        "claude",
+        "Name this change",
+        &[AgentConfigChoice { id: "approval".into(), value: "bypassPermissions".into() }],
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    let requests = agent.requests.lock();
+    assert!(requests.iter().any(|(m, p)| m == "session/set_mode" && p["modeId"] == "default"));
+    assert!(!requests.iter().any(|(m, p)| m.starts_with("session/set_")
+        && (p["value"] == "bypassPermissions" || p["modeId"] == "bypassPermissions")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_negotiates_with_initialize_params() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    mgr.complete("claude", "Name this change", &[], Duration::from_secs(5)).await.unwrap();
+    let requests = agent.requests.lock();
+    let (_, params) = requests.iter().find(|(m, _)| m == "initialize").unwrap();
+    assert_eq!(params, &acp::initialize_params(&client_info()));
+    assert_eq!(params["clientCapabilities"]["fs"]["writeTextFile"], false);
+    assert_eq!(params["clientCapabilities"]["terminal"], false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_picks_native_claude_and_codex_modes() {
+    for (provider, mode) in [("claude", "default"), ("codex", "read-only")] {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent = Arc::new(FakeAgent::with_modes(
+            "bypassPermissions",
+            &[("bypassPermissions", "Bypass"), (mode, "Restrictive")],
+        ));
+        let mgr = manager(tmp.path(), agent.clone());
+        assert_eq!(
+            mgr.complete(provider, "Name this change", &[], Duration::from_secs(5)).await.unwrap(),
+            "Hichose none"
+        );
+        assert!(agent.requests.lock().iter().any(|(m, p)| m == "session/set_mode" && p["modeId"] == mode));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_permissions_on_a_v2_agent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("bypassPermissions", "Bypass"), ("read-only", "Read only")],
+    ));
+    agent.v2.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let choices = [AgentConfigChoice { id: "model".into(), value: "small".into() }];
+    assert_eq!(
+        mgr.complete("codex", "Name this change", &choices, Duration::from_secs(5)).await.unwrap(),
+        "Hichose none"
+    );
+    assert_eq!(*agent.permissions.lock(), [json!({"outcome":{"outcome":"cancelled"}})]);
+    let requests = agent.requests.lock();
+    for (_, p) in requests.iter().filter(|(m, _)| m == "session/set_config_option") {
+        assert_eq!(p["type"], "id");
+    }
+    assert!(requests.iter().any(|(m, p)| m == "session/set_config_option" && p["value"] == "read-only"));
+    assert!(mgr.tasks.read().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_does_not_invent_modes_from_cached_settings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::without_modes());
+    let mgr = manager(tmp.path(), agent.clone());
+    let config = config::options_of(
+        &json!({"modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"}]}}),
+    );
+    mgr.shared.known.lock().insert("claude".into(), Known { config, ..Default::default() });
+    assert!(
+        mgr.complete("claude", "Name this change", &[], Duration::from_secs(5))
+            .await
+            .unwrap_err()
+            .message
+            .contains("cannot run read-only")
+    );
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_cleans_up_after_errors_timeouts_and_cancellation() {
+    for cancel in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default")]));
+        let mgr = manager(tmp.path(), agent.clone());
+        let complete = mgr.complete("claude", "wait", &[], Duration::from_millis(150));
+        if cancel {
+            assert!(tokio::time::timeout(Duration::from_millis(75), complete).await.is_err());
+        } else {
+            assert!(complete.await.unwrap_err().message.contains("didn't answer"));
+        }
+        let cwds = agent.cwds.lock().clone();
+        assert_eq!(cwds.len(), 1);
+        assert!(!cwds[0].exists());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !agent.latest().is_closed() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("killing completion must close its fixture connection");
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::without_modes());
+    let mgr = manager(tmp.path(), agent.clone());
+    assert!(mgr.complete("claude", "question", &[], Duration::from_secs(5)).await.is_err());
+    assert!(!agent.cwds.lock()[0].exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn instructions_go_to_the_first_turn_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let mgr = manager(tmp.path(), agent.clone());
+    let task = mgr
+        .create(NewAgentTask {
+            project_root: None,
+            prompt: text("Fix the lexer"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+            instructions: Some("  Always run tests first.  ".into()),
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::NeedsInput).await;
+    mgr.cancel(&task.id, None).unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    mgr.prompt(&task.id, text("again"), false).await.unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    assert_eq!(*agent.prompts.lock(), ["Always run tests first.\n\nFix the lexer", "again"]);
+    assert_eq!(task.title, "Fix the lexer");
+    assert!(matches!(&mgr.entries(&task.id,None).unwrap()[0],AgentEntry::User{text,..} if text=="Fix the lexer"));
+    mgr.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn instructions_survive_a_turn_that_fails_before_the_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    agent.fails_new_once.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let task = mgr
+        .create(NewAgentTask {
+            project_root: None,
+            prompt: text("Fix the lexer"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+            instructions: Some("Always run tests first.".into()),
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Failed).await;
+    assert!(agent.prompts.lock().is_empty());
+    mgr.prompt(&task.id, text("again"), false).await.unwrap();
+    // With instructions this is a first prompt, so the fake agent asks permission.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while agent.prompts.lock().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(agent.prompts.lock()[0], "Always run tests first.\n\nagain");
+    wait_for(&mgr, &task.id, AgentStatus::NeedsInput).await;
+    mgr.cancel(&task.id, None).unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    mgr.prompt(&task.id, text("again"), false).await.unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    assert_eq!(*agent.prompts.lock(), ["Always run tests first.\n\nagain", "again"]);
+    mgr.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn argument_store_errors_keep_their_public_error_kinds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agents = tmp.path().join("agents");
+    let models = agents.join("models.json");
+    let mut mgr = manager(tmp.path(), Arc::new(FakeAgent::default()));
+    Arc::get_mut(&mut mgr.shared).unwrap().paths.custom_agents_dir = Some(agents.clone());
+    for error in [
+        mgr.set_custom_args("unknown", &[]).unwrap_err(),
+        set_custom_args_in(&agents, &models, "unknown", &[]).unwrap_err(),
+    ] {
+        assert_eq!(error.kind, ide_core::error::ErrorKind::NotFound);
+        assert_eq!(error.message, "unknown agent");
+    }
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(agents.join("extra-args.json"), "{broken").unwrap();
+    for error in [
+        mgr.set_custom_args("claude", &[]).unwrap_err(),
+        set_custom_args_in(&agents, &models, "claude", &[]).unwrap_err(),
+    ] {
+        assert_eq!(error.kind, ide_core::error::ErrorKind::InvalidInput);
+        assert!(error.message.starts_with("invalid extra-args.json at line "));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resuming_a_legacy_task_with_an_unknown_provider_fails_clearly() {
+    for provider in ["agy", "pi"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = manager(tmp.path(), Arc::new(FakeAgent::default()));
+        let task = mgr
+            .create(NewAgentTask {
+                project_root: None,
+                prompt: text("again"),
+                provider: "claude".into(),
+                config: vec![],
+                isolation: Isolation::Local,
+                base: None,
+                instructions: None,
+            })
+            .await
+            .unwrap();
+        wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+        mgr.shutdown();
+        let path = tmp.path().join("store").join(format!("{}.json", task.id));
+        let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        saved["task"]["provider"] = json!(provider);
+        std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let mgr = manager(tmp.path(), Arc::new(FakeAgent::default()));
+        mgr.prompt(&task.id, text("again"), false).await.unwrap();
+        wait_for(&mgr, &task.id, AgentStatus::Failed).await;
+        assert_eq!(
+            mgr.task(&task.id).unwrap().state.lock().task.error.as_deref(),
+            Some(format!("unknown agent {provider}").as_str())
+        );
+        mgr.shutdown();
+    }
+}
+
+async fn real_complete_is_read_only(provider: &str) {
+    assert_eq!(
+        std::env::var("OPENIDEA_AGENT_E2E").as_deref(),
+        Ok("1"),
+        "set OPENIDEA_AGENT_E2E=1 to run the real CLI test"
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let mut mgr = AgentManager::new(
+        AgentPaths {
+            project_root: tmp.path().into(),
+            store_dir: tmp.path().join("store"),
+            worktrees_dir: tmp.path().join("worktrees"),
+            models_file: tmp.path().join("models.json"),
+            custom_agents_dir: None,
+            home_dir: None,
+        },
+        tokio::runtime::Handle::current(),
+    );
+    let cwds = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let seen = cwds.clone();
+    let stderr_lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let captured_stderr = stderr_lines.clone();
+    let real_connector = mgr.shared.connector.clone();
+    let expected_driver = if provider == "claude" { provider::Driver::Claude } else { provider::Driver::Codex };
+    Arc::get_mut(&mut mgr.shared).unwrap().connector = Arc::new(move |spec, cwd, client, stderr| {
+        assert_eq!(spec.driver, expected_driver);
+        seen.lock().push(cwd.to_path_buf());
+        let lines = captured_stderr.clone();
+        real_connector(
+            spec,
+            cwd,
+            client,
+            Box::new(move |line| {
+                lines.lock().push(line.clone());
+                stderr(line);
+            }),
+        )
+    });
+    let sentinel = tmp.path().join("must-not-exist.txt");
+    let prompt = format!(
+        "First try to write the single word CHANGED to {}. If denied, do not retry or work around permissions. Then answer with exactly READ_ONLY_OK.",
+        sentinel.display()
+    );
+    let config = if provider == "claude" {
+        vec![AgentConfigChoice { id: "model".into(), value: "haiku".into() }]
+    } else {
+        vec![]
+    };
+    let result = mgr.complete(provider, &prompt, &config, Duration::from_secs(120)).await;
+    eprintln!("{provider} read-only completion: {result:?}");
+    if result.is_err() {
+        eprintln!("{provider} launch stderr: {:?}", stderr_lines.lock());
+    }
+    assert!(!sentinel.exists(), "completion wrote outside its throwaway directory");
+    assert_eq!(cwds.lock().len(), 1);
+    let completion_cwd = cwds.lock()[0].clone();
+    let removed_on_return = !completion_cwd.exists();
+    assert!(result.unwrap().contains("READ_ONLY_OK"));
+    let selected = mgr
+        .shared
+        .known
+        .lock()
+        .get(provider)
+        .unwrap()
+        .config
+        .iter()
+        .find(|option| is_mode_option(option))
+        .and_then(|option| option.current.clone());
+    let expected = if provider == "claude" { "default" } else { "read-only" };
+    eprintln!("{provider} selected mode: {selected:?}");
+    assert_eq!(selected.as_deref(), Some(expected));
+    assert!(removed_on_return, "real completion must remove its throwaway cwd");
+    assert!(mgr.tasks.read().is_empty());
+    assert!(!tmp.path().join("store").exists());
+    mgr.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_claude_complete_is_read_only() {
+    real_complete_is_read_only("claude").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_codex_complete_is_read_only() {
+    real_complete_is_read_only("codex").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_sets_the_restrictive_mode_after_a_setting_changes_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default"), ("bypassPermissions", "Bypass")]));
+    agent.notifies_mode_change_on_set.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    mgr.complete(
+        "claude",
+        "Name this change",
+        &[AgentConfigChoice { id: "model".into(), value: "small".into() }],
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    let requests = agent.requests.lock();
+    let model = requests.iter().position(|(m, p)| m == "session/set_config_option" && p["value"] == "small").unwrap();
+    let mode = requests
+        .iter()
+        .position(|(m, p)| m == "session/set_mode" && p["modeId"] == "default")
+        .expect("must restore the restrictive mode after settings");
+    let prompt = requests.iter().position(|(m, _)| m == "session/prompt").unwrap();
+    assert!(model < mode && mode < prompt);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_removes_its_temporary_directory_when_launch_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwds = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+    let seen = cwds.clone();
+    let connector: Connector = Arc::new(move |_, cwd, _, _| {
+        seen.lock().push(cwd.into());
+        Err(std::io::Error::other("fixture launch failed"))
+    });
+    let mgr = AgentManager::with_connector(
+        AgentPaths {
+            project_root: tmp.path().into(),
+            store_dir: tmp.path().join("store"),
+            worktrees_dir: tmp.path().join("worktrees"),
+            models_file: tmp.path().join("models.json"),
+            custom_agents_dir: None,
+            home_dir: None,
+        },
+        tokio::runtime::Handle::current(),
+        connector,
+    );
+    assert!(
+        mgr.complete("claude", "question", &[], Duration::from_secs(5))
+            .await
+            .unwrap_err()
+            .message
+            .contains("fixture launch failed")
+    );
+    assert_eq!(cwds.lock().len(), 1);
+    assert!(!cwds.lock()[0].exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_a_mode_change_reported_after_selecting_read_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("default", "Default"), ("bypassPermissions", "Bypass")],
+    ));
+    agent.notifies_mode_change_after_mode_set.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    assert!(
+        mgr.complete("claude", "Name this change", &[], Duration::from_secs(5))
+            .await
+            .unwrap_err()
+            .message
+            .contains("cannot run read-only")
+    );
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn completion_cleanup_retries_until_a_windows_handle_releases_the_directory() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("completion");
+    std::fs::create_dir(&cwd).unwrap();
+    let held = std::fs::OpenOptions::new().read(true).share_mode(1 | 2).custom_flags(0x02000000).open(&cwd).unwrap();
+    assert!(std::fs::remove_dir_all(&cwd).is_err());
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(80));
+        drop(held);
+    });
+    super::remove_completion_dir(&cwd).await;
+    release.join().unwrap();
+    assert!(!cwd.exists());
+}
+
+#[cfg(windows)]
+fn cleanup_owned_registry_executable(root: &Path, executable: &str) {
+    let root = dunce::canonicalize(root).unwrap();
+    let executable = dunce::canonicalize(executable).unwrap();
+    // Never match a global node.exe or any existing Crew executable.
+    if !executable.starts_with(&root) {
+        return;
+    }
+    let script = r#"$ErrorActionPreference = 'Stop'
+$ownedExecutable = [IO.Path]::GetFullPath($env:IBLOPENIDEA_MT2_TEST_EXECUTABLE)
+$ownedProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -ieq $ownedExecutable })
+foreach ($ownedProcess in $ownedProcesses) { Stop-Process -Id $ownedProcess.ProcessId -Force -ErrorAction Stop }
+Write-Output ('REGISTRY_TEST_TEARDOWN exact-owned-executable processes=' + $ownedProcesses.Count)
+"#;
+    let mut command = std::process::Command::new("powershell.exe");
+    ide_core::process::prepare(&mut command);
+    let output = command
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("IBLOPENIDEA_MT2_TEST_EXECUTABLE", &executable)
+        .output()
+        .unwrap();
+    eprintln!("{}", String::from_utf8_lossy(&output.stdout));
+    assert!(output.status.success(), "owned test cleanup failed: {}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[cfg(windows)]
+async fn real_registry_install_and_probe(id: &str) {
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = registry::RegistryPaths::new(&tmp.path().join("config"), &tmp.path().join("data"));
+    let cancel = ide_core::CancellationToken::new();
+    let deadline = tokio::spawn({
+        let cancel = cancel.clone();
+        async move {
+            tokio::time::sleep(Duration::from_secs(180)).await;
+            cancel.cancel();
+        }
+    });
+    let install_paths = paths.clone();
+    let agent = id.to_owned();
+    let installed =
+        tokio::task::spawn_blocking(move || registry::install(&install_paths, &agent, &cancel, &|_| {})).await.unwrap();
+    deadline.abort();
+    installed.unwrap();
+    let file = paths.agents_dir.join(format!("{id}.toml"));
+    assert!(std::fs::read_to_string(&file).unwrap().contains("[registry]"));
+    let installed = provider::CustomAgent::read(&file).unwrap();
+    assert_eq!(installed.registry.as_ref().unwrap().id, id);
+    assert!(Path::new(&installed.command).is_file(), "registry executable is missing");
+    eprintln!(
+        "REGISTRY_INSTALL {id} version={} command-file={:?}",
+        installed.registry.as_ref().unwrap().version,
+        Path::new(&installed.command).file_name()
+    );
+    let cwd = tmp.path().join("probe");
+    std::fs::create_dir(&cwd).unwrap();
+    let mgr = AgentManager::new(
+        AgentPaths {
+            project_root: cwd,
+            store_dir: tmp.path().join("store"),
+            worktrees_dir: tmp.path().join("worktrees"),
+            models_file: tmp.path().join("data/agents/models.json"),
+            custom_agents_dir: Some(paths.agents_dir),
+            home_dir: None,
+        },
+        tokio::runtime::Handle::current(),
+    );
+    let probe = mgr.probe(id, true).await.unwrap();
+    cleanup_owned_registry_executable(tmp.path(), &installed.command);
+    eprintln!("REGISTRY_PROBE {}", serde_json::to_string(&probe).unwrap());
+    assert!(probe.error.is_none(), "{probe:?}");
+    assert!(probe.protocol.starts_with("ACP v"));
+    mgr.shutdown();
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_antigravity_registry_install() {
+    real_registry_install_and_probe("antigravity-acp").await;
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_pi_registry_install() {
+    real_registry_install_and_probe("pi-acp").await;
 }
