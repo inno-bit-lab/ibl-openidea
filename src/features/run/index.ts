@@ -39,7 +39,7 @@ import { registerGoActions } from "./goActions";
 import { invalidateGoModules } from "./goModules";
 import { RunWidget } from "./RunWidget";
 import { runConfigsRunAnything } from "./runAnything";
-import { runServiceProvider } from "./services";
+import { recordRun, runServiceProvider } from "./services";
 import { runBeforeLaunch } from "./beforeLaunch";
 import { compoundChildren } from "./configs";
 import { remoteDebugBlocked } from "./remote";
@@ -106,6 +106,7 @@ async function debugConfig(config: RunConfig, chain: readonly string[] = []) {
   }
   if (remoteDebugBlocked(config)) return;
   if (!(await prepareLaunch(config, chain))) return;
+  recordRun(config.id);
   // Remote JVM Debug, Go Remote…: the debugger attaches, nothing is launched here.
   if (isDebugOnly(config) && getAction("debug.startConfig")) {
     await executeAction("debug.startConfig", config);
