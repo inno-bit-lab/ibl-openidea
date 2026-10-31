@@ -1,0 +1,345 @@
+# Port map: IBLOpenIdea fork onto upstream/main (sub-project 2, v0.3.0)
+
+Read-only analysis, 2026-10-31. Nothing in the repository was changed.
+
+## 0. Baseline
+
+| Ref | SHA | Note |
+|---|---|---|
+| fork base | `5b63a2b` | OpenIDEA v0.1.21 |
+| `upstream/main` | `504d859` | v0.1.29 plus 5 fixes, 223 commits after the base |
+| `origin/fix/release-hardening` | `4f9107f` | Now includes MT-A: PR #2 merged `rh-mt-a` (`fcb4a42`) while this analysis ran. `rh-mt-a` has nothing left to merge. |
+| `origin/fix/rh-mt-b` | `7c87cd3` | 8 ahead, 9 behind release-hardening |
+| `origin/fix/rh-mt-c` | `d8a0fe5` | 2 ahead, 10 behind release-hardening |
+
+Overlap = files changed in `5b63a2b..upstream/main` and in the fork, where the fork is `5b63a2b..release-hardening` plus `merge-base..rh-mt-b` plus `merge-base..rh-mt-c`. It comes to **99 files**. The original two-dot diffs against the older `e69148d` gave the same 99.
+
+### What is stale in `docs/upstream-sync.md` (written at `98c8c55`)
+
+- It counts 201 upstream commits and 91 overlapping files. The current numbers are 223 and 99.
+- It lists #477 (GitHub pull request tool window) as open. It merged as `059fd8a` on 2026-10-31 and touches `BranchWidget.tsx`, `branches.ts`, `DiffEditor.tsx`, `diffInput.ts`, `commands/vcs.rs`, `icons.tsx` and the CSP in `tauri.conf.json`.
+- It does not mention `4d503ef` ("support multiple repositories in the Git tool window", which has no PR number). That is the largest conflict with the fork's Git work.
+- "Register agy and pi as first-class providers in provider.rs" is superseded. The ACP Registry from #151 already lists both (section 2).
+- "Keep the WebView2 profile fallback and combine it with f6a0152" is superseded. `f6a0152` gives debug builds their own identifier, and MT-C gives the fork its own release identifier.
+- It treats `55836e1` (oxfmt) as merge noise. It is really a CI gate (section 3).
+
+### Strategy labels
+
+- **take upstream, re-apply fork change**: start from the upstream file and re-add the fork delta by hand.
+- **fork wins**: upstream has no equivalent and its edits to the file are incidental, so the fork logic goes in on top.
+- **manual merge**: both sides changed the same behaviour, and the result needs design decisions.
+- **drop fork change (upstream supersedes)**: upstream now does the same thing, or the fork delta no longer applies.
+
+Commit references give the short SHA and the PR number when there is one. Commits without a number are direct pushes. `55836e1` (#135, the repo-wide oxfmt) is cited only when it is the sole upstream change to a file.
+
+---
+
+## 1. Overlapping files by fork subsystem
+
+Ownership columns refer to the macro tasks in section 4.
+
+### 1.1 Identity, release and build (17 files, MT-1)
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `.github/workflows/release.yml` | v0.2.0: release named "IBLOpenIdea {tag}", plus an `already_published` output that skips build/server/publish when the release already exists. MT-A: the `updater-manifest` job plus `uploadUpdaterJson: false`, copied almost verbatim from upstream and gated on `already_published`. | `f911196` (#176) | take upstream, re-apply fork change. Only the release name and the four `already_published` lines are fork code. The manifest job is upstream's own (release.yml:121, :179). |
+| `Cargo.toml` | Workspace version 0.2.1 | `a5fb30e` (v0.1.29), `0d368ba` (#268), `7da5863` (#338) | take upstream, re-apply fork change. Set the version to 0.3.0 in MT-4, not earlier, so Cargo.lock churns only once. |
+| `Cargo.lock` | Workspace crate versions | `7da5863` (#338), `0329678` (keeps the unicode-normalization pin), `1ee22db` (#442); 27 commits in total | take upstream, re-apply fork change. Regenerate it with cargo and never merge it by hand. |
+| `README.md` | Download link to inno-bit-lab/ibl-openidea | `1ed6f72` (Discord link), `0d368ba` (#268) | take upstream, re-apply fork change |
+| `index.html` | Title, splash logo SVG and wordmark rebrand | `55836e1` (#135, formatting only) | take upstream, re-apply fork change, then run oxfmt. The fork version fails `format:check`. |
+| `package.json` | Version 0.2.1. MT-A adds the `dev:local`, `build:local`, `test:rust` and `test:full` pwsh scripts. | `f6a0152` (`tauri` becomes `node scripts/tauri.ts`, plus `dev:status`), `ce43a7a` (#252 simple-git-hooks/lint-staged), `5217f85` (#247 knip) | take upstream, re-apply fork change. Keep the four pwsh scripts, but `dev:local` must go through upstream's launcher (section 3). |
+| `src-tauri/Cargo.toml` | `[features] default = ["custom-protocol"]` | `f6a0152` (dunce build-dep), `0d368ba` (#268 ide-notebook), `aea0b33` (#225 ide-fonts) | take upstream, re-apply fork change |
+| `src-tauri/tauri.conf.json` | productName, window title, copyright, descriptions, updater pubkey `6F488B067990A3BE` and endpoint. MT-C: identifier `it.innobitlab.iblopenidea` and publisher. | `059fd8a` (#477, CSP adds avatars.githubusercontent.com), `a5fb30e` (v0.1.29), `55836e1` (#135) | take upstream, re-apply fork change. Keep upstream's CSP. |
+| `src-tauri/tauri.windows.conf.json` | Window title | `d1a5978` (#275, NSIS installer icons) | take upstream, re-apply fork change |
+| `src-tauri/src/lib.rs` | v0.2.0: `export_bindings` goes through a temp file and only logs errors. MT-A: turns that back into a `Result`. MT-C: `mod migrate`, profile seeding before `logging::init`, and a one-time WebView notice dialog in `setup`. | `f6a0152` (`dev::configure`, single-instance plugin now also in debug), `01defde` (#448), `1d383e6` (#152) | manual merge. Take upstream's `export_bindings` (`.expect`, lib.rs:38). It already fails the test on error; MT-A only undid the fork's own swallow-errors change. Add MT-C's seeding *after* `dev::configure`, because the identifier is only final there. |
+| `src-tauri/src/windows.rs` | v0.2.0 `build_webview_window`: a `webview-dev` user-data dir for debug builds, an `ERROR_BUSY` fallback to `webview-<pid>`, and pruning of stale dirs. MT-A: rustfmt. | `f6a0152`, `2754cf3` (#470 tab-out windows), `3563f70` (#357) / `4666c4b` (#254, settings window has no parent on macOS) | drop fork change (upstream supersedes). With a per-worktree debug identifier and MT-C's own release identifier, dev and release no longer share EBWebView. Re-add the `ERROR_BUSY` fallback only if it still reproduces on Windows. If it comes back, it must also cover the new window paths (#470) and the `cfg(not(target_os = "macos"))` parent rule. |
+| `src-tauri/src/menu.rs` | Brand strings (Hide/About/Quit IBLOpenIdea). VCS menu entries: Compare with Revision, Compare with Branch, Show History, Show History for Selection. | `01defde` (#448), `eb67595` (#144), `92b3ae5` (#392) | take upstream, re-apply fork change. MT-1 does the brand strings. MT-3 later adds only Show History and Show History for Selection, because upstream's "Compare with Branch or Revision…" replaces Compare with Revision. |
+| `crates/ide-tools/src/server.rs` | Remote-server download URL points to inno-bit-lab, plus a test | `7a46774` (#260) | take upstream, re-apply fork change. This only works if fork releases publish the `openidea-server-*` assets (the `server` job in release.yml). |
+| `src/features/welcome/ProjectsPage.tsx` | "Welcome to IBLOpenIdea" | `33d8d87` (#460) | take upstream, re-apply fork change |
+| `src/features/welcome/WelcomeView.tsx` | App name | `2d7726c` (#145) | take upstream, re-apply fork change |
+| `src/workbench/TitleBar.tsx` | Fallback project label | `2d7726c` (#145) | take upstream, re-apply fork change |
+| `src/features/app/__tests__/shell.test.tsx` | Expected default title | `55836e1` (#135, formatting only) | take upstream, re-apply fork change |
+
+### 1.2 Local dev tooling (1 file, MT-1)
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `vite.config.ts` | MT-A: port from `OPENIDEA_DEV_PORT`, HMR on port+1 for worktree sessions | `f6a0152` (HMR without the fixed 1421; `scripts/tauri.ts` starts Vite itself on `preferredVitePort`) | drop fork change (upstream supersedes). Under `pnpm tauri dev`, upstream's launcher overrides `devUrl` with `--config {devUrl}`, so `OPENIDEA_DEV_PORT` would be ignored anyway. |
+
+These MT-A files are fork-only and not in the overlap, but `f6a0152` affects them: `scripts/local/dev.ps1`, `env.ps1`, `build.ps1`, `cargo-slot.ps1`, `test-*.ps1`, `acceptance.ps1`, `scripts/local/tests/*` (`vite-config.test.ts` and `dev-profile.tests.ps1` test port and identifier logic that `f6a0152` replaces), `src-tauri/tauri.local.conf.json` and `src-tauri/tests/export_bindings.rs` (MT-A's TEMP-subprocess test, which you can drop along with the Result change). See section 3.
+
+### 1.3 Agents: ide-agent, agents UI, commit suggestion (25 files, MT-2)
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `crates/ide-agent/src/provider.rs` | Built-in `agy` (`agy_acp_server`) and `pi` (`npx -y pi-acp@0.0.34`). `CustomAgent` made Serialize. `set_custom_args` writes `<config>/agents/<id>.toml` from the built-in args plus extra args. `search_dirs`, agy discovery (LOCALAPPDATA/APPDATA/JetBrains/`C:\Users\*`), and `resolve_executable`/`resolve_spawn` (npx through `npx.exe` or `node npx-cli.js`). MT-B: discovery limited to the current user and the managed dir; base args and built-in command preserved. | `0cd927e` (#151) | manual merge. Take upstream's file (`Driver`, `RegistryRef`, atomic `CustomAgent::write`, `BTreeMap` env). Drop the agy/pi built-ins and the discovery code (the registry provides them, section 2). Drop `resolve_*` and `search_dirs` (#273/#499). Re-implement `set_custom_args` on upstream's `CustomAgent`, and preserve `driver`, `registry`, `name` and `env` when writing. Without that, saving args for `claude`/`codex` turns the native drivers into ACP agents, and saving args for a registry agent loses its `[registry]` link. |
+| `crates/ide-agent/src/lib.rs` | `providers_from`/`set_custom_args_in` (no project needed). `AgentManager::set_custom_args`. `complete()`: a throwaway session in a temp dir with a restrictive mode, every permission refused, text only (`Collector`, `restrictive_mode`, `ask`). `NewAgentTask.instructions` prepended to the first prompt. `default_known_config` for agy/pi. `describe_error` refactor. `managed_agents_dir`. MT-B: read-only mode and temp cwd hardening. | `0cd927e` (#151), `bc70ec7` (#444), `01defde` (#448) | manual merge. Rebuild `complete()` on upstream's `Connector`, which switches on `Driver` (lib.rs:241). Replace the hand-built `"protocolVersion": 1` initialize with `acp::initialize_params(&client_info())` and `acp::Negotiated`, following `probe()` (lib.rs:675). The restrictive-mode list still works: native Claude offers `default` (native/claude/settings.rs:33) and native Codex offers `read-only` (native/codex/translate.rs:22). Check that the #444 bypass default and `config::add_client_options` don't reach the throwaway session. Keep `instructions`. Drop `default_known_config` for agy/pi and drop `managed_agents_dir`. |
+| `crates/ide-agent/src/model.rs` | `NewAgentTask.instructions` (`#[serde(default)]`) | `0cd927e` (#151), `47bd21e` (#439), `01defde` (#448) | take upstream, re-apply fork change |
+| `crates/ide-agent/src/tests.rs` | Tests for `complete()` (read-only, temp cwd, refusal), custom args and instructions. MT-B adds more. | `0cd927e` (#151), `bc70ec7` (#444), `082420b` (#364) | take upstream, re-apply fork change. Rewrite against upstream's mock connector and drop the agy/pi and `codex-acp@2.3.0` argument assertions (`codex` is now `codex app-server`). |
+| `crates/ide-core/src/workflow_settings.rs` | `CommitSettings.suggest_agent/suggest_model/suggest_thinking/suggest_rules` | `eb67595` (#144 `non_modal`, `clear_initial_message`), `7cfbf6c` (#173) | take upstream, re-apply fork change (additive) |
+| `src/platform/workflowSettings.ts` | The same four fields on the TS side | `eb67595` (#144), `7cfbf6c` (#173), `4dcf0ac` (#168) | take upstream, re-apply fork change |
+| `crates/ide-host/src/ops/agent.rs` | `providers` works without a project (`providers_from`). `agent_set_args`. `agent_complete` (180 s timeout). | `0cd927e` (#151 registry ops), `9a5b44b` (#349), `01defde` (#448) | manual merge. Keep upstream's `providers` (`registry::mark_updates`, `registry_paths`). Add `set_args` and `complete`. Keep the "no project" path only if the settings window still needs the list without an open project. |
+| `crates/ide-host/src/lib.rs` | MT-B: `HostConfig`/`Host.managed_agents_dir` | `1f9be73` (#183), `9d4e778` (#194), `9575500` (#370); upstream also adds `project_environment` | drop fork change (upstream supersedes), once agy comes from the registry. That decision also removes the MT-B edits to `server.rs`, `project.rs`, `state.rs` and the `HostConfig` literals in `tests/rpc.rs`. |
+| `crates/ide-host/src/bin/server.rs` | `managed_agents_dir = data/acp-agents` | `1f9be73` (#183) | drop fork change (upstream supersedes) |
+| `crates/ide-host/src/project.rs` | Passes `managed_agents_dir` into `AgentPaths` | `01defde` (#448), `0cd927e` (#151), `ab6fca0` (#339) | drop fork change (upstream supersedes) |
+| `src-tauri/src/state.rs` | `managed_agents_dir = app_local_data/acp-agents` | `e85ffa2` (#321), `1f9be73` (#183), `2d7726c` (#145) | drop fork change (upstream supersedes) |
+| `crates/ide-tools/src/lib.rs` | `extend_process_path` also appends `default_search_path`, plus the Windows npm/pnpm, `Program Files\nodejs` and `Git\bin` dirs, so npm-installed agents resolve | `504d859` (#499), `b1be3c6` (#313), `e537dd4` (#227) | drop fork change (upstream supersedes): `path_with_tools` plus `with_user_path` (lib.rs:158) |
+| `src-tauri/src/commands/agent.rs` | `agent_set_args`, `agent_complete` | `0cd927e` (#151), `9a5b44b` (#349), `ecb3134` (#132) | take upstream, re-apply fork change |
+| `src-tauri/src/commands/mod.rs` | Registers `agent_set_args`, `agent_complete` (v0.2.0) and `vcs_ignored` (MT-B) | `059fd8a` (#477), `01defde` (#448), `df6ed5c` (#489); 17 commits | take upstream, re-apply fork change. This file is shared: MT-2 lands first, then MT-3 adds `vcs_ignored`. |
+| `src/features/agents/index.ts` | Editor kind `agent-catalog`; actions "Manage Agents…" and "Manage Agent Presets…"; pi/agy keywords | `0cd927e` (#151, `agents.addAgent` "More Agents…" opens Settings › Tools › Agents), `aac9245` (#283), `fc2496c` | manual merge. Keep upstream's registry action. Keep Manage Agent Presets…. Point Manage Agents… at a slimmer catalog tab (args, enable/disable, presets) or fold that into the Settings page. |
+| `src/features/agents/model.ts` | `CATALOG_KIND`/`CATALOG_KEY`; `agy` and `pi` in `PROVIDER_ICONS` | `0cd927e` (#151), `ecb3134` (#132) | take upstream, re-apply fork change. Key the icons by the registry ids `antigravity-acp` and `pi-acp`. |
+| `src/features/agents/store.ts` | Presets, disabled providers and custom args (localStorage); `applyPreset`, `presetConfigFor`, `parseCliArgs`, `setProviderArgs`, `withInjectedInstructions`, `openCatalog` | `0cd927e` (#151), `bc70ec7` (#444), `47bd21e` (#439) | take upstream, re-apply fork change. Saved presets that name `agy`/`pi` need a one-time id rewrite to the registry ids. |
+| `src/features/agents/AgentsView.tsx` | Split "New Session" button with an agent/preset menu; settings button | `0cd927e` (#151), `aac9245` (#283), `fc2496c` (unread markers); also `9c31a27` (#456) | manual merge |
+| `src/features/agents/HomeEditor.tsx` | Preset picker; sends preset instructions | `0cd927e` (#151), `6356e85` (#402), `01defde` (#448); also `986b0ad` (#486, model picker grouping) | manual merge |
+| `src/features/agents/Agents.module.css` | Split button and menu styles | `fc2496c`, `01defde` (#448) | take upstream, re-apply fork change |
+| `src/features/agents/agents.test.ts` | Icon mapping, `parseCliArgs`, presets, catalog filter | `0cd927e` (#151), `a233d85` (#214), `0d880b9` (#332) | take upstream, re-apply fork change |
+| `src/features/agents/composerCommands.test.tsx` | Instructions sent separately from the prompt; catalog dialogs | `0cd927e` (#151), `0f26b72` (#278), `01defde` (#448) | take upstream, re-apply fork change |
+| `src/ui/icons.tsx` | `agent-agy`, `agent-pi` icons (svgs in `src/ui/openidea/agents/`) | `059fd8a` (#477), `3a1e47d` (#276), `5792e7d` (#322) | take upstream, re-apply fork change |
+| `src/features/settings/pages/vcs.tsx` | `MessageSuggestion` section (agent, model, thinking, rules). MT-B: Directory Mappings lists every Git root. | `eb67595` (#144), `e85ffa2` (#321) | manual merge. Take upstream. Move `MessageSuggestion` into a new file owned by MT-2 and import it. MT-3 re-adds the roots mapping table. |
+| `src/features/settings/pages/Workflow.module.css` | Styles for the rules textarea | `aea0b33` (#225) | take upstream, re-apply fork change |
+
+### 1.4 VCS and Git UX (48 files, MT-3)
+
+Backend:
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `crates/ide-vcs/src/roots.rs` | The ancestor repository counts only when the project root has `.git` or no child repos. `enclosing()` is empty for a folder of repos. `Repos::status_with_ignored`, which drops nested roots' ignored entries. Plus a test. MT-B tweak. | `01defde` (#448, `discover_roots`) | fork wins. Upstream still adds the ancestor repo first (roots.rs:43). Re-apply inside upstream's file, then check `discover_roots` (roots.rs:24), which calls `discover` per workspace root. |
+| `crates/ide-vcs/src/status.rs` | `status_with_ignored(include_ignored)` through gix `emit_ignored(CollapseDirectory)`. MT-B: ignored entries only come from `vcs_ignored`. | `14c7821` (#476), `c3252d4` (#408), `ab6fca0` (#339) | manual merge. Write one function with an `include_ignored` parameter that keeps #476's index stamp and the `index_writes` lock around write-back, plus #408's ignored-names filter. |
+| `crates/ide-vcs/src/lib.rs` | `Repo::status_with_ignored` | `3655961` (#369), `e85ffa2` (#321), `67e3c60` (#391) | take upstream, re-apply fork change |
+| `crates/ide-vcs/tests/git_workflows.rs` | `-c core.autocrlf=false` | `67e3c60` (#391), `cdb6cc7` (#301) | drop fork change (upstream supersedes): git_workflows.rs:35 |
+| `crates/ide-vcs/tests/repo.rs` | `core.autocrlf=false`, `GIT_CLONE_PROTECTION_ACTIVE=false`, and `status_with_ignored` assertions | `1ee22db` (#442), `c3252d4` (#408), `67e3c60` (#391) | take upstream, re-apply fork change. Only the ignored-file assertions and the clone-protection env, and the env only if a test still needs it. autocrlf is at repo.rs:34. |
+| `crates/ide-host/src/rpc.rs` | Registers `vcs_ignored` | `df6ed5c` (#489), `c55fd9b` (#296), `1c46a1c` (#177) | take upstream, re-apply fork change |
+| `crates/ide-host/tests/rpc.rs` | `managed_agents_dir: None` in `HostConfig`; tests that `vcs_status` leaves out ignored files and that `vcs_ignored` lists them | `8568a70` (#255), `1f9be73` (#183) | take upstream, re-apply fork change. Only the two VCS tests, using upstream's `HostConfig` (`project_environment`). |
+| `src-tauri/src/commands/vcs.rs` | `vcs_ignored` command | `4d503ef`, `3655961` (#369), `059fd8a` (#477) | take upstream, re-apply fork change |
+
+Git log, branches and multi-repo plumbing. `4d503ef` reimplemented the multi-repo model that the fork built separately: `multiRoot.ts` with `RepoCommit`, `commitKey = repo\0id`, `mergeRepoLogs` and `branchesByRepo`. The fork's version is `LogCommit = Commit & {repo}`, `logRepoOf`, `resolveLogTargets` and the repo parameter in `diffInput`. Keep upstream's model and re-apply only the fork's UX on top of it.
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `src/features/vcs/GitLog.tsx` | Multi-repo BranchesPanel (repo tags, side toolbar, Manage Remotes/Update/New Branch), Paths popup with multi-select Roots, multi-repo CommitDetails, Log/Console tabs, Show History entry points. MT-B fixes. | `4d503ef`, `a129459` (#445), `f2b8db5`; also `eb67595` (#144), `11362a3` (#155), `b6a3715` (#175) | take upstream, re-apply fork change: UX deltas only, on `RepoCommit`/`commitKey`. Upstream already has a Repository filter (GitLog.tsx:688) and a repository column (GitLog.tsx:1140), and `f2b8db5` reworked the toolbar for narrow panes. |
+| `src/features/vcs/GitLog.module.css` | Branches side bar and paths popup styles (+393 lines) | `f2b8db5`, `4d503ef`, `eb67595` (#144) | take upstream, re-apply fork change |
+| `src/features/vcs/logStore.ts` | `LogCommit`, `logRepoOf`, `resolveLogTargets`, roots filter, `FileHistoryTab`, repo-aware select/toggle/extend/reveal, goToParent/goToChild | `4d503ef`, `11362a3` (#155), `74b2d5f` (#269) | drop fork change (upstream supersedes) for repo identity and history tabs (`openLogTab`, logStore.ts:263). Re-apply the roots multi-filter only if it is kept on top of upstream's single Repository filter. |
+| `src/features/vcs/logOptions.ts` | `isRemote` recognises remote-name prefixes | `eb67595` (#144), `b6a3715` (#175) | take upstream, re-apply fork change. Check first whether `branchesByRepo` already removes the need. |
+| `src/features/vcs/branches.ts` | `buildMultiRepoBranchTree`, favourites filter, current-branch folder keys | `4d503ef`, `eb67595` (#144), `059fd8a` (#477) | manual merge |
+| `src/features/vcs/branchMenu.ts` | Multi-repo `commonBranchMenu`: Update, Push, Checkout across repos, Compare with Current, Show Diff with Working Tree, Delete | `eb67595` (#144) | manual merge |
+| `src/features/vcs/branchOps.ts` | `updateBranch`, `updateInRepos`, `deleteInRepos`, `deleteRemoteInRepos`. MT-B: ask once before batch delete. | `4d503ef`, `5217f85` (#247) | manual merge |
+| `src/features/vcs/BranchWidget.tsx` | Manage Remotes on repo rows (`RepoRowView`) | `4d503ef`, `eb67595` (#144), `059fd8a` (#477) | take upstream, re-apply fork change |
+| `src/features/vcs/store.ts` | `branchesRepo`, per-repo in-flight branch/stash loads, `vcsAvailable` context | `4d503ef`, `ab6fca0` (#339) | manual merge |
+| `src/features/vcs/historyActions.tsx` | `LogCommit`-aware `commitArg`/`commitsArg`, repo focus, tag/reset dialogs with a repo | `4d503ef`, `eb67595` (#144) | drop fork change (upstream supersedes). `4d503ef` captures the repository target for delayed operations and dialogs. Re-check each action. |
+| `src/features/vcs/operations.tsx` | Cherry-pick split per repository (MT-B `2bbab62`); Reset/Tag dialogs with a repo picker | `4d503ef`, `3655961` (#369) | drop fork change (upstream supersedes) for cherry-pick. Upstream limits multi-selection to one repository (logStore.ts:501-526), and `cherryPick` uses `commitRepo(commits[0])` (operations.tsx:232-247). The repo picker in Tag/Reset is a UX choice; re-add it only if wanted. |
+| `src/features/vcs/gitMenuDialogs.tsx` | `RepoSelect`/`useDialogRepo` for Pull, Merge, Rebase, Manage Remotes and Worktrees; Remotes dialog grouped by repository | `4d503ef`, `eb67595` (#144) | fork wins. Upstream's dialogs still take no repo and use `currentRepo()` (gitMenuDialogs.tsx:112, :218, :290, :377, :542). Re-apply inside upstream's file. |
+| `src/features/vcs/changeOps.tsx` | Stash/unstash/drop with a repo | `4d503ef`, `eb67595` (#144) | take upstream, re-apply fork change. Upstream's unstash already takes `repo` (changeOps.tsx:395); add the picker to Stash only. |
+| `src/features/vcs/ops.ts` | `summarizeRepoError`/`formatRemoteFailures` (short multi-repo failure balloons), `showGitConsole` "View in Console", repo parameter | `4d503ef`, `1c46a1c` (#177) | take upstream, re-apply fork change |
+| `src/features/vcs/remoteUi.tsx` | Update Project runs straight away with the configured method; `UpdateTarget` (repo/repos) scoping; Push scoped to one repo or a subset | `f87d153` (#407), `3655961` (#369), `4d503ef` | manual merge. Upstream already skips the dialog when `showUpdateOptions` is off (remoteUi.tsx:19, workflow_settings.rs:144, default `true`). Re-apply only the repo/repos scoping, on upstream's `updateProject` and the resizable `MultiPushDialog`. |
+| `src/features/vcs/actions.tsx` | `argRepos`/`argRepo`; actions Compare with Revision…, Show Current Revision, Show History (+ for folders), Show History for Selection… | `4d503ef`, `eb67595` (#144), `8568a70` (#255) | manual merge. Drop Compare with Revision (upstream has "Compare with Branch or Revision…", actions.tsx:322). Drop the fork's Show History tab in favour of `openLogTab("history")` (actions.tsx:428, :443). Keep Show History for Selection… and Show Current Revision. |
+| `src/features/vcs/diffInput.ts` | `joinRoot(rel, repo)`, a `firstLine` text side, `ignored` treated like untracked | `4d503ef`, `b6a3715` (#175), `059fd8a` (#477) | take upstream, re-apply fork change. Keep only `firstLine` (needed by History for Selection) and the `ignored` case; upstream covers repo-aware paths. |
+| `src/features/vcs/CompareBranches.tsx` | Rewrite: two-pane vertical "Compare: A and B" editor tab with per-pane filter bars, graphs and changed-file trees (+986/-127) | `3655961` (#369, Show Diff in Compare with Current), `4d503ef` | fork wins on top of upstream's file. Upstream's version is still the old dialog plus a Show Diff button. Rebase the editor kind on `RepoCommit`. |
+| `src/features/vcs/DiffEditor.tsx` | `headerContent` prop (used by History for Selection and Compare) | `ad09a76` (#242), `4410da6` (#181), `059fd8a` (#477) | take upstream, re-apply fork change |
+| `src/features/vcs/cm.ts` | `viewerBase({ firstLine })` line-number offset | `ad09a76` (#242), `12f676e` (#416), `a202071` (#253) | take upstream, re-apply fork change |
+| `src/features/vcs/index.ts` | Registers the Compare Branches editor kind; changes count leaves out ignored entries | `eb67595` (#144) | take upstream, re-apply fork change |
+| `src/features/vcs/model.ts` | Subtree decoration when `relPath` ends in `/` (ignored folders) | `5217f85` (#247) | take upstream, re-apply fork change |
+
+Commit view:
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `src/features/vcs/CommitView.tsx` | View Options: Group By Directory/Repository/Module, Show Ignored Files group. Suggest-message button in the message area. MT-B fixes. | `eb67595` (#144, modal commit, `CommitMessageField` shared with `CommitDialog.tsx`), `4d503ef`, `3655961` (#369); also `d9d1caa` (#371), `35ba957` (#480) | manual merge. Put the suggest button into upstream's `CommitMessageField` (CommitView.tsx:687), not the old `CommitMessage`, so the modal Commit dialog gets it too. Upstream already groups by repository (changes.test.ts:73) and has Group By Directory (CommitView.tsx:438). Re-add Module grouping and Show Ignored Files. |
+| `src/features/vcs/changes.ts` | `ChangeTreeOptions` (group by repo/module, show ignored), `ignored` group, repo badge colours/branches | `d9d1caa` (#371) | manual merge |
+| `src/features/vcs/commitStore.ts` | View-option state (group by repo/module, show ignored) | `eb67595` (#144) | take upstream, re-apply fork change |
+| `src/features/vcs/common.module.css` | Remotes table grouped by repository | `f87d153` (#407) | take upstream, re-apply fork change |
+
+Editor, project tree and shared UI:
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `src/editor/core/controller.ts` | Editor Git menu: selection line range for History for Selection; Compare with Revision, Show Current Revision; branch/stash/remote/merge/rebase entries | `19b96b6` (#433, Compare With… in editor and tab menus), `2754cf3` (#470), `01defde` (#448) | take upstream, re-apply fork change. Only `selectionLineRange`, History for Selection, Show Current Revision and the extra Git entries. Use upstream's Compare items. |
+| `src/editor/core/controller.test.ts` | Test for the editor Git menu entries | `01defde` (#448), `c7f75cb` (#165), `e0af8cc` (#164) | take upstream, re-apply fork change |
+| `src/features/project-tree/contextMenu.ts` | Git submenu shown when `vcsAvailable` (multi-repo folders); per-selection args; Compare with Revision; Manage Remotes/Fetch/Pull/Push/Merge/Rebase | `2bc5e8d` (Merge… and Rebase… added), `3655961` (#369 Show History for folders and multi-select), `8568a70` (#255) | take upstream, re-apply fork change. Keep the `vcsAvailable` condition, the args and Manage Remotes. Merge/Rebase are upstream (contextMenu.ts:345). Drop Compare with Revision. |
+| `src/ui/Dialog.module.css` | Dialog max size clamped to the viewport minus 48px; scrollable message body | `f87d153` (#407, `position: relative` and a resize grip for dialogs marked `resizable`, Dialog.module.css:41) | take upstream, re-apply fork change. Both fork rules are still fork-only: upstream's base `.dialog` keeps `max-width/max-height: 100%`. Check the clamp against `resizable` dialogs. |
+| `src/ui/Tree.module.css` | `.label` `flex-shrink: 0`, `max-width: 100%` | `98c8c55` (#495), `a3cd99d` (#345) | manual merge. Upstream's horizontal scroll (`.wideRow`, Tree.module.css:57) changes how labels size. Check whether the fork rule is still needed. |
+| `src/ui/Tree.tsx` | `title` tooltip on the detail span | `5283408` (#504), `98c8c55` (#495), `a3cd99d` (#345) | take upstream, re-apply fork change |
+| `src/workbench/Workbench.test.tsx` | Test for multi-line error balloons with a working Dismiss (pairs with the fork's `Notifications.module.css` clamp) | `1c46a1c` (#177), `08fd134` (#133) | take upstream, re-apply fork change |
+
+VCS tests:
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `src/features/vcs/__tests__/branches.test.ts` | `buildMultiRepoBranchTree` | `eb67595` (#144) | take upstream, re-apply fork change |
+| `src/features/vcs/__tests__/changes.test.ts` | Group by repository/module, ignored group | `d9d1caa` (#371) | take upstream, re-apply fork change. Drop the repository cases that upstream covers. |
+| `src/features/vcs/__tests__/decorations.test.ts` | Ignored folder subtree decoration | `55836e1` (#135, formatting only) | take upstream, re-apply fork change |
+| `src/features/vcs/__tests__/gitOps.test.ts` | Multi-repo failure summary, scoped update/push (+225) | `55836e1` (#135, formatting only) | take upstream, re-apply fork change |
+| `src/features/vcs/__tests__/logBranches.test.tsx` | Multi-repo BranchesPanel (+474); MT-B batch delete | `eb67595` (#144) | take upstream, re-apply fork change. Mostly a rewrite on `RepoCommit`. |
+| `src/features/vcs/__tests__/logDetails.test.tsx` | Multi-repo commit details | `4d503ef` | drop fork change (upstream supersedes) where `4d503ef` added the same coverage; keep the rest. |
+| `src/features/vcs/__tests__/logOptions.test.ts` | Remote-prefix detection | `b6a3715` (#175) | take upstream, re-apply fork change |
+
+### 1.5 i18n and locales (7 files, MT-4)
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `src/platform/i18n.ts` | `"it"` in `SUPPORTED_LOCALES`; `it: "Italiano"` in `LOCALE_NAMES` | `5217f85` (#247, knip removed `LOCALE_NAMES` and `localeDisplayName`) | take upstream, re-apply fork change. Add `"it"` only; don't bring `LOCALE_NAMES` back, or knip fails. |
+| `src/features/settings/model/schema.ts` | `LocaleId` and `LOCALES` include `"it"` | `9d4e778` (#194, proxy settings) | take upstream, re-apply fork change |
+| `src/features/settings/pages/behavior.tsx` | "Italiano (Italian)" option and keywords | `0069333` (#251), `aea0b33` (#225), `01defde` (#448) | take upstream, re-apply fork change |
+| `src/platform/locales/en.json` | Brand strings in the `app.*`/`menu.*` keys; `menu.vcs.compareWithRevision/compareWithBranch/showHistory/showHistoryForSelection` | `28baa4a`, `059fd8a` (#477), `eb67595` (#144); 11 commits | take upstream, re-apply fork change. Brand keys in MT-1, VCS keys in MT-3. Upstream already has `menu.vcs.compareWithBranch` as "Compare with Branch or Revision…" (en.json:338); drop `compareWithRevision`. |
+| `src/platform/locales/zh.json` | The same keys in Chinese | `28baa4a`, `059fd8a` (#477), `eb67595` (#144); 11 commits | take upstream, re-apply fork change |
+| `src/platform/locales/text/zh.json` | Chinese for every fork UI string (+116). MT-B adds a few. | `059fd8a` (#477), `01defde` (#448), `2203938` (#360); 69 commits, 4481 → 5232 lines | take upstream, re-apply fork change. Each MT adds the zh entries for the strings it ports, and entries for dropped fork features are removed. |
+| `src/platform/locales/textCatalog.test.ts` | `IBLOpenIdea` and "Italiano (Italian)" in `UNTRANSLATED` | `379a52d` (#434), `1602e4b` (#274), `9d4e778` (#194) | take upstream, re-apply fork change |
+
+The fork-only catalogs `it.json` and `text/it.json` (4586 lines) are not in the overlap, but they are the long pole of MT-4. See risk 4.
+
+### 1.6 Other (1 file)
+
+| File | What the fork changed | Upstream commits | Port strategy |
+|---|---|---|---|
+| `src/bindings.ts` | Generated: `agentSetArgs`, `agentComplete`, `vcsIgnored`, `CommitSettings.suggest*`, `NewAgentTask.instructions` | `0cd927e` (#151), `4d503ef`, `059fd8a` (#477); 43 commits | take upstream, re-apply fork change by regenerating it (`pnpm gen:bindings`, i.e. `cargo test -p openidea --test export_bindings`). Never merge it by hand. CI runs `git diff --exit-code src/bindings.ts` after nextest. |
+
+Total: 17 + 1 + 25 + 48 + 7 + 1 = 99. A script check confirmed the table lists exactly the 99 overlap files.
+
+---
+
+## 2. Fork features upstream now provides
+
+| Fork feature | Upstream evidence (upstream/main) | What to do |
+|---|---|---|
+| Single `latest.json` written after all bundles (MT-A, `449ca59`) | `.github/workflows/release.yml:121` (`uploadUpdaterJson: false`), `:179` (`updater-manifest` job), from `f911196` (#176) | Drop it. MT-A's job is a near-verbatim copy; keep only the `already_published` gating. |
+| Bindings export fails the test on error (MT-A `21f9d8b`) | `src-tauri/src/lib.rs:38`: `.expect("failed to export TypeScript bindings")` | Drop the fork and MT-A versions along with the TEMP-subprocess test. MT-A was undoing a regression that only the fork had. |
+| Per-worktree dev profile and port isolation (MT-A `ec37778`, `7485dfa`; v0.2.0 `webview-dev`) | `src-tauri/src/dev.rs:3-13` (debug identifier from a hash of the worktree root), `src-tauri/src/lib.rs:66` (single-instance in debug too), `scripts/dev-session.ts:7` (`worktreeId`, `preferredVitePort`, `claimSession`), `scripts/tauri.ts` (starts Vite, passes `devUrl`) | Drop the identifier, port and HMR logic from `dev.ps1`/`vite.config.ts` and the `webview-dev` dir from `windows.rs`. Keep the VS2022 env, the cargo build slots and the seed variable. Rebrand the prefix in `dev.rs:12` and `dev-session.ts:12`, plus their tests (`dev.rs:21`, `dev-session.test.ts:53`). |
+| Built-in `pi` and `agy` ACP agents, the catalog metadata (`AGENT_CATALOG_META`) and install hints | `crates/ide-agent/src/registry.rs:26` (`REGISTRY_URL`), `src/features/agents/AgentRegistryPage.tsx:2` (Settings › Tools › Agents: install/update/remove), `src/features/agents/index.ts:113` (`agents.addAgent`). The live registry (fetched 2026-10-31) lists `pi-acp` ("pi ACP", npx `pi-acp@0.0.34`) and `antigravity-acp` ("Google Antigravity", binary 1.4.5). | Drop the built-ins and the catalog metadata. Drop agy discovery *once a Windows install of `antigravity-acp` through the registry has been checked*. The fork's discovery path is also hardcoded to `ai.l0ng.openidea/acp-agents`, so it goes stale after MT-C anyway. Map saved ids `agy`→`antigravity-acp` and `pi`→`pi-acp` in settings and presets. |
+| Windows agent/tool resolution (fork `resolve_executable`/`resolve_spawn`/`search_dirs`; `ide-tools` PATH additions) | `crates/ide-core/src/process.rs:222`, `:235` (`find_executable[_in]` × PATHEXT), `:246` (`user_path`, HKCU), `crates/ide-jsonrpc/src/lib.rs:351` (ACP spawn resolves through it), `crates/ide-agent/src/native/mod.rs:31`, `crates/ide-tools/src/lib.rs:158` (`extend_process_path` with `with_user_path`) | Drop it, then retest npx-based registry agents on Windows (`npx.cmd` with `@scope/pkg@ver` args). |
+| Multi-repo Git tool window: commits keyed by repo, merged logs, branches per repo, repo filter and column, repo-scoped selection | `src/features/vcs/multiRoot.ts:5`, `:15` (`RepoCommit`, `mergeRepoLogs`, `branchesByRepo`), `GitLog.tsx:688` (Repository filter), `GitLog.tsx:1140` (repository column), `logStore.ts:501-526` (selection confined to one repo), from `4d503ef` | Drop the fork's `LogCommit` plumbing. Re-apply only the UX that is missing (section 1.4). |
+| Per-repo cherry-pick (MT-B `2bbab62`) | Selection can't span repositories (`logStore.ts:501-526`); `operations.tsx:246` runs in `commitRepo(commits[0])` | Drop it. |
+| File history tab ("History: <file>") | `logStore.ts:263` (`openLogTab`), `actions.tsx:428`, `:443` (`vcs.showHistory` opens a history log tab), from `eb67595` (#144); #369 extends it to folders and multi-selection | Drop the fork's History tab. Keep `FileHistory.tsx` only for History for Selection. |
+| Compare with Revision… | `src/features/vcs/RevisionChooser.tsx:1`, `actions.tsx:322` ("Compare with Branch or Revision…") | Drop `vcs.compareWithRevision` and its menu entries. |
+| Update Project without the modal | `remoteUi.tsx:19` + `crates/ide-core/src/workflow_settings.rs:144` (`show_update_options`, default `true` at :155) | Drop the fork's unconditional direct update. Product decision: keep upstream's default, or ship the fork with `showUpdateOptions=false`. Re-apply only the repo/repos scoping. |
+| Merge…/Rebase… in the Project view Git menu | `src/features/project-tree/contextMenu.ts:345` (`2bc5e8d`) | Drop that part of the fork's menu. |
+| Group changes by repository | `src/features/vcs/__tests__/changes.test.ts:73`, Group By Directory at `CommitView.tsx:438` | Reduce the fork's View Options to Module grouping plus Show Ignored Files. |
+| `core.autocrlf=false` in VCS tests | `crates/ide-vcs/tests/git_workflows.rs:35`, `crates/ide-vcs/tests/repo.rs:34` | Drop it. |
+
+These fork features have no upstream equivalent, so the fork keeps them. Each grep returned nothing:
+
+- Commit-message suggestion: no `agent_complete`/`agentComplete`/"suggest … commit message" in `upstream/main` `src` and `crates`.
+- Agent presets and injected instructions: no `preset` in `upstream/main:src/features/agents`.
+- Custom ACP arguments and enable/disable per agent: no `set_custom_args`/`agentSetArgs`.
+- Show History for Selection and Show Current Revision: `vcs.showHistoryForSelection` and `vcs.showCurrentRevision` have 0 hits in `upstream/main:src/features/vcs`.
+- Show Ignored Files (`vcs_ignored`, `status_with_ignored`): none upstream. #408 hides IDE-ignored names, which is a different feature.
+- Two-pane Compare Branches editor: upstream `CompareBranches.tsx` is still the dialog.
+- Repo pickers in Pull/Merge/Rebase/Manage Remotes/Worktrees, and the Remotes dialog grouped by repository: upstream dialogs take no repo (gitMenuDialogs.tsx:112, :218, :290, :377, :542).
+- Viewport clamp on every dialog and the scrollable message body: upstream's base `.dialog` still uses `max-width/max-height: 100%`; #407 only adds a resize grip for `resizable` dialogs.
+- Ancestor-repo exclusion for folders of repositories: upstream still adds the ancestor first (roots.rs:43).
+- Italian locale, the rebrand and MT-C's identifier migration.
+
+---
+
+## 3. Upstream build/CI changes the port must respect
+
+**CI gates** (`.github/workflows/ci.yml` on upstream; the fork has never run these):
+
+- **rust** (macOS, Ubuntu 22.04, Windows): `cargo fmt --all --check` (Linux), `cargo clippy --workspace --all-targets -- -D warnings` (all three OSes), `git config --global core.autocrlf false`, `cargo nextest run --workspace`, then `git diff --exit-code src/bindings.ts` (Linux). New fork Rust code (`migrate.rs` is 1368 lines, plus `complete()` and `status_with_ignored`) must be clippy-clean on all three OSes. MT-B already needed a rustfmt commit (`7c87cd3`).
+- **server**: `cargo build --locked -p ide-host --bin openidea-server --target x86_64-unknown-linux-musl`. Any `ide-host` change (`HostConfig`) must still build for musl.
+- **deny** (new, #305): `cargo deny check` with `deny.toml` (licence allow-list, advisories, `unknown-git = "deny"`). The fork adds no crates today; keep it that way or check licences.
+- **frontend**: `pnpm typecheck` (tsrs, including `-p scripts`, so `scripts/local/tests/vite-config.test.ts` is typechecked if it stays), `pnpm lint`, **`pnpm format:check`** (`oxfmt --check`), **`pnpm knip`** (#247), `pnpm test`, `pnpm build`.
+- **e2e**: Playwright in `mcr.microsoft.com/playwright:v1.64.1-noble`. Brand and title assertions in e2e may need the rebrand.
+- **Trigger**: `pull_request: branches: [main]` only. Port PRs that target an integration branch get no CI. Either add the integration branch to the trigger for the duration of the port (a fork delta to remove afterwards) or open the port PRs against the fork's `main`.
+
+**Formatting** (`55836e1` #135, `.oxfmtrc.json`, `.git-blame-ignore-revs`):
+
+- oxfmt formats ts/tsx/css/json/md/yml/html (55836e1 touched all of these). The upstream config ignores `src/bindings.ts`, `**/*.toml`, the Angular parser, fixtures and `docs/plugins/themes.md`, and turns off embedded formatting in `.md`.
+- I checked the LF git blobs of every fork-touched text file (106 files across release-hardening, rh-mt-b and rh-mt-c) with upstream's config: **58 fail**. They include `index.html`, `tauri.conf.json`, `vite.config.ts`, most of `src/features/vcs/*`, `src/features/agents/*`, and every fork `docs/**/*.md` (`docs/upstream-sync.md`, `docs/superpowers/**`, `docs/development/parallel-local-dev.md`, `docs/intents/*`).
+- Either format the docs or add them to `ignorePatterns`; otherwise `format:check` fails on docs alone.
+- **CRLF trap**: this checkout has `core.autocrlf=true`, so a local `oxfmt --check` flags every file, including untouched upstream files such as `src/main.tsx`. Port worktrees must use `core.autocrlf=false` (as upstream CI does), or local checks mean nothing.
+
+**Pre-commit hook** (#252): `simple-git-hooks` installs on `pnpm install` and runs `lint-staged` on each commit: `oxlint --fix` on JS/TS, `oxfmt` on every staged file, and `rustfmt --edition 2024` on `.rs`. Agents committing in worktrees will see their staged files rewritten. That is fine, but agents need to know, and rustfmt has to be on PATH in the Windows sandbox.
+
+**knip**: `knip.ts` covers `src/**`, `scripts/**/*.ts`, `perf`, `e2e`, with `ignoreExportsUsedInFile`. Fork exports that nothing imports will fail. Known cases: `LOCALE_NAMES`/`localeDisplayName` (removed upstream by #247), `AGENT_CATALOG_META`, and the fork's `logStore` helpers once upstream's model replaces their callers. Run knip after each MT.
+
+**package.json scripts**: `tauri` is now `node scripts/tauri.ts`. With `dev`, it claims a session lock, starts Vite on `preferredVitePort(identifier)` (15000 + hash) and injects `--config {"build":{"beforeDevCommand":"","devUrl":…}}` after the user's args. MT-A's `dev.ps1` runs `pnpm tauri dev --config <overlay>`, so its `devUrl` gets overridden and its `identifier` is replaced at runtime by `dev::configure`. Rework `dev.ps1` to:
+1. set up the VS2022 env and cargo slot;
+2. pre-build with the same `TAURI_CONFIG` and features that upstream's launcher uses;
+3. export `IBLOPENIDEA_SEED_FROM`;
+4. call `pnpm dev:app`.
+
+The `dev:status` script reports the session.
+
+**Cargo**: `[profile.*]` is unchanged upstream (dev opt-level 0 with deps at 2; release LTO, codegen-units=1, `panic = "unwind"`, `strip = "debuginfo"`). `rustfmt.toml` is unchanged (`max_width = 120`). The workspace adds `ide-fonts`, `ide-notebook`, `zip`, the jupyter/zeromq crates, `tiberius`, `bb8`, and `reqwest` `socks`. `src-tauri/build.rs` now emits `OPENIDEA_WORKTREE_ROOT` (dunce build-dep), which `dev.rs` needs.
+
+**tauri.conf.json and platform configs**:
+- Keep the CSP addition for `avatars.githubusercontent.com` (#477) and the NSIS icons (#275).
+- `tauri.macos.conf.json` is new (file associations). It has no identity strings.
+- `tauri.dev.conf.json` gained only a trailing newline.
+
+**release.yml**: take upstream's file and re-apply three fork deltas: the release name, the `already_published` output with its `if:` on build/server/updater-manifest/publish, and the repository in URLs, which `context.repo` already handles. Upstream builds the `latest.json` URL from `context.repo`, so it points at the fork automatically.
+
+**Identifier literals**: leave `ai.l0ng.openidea` in test fixtures alone (`crates/ide-sdk/src/jdtls.rs` tests, `crates/ide-dap/tests/*`, `src/platform/paths.test.ts`, `src/features/http-client/spring/generate.test.ts`, `src/features/run/producers.test.ts`, `src/features/plugins/backend.ts` samples, `perf/compare/apps.toml`). Only `tauri.conf.json`, `dev.rs`, `dev-session.ts` (and their tests), `ide-tools/src/server.rs` and the updater endpoint carry the fork identity.
+
+---
+
+## 4. Suggested split (4 macro tasks)
+
+Integration branch: `port/v0.3.0`, cut from `upstream/main` `504d859` and frozen at that SHA for the whole port. Bring in later upstream commits as a separate follow-up sync after v0.3.0. Each MT is one PR (or a short stack) into the integration branch, and each gets a cross-review: Claude reviews the Codex PRs and the reverse. A final reviewer signs off MT-4.
+
+| MT | Owner | Scope (file sets are disjoint except the shared files below) | Depends on |
+|---|---|---|---|
+| **MT-1 Platform, identity, local dev** | Codex | Section 1.1 (17 files) and 1.2 (`vite.config.ts`). Plus fork-only: `src-tauri/icons/*`, `src-tauri/src/migrate.rs` (MT-C), `src-tauri/src/dev.rs` + `scripts/dev-session.ts` (+tests; prefix `it.innobitlab.iblopenidea.dev.w`), `scripts/local/**`, `src-tauri/tauri.local.conf.json`, `src-tauri/tests/export_bindings.rs` (back to upstream), CI trigger (temporary), oxfmt ignore or reformat for `docs/**`, brand keys in `en.json`/`zh.json`/`text/zh.json`. | None. Merge it first; it is small. |
+| **MT-2 Agents and commit-suggestion backend** | Codex (Rust-heavy) | Section 1.3 (25 files). Plus fork-only: `AgentsCatalogEditor.tsx` (slimmed to args, enable and presets, with no catalog metadata), `AgentsCatalog.module.css`, `src/ui/openidea/agents/*.svg`, a new `src/features/settings/pages/MessageSuggestion.tsx` split out of `vcs.tsx`, agent keys in the catalogs. | MT-1 merged (to rebase onto). No functional dependency. |
+| **MT-3 VCS / Git UX** | Claude (TS-heavy) | Section 1.4 (48 files). Plus fork-only: `FileHistory.tsx` (reduced to History for Selection), `commitSuggest.ts` + test (frontend only), `crates/ide-host/src/ops/vcs.rs` (`ignored`), `crates/ide-vcs/src/history.rs`, `refs.rs` (tolerant tips/ahead-behind), `src/workbench/Notifications.module.css`, `src/ui/Feedback.module.css`, `src/workbench/Welcome.tsx`, `src/features/vcs/{CommitView.module.css,dialogs.tsx,graph.ts}`, `src/features/analysis/scope.test.ts`, the MT-B VCS tests, VCS keys in the catalogs. | Starts right away on the integration branch. Rebases after MT-1 for `menu.rs` and after MT-2 for `commands/mod.rs` and `tests/rpc.rs`. The suggest button in `CommitMessageField` is its last step, after MT-2 merges (needs `agentComplete` and the `CommitSettings.suggest*` bindings). |
+| **MT-4 Italian locale, catalog sync, v0.3.0 gate** | Claude (or whoever is free first) | Section 1.5 (7 files) plus `src/platform/locales/it.json`, `text/it.json`, `src/platform/i18n.test.ts`. Version 0.3.0 in `Cargo.toml`, `package.json`, `tauri.conf.json`, `Cargo.lock`. Final repo-wide `pnpm format`, knip and clippy pass. Release dry run. | MT-1, MT-2 and MT-3 merged. Translating upstream's new strings (about 750 entries that depend only on `504d859`) can start in parallel on a side branch. |
+
+Suggested timeline:
+
+- Codex: MT-1, then MT-2.
+- Claude: MT-3 from day one, then MT-4.
+- MT-4's upstream-only translation pass can begin while MT-3 is in review.
+
+**Shared files and their owners:**
+
+| File | Rule |
+|---|---|
+| `src/bindings.ts` | Never hand-merge. Whoever rebases regenerates it with `pnpm gen:bindings`, and the PR must pass `git diff --exit-code`. |
+| `Cargo.lock` | Take the integration branch's copy on rebase, then run cargo to refresh. Only MT-4 bumps the version. |
+| `src-tauri/src/commands/mod.rs` | MT-2 adds `agent_set_args`/`agent_complete` first; MT-3 adds `vcs_ignored` after rebasing. |
+| `crates/ide-host/tests/rpc.rs` | MT-3 owns it (VCS tests). MT-2 doesn't touch it if `managed_agents_dir` is dropped. |
+| `src-tauri/src/menu.rs` | MT-1 does the brand strings; MT-3 adds the History entries afterwards. |
+| `src/features/settings/pages/vcs.tsx` | MT-3 owns it. MT-2 adds a single import/render of `MessageSuggestion` (or MT-3 does, if MT-2 lands first). |
+| `CommitView.tsx` / `CommitDialog.tsx` | MT-3 owns them and wires MT-2's API. |
+| `src/platform/locales/en.json`, `zh.json`, `text/zh.json` | Each MT adds the keys for its own strings and removes keys of features it drops. Keep keys sorted so conflicts stay local. A union resolves them. |
+| `src/platform/locales/it.json`, `text/it.json` | MT-4 only. MT-1..3 don't touch them. |
+| `package.json` | MT-1 does the scripts, MT-4 the version. |
+| `src-tauri/tauri.conf.json` | MT-1 does identity, updater and copy; MT-4 the version. |
+
+Until MT-4 lands, `textCatalog.test.ts` on the integration branch must not include `it` (no `it` catalog files), or every MT's CI fails on Italian. Add `it.json`/`text/it.json` only in MT-4.
+
+---
+
+## 5. The five riskiest points
+
+1. **Agents rebuilt on #151 (native drivers, ACP v2, registry).** The fork's agent code assumes the old model: every agent is ACP, `claude`/`codex` are npx adapters, and custom agents are bare `{name, command, args, env}`.
+   - `set_custom_args` written naively drops `driver` and `[registry]`. That silently switches native Claude/Codex to ACP or breaks registry agents.
+   - `complete()` hand-builds an ACP v1 `initialize`, so it has to be rebuilt on `acp::initialize_params` and `Negotiated` and tested against both native drivers (restrictive modes `default` for Claude, `read-only` for Codex). It must also not pick up the #444 bypass default.
+   - Existing users carry fork-written `<config>/agents/codex.toml` (`npx … codex-acp@2.3.0 …`), and MT-C's migration copies it into the new profile. Upstream's `load()` lets a custom file with a built-in id replace the built-in, so those users never get the native Codex driver. The port needs a migration rule for fork-written override files, plus id rewrites `agy`→`antigravity-acp` and `pi`→`pi-acp` in `vcs.commit.suggestAgent` and in localStorage presets.
+
+2. **Two multi-repo models in the Git UI (`4d503ef` vs the fork's `LogCommit`).** About 15 files on each side implement repository identity differently: `repo\0id` keys and selection confined to one repo upstream, `{repo}` fields and cross-repo selection in the fork. A text merge will compile and then break selection, reveal, history tabs and diff paths in subtle ways.
+   - The fork's 474-line `logBranches.test.tsx` and 225-line `gitOps.test.ts` are written against the fork model and won't catch this.
+   - `status_with_ignored` has to absorb #476's index write-back guard. Otherwise "Show Ignored Files" brings back the index-restore bug that #476 fixed.
+
+3. **Identity, dev sessions and migration ordering.** `f6a0152` rewrites the identifier in debug builds at runtime, and its launcher owns Vite's port. MT-A's `dev.ps1` sets both through a config overlay that no longer takes effect. MT-C's `migrate::seed_source` reads the identifier, so it must run after `dev::configure`, or debug seeding copies into a directory the app never uses.
+   - In release, the first start under `it.innobitlab.iblopenidea` copies a profile that upstream has since grown: `<data>/agents/tools` registry installs, the isolated jdtls JDK from #370, notebooks, `git-credentials.json` from #321. Check the `EXCLUDED` list in `migrate.rs`, the copy time, and owner-only permissions on the secret files.
+   - Confirm end to end that a CI-built v0.2.x install updates to v0.3.0 across the identifier change. The updater runs in the old identifier's process, and the new app must find the migrated profile. On Windows the NSIS/MSI install location and registry keys follow the identifier, so an updater-driven install may land beside the old app instead of replacing it.
+
+4. **Italian catalog completeness is the long pole.** `textCatalog.test.ts` runs `describe.each` over every `text/*.json`. Every literal UI string must be translated, with no stale entries.
+   - Upstream grew `text/zh.json` from 4481 to 5232 lines and removed strings (#247, `ab7cc02`). The fork's `text/it.json` has 4586 lines, so about 650 to 750 new translations plus removals are needed, plus the keyed `it.json`.
+   - Strings of fork features dropped in the port (the catalog metadata, the History tab, Compare with Revision) must also leave the zh and it catalogs.
+   - If `it` sits on the integration branch before MT-4, every PR fails CI, which is why section 4 keeps `it` out until MT-4.
+
+5. **CI gates are new to the fork, and the local checks give false signals.** `format:check` already fails on 58 of the 106 fork files (docs included). knip, clippy `-D warnings` on three OSes, `cargo deny`, the bindings diff, e2e and the pre-commit hook have never run on fork code.
+   - On Windows with `core.autocrlf=true`, local oxfmt flags everything, so agents can't tell real failures from line endings.
+   - CI runs only for PRs into `main`, so integration-branch PRs merge unchecked unless the trigger changes.
+   - Upstream is moving fast (#477 alone is +23k lines, and 22 commits landed while `docs/upstream-sync.md` aged). Freezing at `504d859` is what keeps the port finite.
+
+---
+
+## Appendix: open decisions for the owner
+
+- Ship the fork with `showUpdateOptions = false`, keeping the old fork behaviour of updating directly, or take upstream's default of showing the dialog.
+- Keep the Agents catalog editor tab (args, enable/disable, presets) or move those controls into Settings › Tools › Agents next to upstream's registry page.
+- Keep agy discovery as a fallback until the registry install of `antigravity-acp` has been checked on Windows, or drop it in MT-2.
+- How the fork's `main` gets the rebuilt history for v0.3.0: replace `main` with `port/v0.3.0`, or merge the old `main` into it with `-s ours` to keep a single line of history for existing clones.
