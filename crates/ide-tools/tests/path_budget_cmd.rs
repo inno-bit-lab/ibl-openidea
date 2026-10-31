@@ -85,7 +85,6 @@ fn cmd_shim_loses_the_helper_above_the_inherited_path_limit() {
 }
 
 #[test]
-#[ignore = "Frozen-base defect; enable after existing-only managed PATH composition"]
 fn managed_composition_keeps_cmd_shims_within_the_path_budget() {
     let fixture = Fixture::new();
     let candidates = ide_tools::tools_bin_dirs(&fixture.root);

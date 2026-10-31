@@ -119,8 +119,7 @@ pub fn python_lib_dir(tools_root: &Path, name: &str) -> PathBuf {
     tools_root.join(name).join("lib")
 }
 
-/// Every directory a managed tool's executables can live in (existing or not,
-/// so a `PATH` computed at startup also covers tools installed later).
+/// Every candidate directory a managed tool's executables can live in, existing or not.
 pub fn tools_bin_dirs(app_data: &Path) -> Vec<PathBuf> {
     bin_dirs_in(&tools_dir(app_data), Platform::current())
 }
@@ -164,13 +163,17 @@ pub fn extend_process_path(app_data: &Path) {
     }
 }
 
-/// `path` (a `PATH` value) with [`tools_bin_dirs`] in front, those it lacks, and the
+/// `path` with existing managed directories in front, those it lacks, and the
 /// mise / asdf shims when their shell hook didn't put them there.
 pub fn path_with_tools(app_data: &Path, path: &std::ffi::OsStr) -> OsString {
     let path = &ide_core::version_managers::path_with_shims(&ide_core::version_managers::managers(), path);
-    let mut dirs = tools_bin_dirs(app_data);
+    prepend_existing(&tools_bin_dirs(app_data), path)
+}
+
+fn prepend_existing(candidates: &[PathBuf], path: &std::ffi::OsStr) -> OsString {
+    let mut dirs = candidates.to_vec();
     let current: Vec<PathBuf> = if path.is_empty() { Vec::new() } else { std::env::split_paths(path).collect() };
-    dirs.retain(|d| !current.contains(d));
+    dirs.retain(|d| d.is_dir() && !current.contains(d));
     if dirs.is_empty() {
         return path.to_owned();
     }
@@ -422,7 +425,7 @@ impl Tools {
         let ours = bin_dirs_in(&root, platform);
         let system: Vec<PathBuf> = std::env::split_paths(&search_path).filter(|d| !ours.contains(d)).collect();
         let system_path = std::env::join_paths(&system).unwrap_or_default();
-        let child_path = std::env::join_paths(ours.iter().chain(system.iter())).unwrap_or_default();
+        let child_path = prepend_existing(&ours, &system_path);
         Self {
             root,
             system_path,
