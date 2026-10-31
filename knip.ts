@@ -11,7 +11,8 @@ const config: KnipConfig = {
   ],
   ignoreExportsUsedInFile: true,
   // lint-staged formats Rust files with the toolchain's rustfmt.
-  ignoreBinaries: ["rustfmt"],
+  // Local Windows scripts run through PowerShell 7.
+  ignoreBinaries: ["rustfmt", "pwsh"],
   compilers: {
     // Fonts come in through `@import` in global.css.
     css: (text: string) => [...text.matchAll(/(?<=@)import[^;]+/g)].join("\n"),

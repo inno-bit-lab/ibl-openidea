@@ -12,6 +12,8 @@
     "tauri": "node scripts/tauri.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:rust": "pwsh -NoProfile -File scripts/local/test-rust.ps1",
+    "test:full": "pwsh -NoProfile -File scripts/local/test-full.ps1",
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
