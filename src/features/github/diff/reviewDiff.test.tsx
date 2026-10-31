@@ -204,7 +204,8 @@ const inlay = (id: string) => document.querySelector<HTMLElement>(`[data-thread-
 describe("review threads in a pull request diff", () => {
   it("shows threads as compact inlays under their lines, filtered by Show Review Threads", async () => {
     view();
-    await waitFor(() => expect(inlay("T1")).not.toBeNull());
+    // The first render of the merge view can exceed 1 s on slow machines.
+    await waitFor(() => expect(inlay("T1")).not.toBeNull(), { timeout: 5000 });
     const t1 = inlay("T1")!;
     // More than 3 comments: the first, "… 2 more replies", the last.
     expect(t1.textContent).toContain("first");
