@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "IBLOpenIdea",
   "version": "0.2.1",
-  "identifier": "ai.l0ng.openidea",
+  "identifier": "it.innobitlab.iblopenidea",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -44,6 +44,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "publisher": "InnoBitLab S.r.l.",
     "category": "DeveloperTool",
     "copyright": "Copyright © 2026 InnoBitLab S.r.l. & OpenIDEA contributors",
     "license": "Apache-2.0",
