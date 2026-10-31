@@ -302,7 +302,7 @@ impl AgentManager {
     pub fn new(paths: AgentPaths, runtime: tokio::runtime::Handle) -> Self {
         let connector: Connector = Arc::new(|spec, cwd, client, on_stderr| match spec.driver {
             provider::Driver::Acp => {
-                Peer::spawn_framed(&spec.command, &spec.args, cwd, &spec.env, client, on_stderr, Framing::Lines)
+                Peer::spawn_contained(&spec.command, &spec.args, cwd, &spec.env, client, on_stderr, Framing::Lines)
             }
             provider::Driver::Codex => native::codex::connect(spec, cwd, client, on_stderr),
             provider::Driver::Claude => native::claude::connect(spec, cwd, client, on_stderr),
@@ -452,10 +452,16 @@ impl AgentManager {
         if prompt.is_empty() {
             return Err(IdeError::invalid("nothing to ask"));
         }
-        let spec = provider::load(self.shared.paths.custom_agents_dir.as_deref())
+        let mut spec = provider::load(self.shared.paths.custom_agents_dir.as_deref())
             .into_iter()
             .find(|p| p.id == provider)
             .ok_or_else(|| IdeError::invalid(format!("unknown agent {provider}")))?;
+        // One-shot completions have no terminal in which to answer credentials.
+        // Override provider values here only; ordinary tasks retain their environment.
+        spec.env.retain(|(key, _)| {
+            !key.eq_ignore_ascii_case("GIT_TERMINAL_PROMPT") && !key.eq_ignore_ascii_case("GCM_INTERACTIVE")
+        });
+        spec.env.extend([("GIT_TERMINAL_PROMPT".into(), "0".into()), ("GCM_INTERACTIVE".into(), "never".into())]);
         let collector = Arc::new(Collector::default());
         let stderr: Arc<Mutex<VecDeque<String>>> = Arc::default();
         let on_stderr: Box<dyn Fn(String) + Send + Sync> = {

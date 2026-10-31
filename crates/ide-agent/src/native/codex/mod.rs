@@ -38,7 +38,7 @@ pub(crate) fn connect(
 ) -> std::io::Result<Peer> {
     attach(client, |events| {
         let command = super::newest_install(&spec.command);
-        Peer::spawn_framed(&command, &spec.args, cwd, &spec.env, events, on_stderr, Framing::Lines)
+        Peer::spawn_contained(&command, &spec.args, cwd, &spec.env, events, on_stderr, Framing::Lines)
     })
 }
 

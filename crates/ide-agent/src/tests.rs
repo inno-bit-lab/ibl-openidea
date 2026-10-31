@@ -1587,6 +1587,10 @@ async fn real_complete_is_read_only(provider: &str) {
     assert_eq!(cwds.lock().len(), 1);
     let completion_cwd = cwds.lock()[0].clone();
     let removed_on_return = !completion_cwd.exists();
+    eprintln!(
+        "COMPLETION_CWD provider={provider} path={} removed_on_return={removed_on_return}",
+        completion_cwd.display()
+    );
     assert!(result.unwrap().contains("READ_ONLY_OK"));
     let selected = mgr
         .shared
@@ -1673,6 +1677,68 @@ async fn complete_removes_its_temporary_directory_when_launch_fails() {
     );
     assert_eq!(cwds.lock().len(), 1);
     assert!(!cwds.lock()[0].exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn process_tree_completion_disables_git_prompts_only_for_complete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let custom = tmp.path().join("agents");
+    std::fs::create_dir(&custom).unwrap();
+    std::fs::write(
+        custom.join("prompt-env.toml"),
+        r#"
+name = "Prompt environment fixture"
+command = "unused-fixture"
+[env]
+GIT_TERMINAL_PROMPT = "1"
+GCM_INTERACTIVE = "always"
+KEEP_ENV = "kept"
+"#,
+    )
+    .unwrap();
+    let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+    let connector: Connector = Arc::new(move |spec, _, _, _| {
+        send.send(spec.env.clone()).unwrap();
+        Err(std::io::Error::other("fixture captured environment"))
+    });
+    let manager = AgentManager::with_connector(
+        AgentPaths {
+            project_root: tmp.path().into(),
+            store_dir: tmp.path().join("store"),
+            worktrees_dir: tmp.path().join("worktrees"),
+            models_file: tmp.path().join("models.json"),
+            custom_agents_dir: Some(custom),
+            home_dir: None,
+        },
+        tokio::runtime::Handle::current(),
+        connector,
+    );
+    assert!(manager.complete("prompt-env", "question", &[], Duration::from_secs(5)).await.is_err());
+    let completion = receive.recv().await.unwrap();
+    let task = manager
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("question"),
+            provider: "prompt-env".into(),
+            config: Vec::new(),
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    let regular = tokio::time::timeout(Duration::from_secs(5), receive.recv()).await.unwrap().unwrap();
+    wait_for(&manager, &task.id, AgentStatus::Failed).await;
+    manager.shutdown();
+    let value = |env: &[(String, String)], key: &str| {
+        env.iter().find(|(name, _)| name.eq_ignore_ascii_case(key)).map(|(_, value)| value.clone())
+    };
+    eprintln!("COMPLETION_GIT_ENV complete={completion:?} task={regular:?} task_id={}", task.id);
+    assert_eq!(value(&regular, "GIT_TERMINAL_PROMPT").as_deref(), Some("1"));
+    assert_eq!(value(&regular, "GCM_INTERACTIVE").as_deref(), Some("always"));
+    assert_eq!(value(&completion, "KEEP_ENV").as_deref(), Some("kept"));
+    assert_eq!(value(&completion, "GIT_TERMINAL_PROMPT").as_deref(), Some("0"));
+    assert_eq!(value(&completion, "GCM_INTERACTIVE").as_deref(), Some("never"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
