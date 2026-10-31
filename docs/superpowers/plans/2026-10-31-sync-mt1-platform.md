@@ -148,6 +148,7 @@ Parameters `-FullDebug`, `-SeedFrom`, `-WhatIf`. Steps:
 ### Task 6: Release pipeline
 
 - [ ] Take upstream's `release.yml`; re-apply the release name `IBLOpenIdea ${tag}` and the `already_published` output with its `if:` on `build`, `server`, `updater-manifest` and `publish`. Upstream already has `uploadUpdaterJson: false` (release.yml:121) and the manifest job (release.yml:179); repository URLs come from `context.repo`.
+- [ ] Then, in a separate commit, port `308822d` from `release-hardening` (upstream has the same two defects, release.yml:121 and :201): `includeUpdaterJson: false` instead of the `uploadUpdaterJson` input that tauri-action@v0 does not have, and for pre-release tags (`vX.Y.Z-N`) `--bundles deb,appimage` on Linux plus no `linux-x86_64-rpm` key in the manifest (RPM rejects `-` and Tauri 2.12 has no RPM version override). Candidate upstream contribution.
 - [ ] `git diff upstream/main -- .github/workflows/release.yml` shows only those lines. Commit.
 
 ### Task 7: CI green
