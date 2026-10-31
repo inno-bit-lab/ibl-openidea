@@ -378,12 +378,44 @@ impl Peer {
         on_stderr: Box<dyn Fn(String) + Send + Sync>,
         framing: Framing,
     ) -> std::io::Result<Self> {
+        Self::spawn_inner(command, args, cwd, env, handler, on_stderr, framing, false)
+    }
+
+    /// An agent connection whose descendants end with the connection on Windows.
+    /// Other transports, including language servers, keep using `spawn_framed`.
+    pub fn spawn_contained(
+        command: &str,
+        args: &[String],
+        cwd: &std::path::Path,
+        env: &[(String, String)],
+        handler: Arc<dyn Handler>,
+        on_stderr: Box<dyn Fn(String) + Send + Sync>,
+        framing: Framing,
+    ) -> std::io::Result<Self> {
+        Self::spawn_inner(command, args, cwd, env, handler, on_stderr, framing, true)
+    }
+
+    // Same transport arguments plus the private containment switch.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_inner(
+        command: &str,
+        args: &[String],
+        cwd: &std::path::Path,
+        env: &[(String, String)],
+        handler: Arc<dyn Handler>,
+        on_stderr: Box<dyn Fn(String) + Send + Sync>,
+        framing: Framing,
+        contain: bool,
+    ) -> std::io::Result<Self> {
         use std::process::Stdio;
         // Windows resolves a bare name only as `.exe`; find the file a child
         // would (`PATH` × `PATHEXT`, e.g. `codex` → `codex.cmd`) first.
         let resolved = resolve_spawn_program(command, env);
         let mut cmd = tokio::process::Command::new(&resolved);
         ide_core::process::prepare(cmd.as_std_mut());
+        if contain {
+            ide_core::process_tree::ProcessTree::contain(cmd.as_std_mut());
+        }
         cmd.args(args)
             .current_dir(cwd)
             .envs(ide_core::process::shell_env())
@@ -393,6 +425,20 @@ impl Peer {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         let mut child = cmd.spawn()?;
+        let tree = if contain {
+            #[cfg(windows)]
+            let tree = {
+                let handle = child.raw_handle().ok_or_else(|| std::io::Error::other("child handle unavailable"))?;
+                // SAFETY: child stays owned here throughout this temporary borrow.
+                let borrowed = unsafe { std::os::windows::io::BorrowedHandle::borrow_raw(handle) };
+                ide_core::process_tree::ProcessTree::adopt(&borrowed)?
+            };
+            #[cfg(not(windows))]
+            let tree = ide_core::process_tree::ProcessTree::adopt(&child)?;
+            Some(tree)
+        } else {
+            None
+        };
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("child stdin unavailable"))?;
         let stdout = child.stdout.take().ok_or_else(|| std::io::Error::other("child stdout unavailable"))?;
         let stderr = child.stderr.take();
@@ -409,19 +455,25 @@ impl Peer {
             }))
         });
 
-        peer.supervise(child, stderr_task);
+        peer.supervise(child, stderr_task, tree);
         Ok(peer)
     }
 
     /// Kills `child` when the connection is torn down; closes the connection when it exits.
     /// After an exit of its own, the connection is reported closed only once what the
     /// process wrote last (stderr, stray stdout) has been read, so a crash report has it.
-    fn supervise(&self, mut child: tokio::process::Child, stderr_task: Option<tokio::task::JoinHandle<()>>) {
+    fn supervise(
+        &self,
+        mut child: tokio::process::Child,
+        stderr_task: Option<tokio::task::JoinHandle<()>>,
+        mut tree: Option<ide_core::process_tree::ProcessTree>,
+    ) {
         let inner = self.inner.clone();
         tokio::spawn(async move {
             let (status, killed) = tokio::select! {
                 status = child.wait() => (status.ok(), false),
                 _ = inner.kill.cancelled() => {
+                    kill_process_tree(tree.take()).await;
                     let _ = child.start_kill();
                     (child.wait().await.ok(), true)
                 }
@@ -435,6 +487,7 @@ impl Peer {
                     inner.reader_done.cancelled().await;
                 };
                 let _ = tokio::time::timeout(OUTPUT_DRAIN, drained).await;
+                kill_process_tree(tree.take()).await;
             }
             inner.mark_closed(status.and_then(|s| s.code()));
         });
@@ -476,7 +529,7 @@ impl Peer {
         W: AsyncWrite + Unpin + Send + 'static,
     {
         let peer = Self::start(reader, writer, handler, true, child.id(), Framing::ContentLength, None);
-        peer.supervise(child, None);
+        peer.supervise(child, None, None);
         peer
     }
 
@@ -697,6 +750,16 @@ impl Peer {
     pub fn kill(&self) {
         self.inner.close_transport();
         self.inner.kill.cancel();
+    }
+}
+
+/// Keep taskkill's synchronous wait off the runtime, and finish it while the
+/// leader handle is still owned by the supervising task.
+async fn kill_process_tree(tree: Option<ide_core::process_tree::ProcessTree>) {
+    if let Some(tree) = tree {
+        if let Err(error) = tokio::task::spawn_blocking(move || tree.kill()).await {
+            tracing::warn!(%error, "agent process-tree teardown task failed");
+        }
     }
 }
 
