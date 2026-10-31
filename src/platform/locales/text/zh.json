@@ -2297,7 +2297,7 @@
   "Warn when committing in detached HEAD or during rebase": "在分离的 HEAD 中或变基期间提交时发出警告",
   "Warning": "警告",
   "Welcome": "欢迎",
-  "Welcome to OpenIDEA": "欢迎使用 OpenIDEA",
+  "Welcome to IBLOpenIdea": "欢迎使用 IBLOpenIdea",
   "What's New": "新功能",
   "When caret is moved": "移动光标时",
   "When files are created": "创建文件时",
@@ -2675,7 +2675,7 @@
   "Create Git repository": "创建 Git 仓库",
   "Export Settings": "导出设置",
   "Export Settings…": "导出设置…",
-  "OpenIDEA settings": "OpenIDEA 设置",
+  "IBLOpenIdea settings": "IBLOpenIdea 设置",
   "Settings exported": "设置已导出",
   "Cannot export settings": "无法导出设置",
   "Import Settings": "导入设置",
@@ -5228,5 +5228,6 @@
   "For clipboard images: {timestamp} becomes YYYYMMDD-HHmmss. Source file names are preserved.": "剪贴板图片中的 {timestamp} 替换为 YYYYMMDD-HHmmss。保留源文件名称。",
   "Image folder must be relative.": "图片文件夹必须使用相对路径。",
   "Image exceeds 16 MB.": "图片超过 16 MB。",
-  "Cannot insert image": "无法插入图片"
+  "Cannot insert image": "无法插入图片",
+  "{message}. IBLOpenIdea can install a private copy that every Python interpreter uses for debugging.": "{message}。IBLOpenIdea 可以安装专用副本，供所有 Python 解释器调试使用。"
 }

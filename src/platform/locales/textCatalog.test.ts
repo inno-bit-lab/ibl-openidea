@@ -126,6 +126,7 @@ const UNTRANSLATED = new Set<string>([
   "Node.js",
   "npm",
   "OpenIDEA",
+  "IBLOpenIdea",
   "Spring Boot",
   "PostgreSQL",
   "Pyright",
