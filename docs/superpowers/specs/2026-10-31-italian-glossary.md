@@ -1,7 +1,7 @@
 # Italian glossary
 
 - **Date**: 2026-10-31
-- **Status**: Applied to `src/platform/locales/it.json` and `src/platform/locales/text/it.json` at `98d33272` (MT-4). The owner may still change single choices; a change updates this file and the catalogs in one delta commit.
+- **Status**: Applied to `src/platform/locales/it.json` and `src/platform/locales/text/it.json` on `port/mt4-italian-release` (MT-4). The owner may still change single choices; a change updates this file and the catalogs in one delta commit.
 - **Plan**: [`2026-10-31-sync-mt4-italian-release.md`](../plans/2026-10-31-sync-mt4-italian-release.md).
 - **Source**: the fork catalog at `c8ed282` (`text/it.json`, 4584 entries, and `it.json`). Where the fork rendered one string in two ways, mostly a menu label against a text-catalog entry, one rendering was kept, usually the text catalog's (section 7).
 
@@ -122,7 +122,9 @@ The rule is that one English string has one Italian rendering across `text/it.js
 
 Normalization: lower-case the English and the Italian and drop trailing `…`, `...`, `:` and white space, so "Rename" and "Rename…" form one group. A group with more than one normalized Italian value is a double rendering.
 
-At `ad7df2c2` the check found 79 groups. 25 involved strings new in the v0.3.0 sync and were fixed in `704c1a40`, which also fixed `menu.vcs.compareWithBranch` (still "Confronta con branch…" after its English became "Compare with Branch or Revision…"). The others were fork menu labels translated apart from the text catalog, aligned in `98d33272`. At `98d33272` the check reports only the 14 groups of section 6.
+After "feat(i18n): complete the Italian source-text catalog" the check found 79 groups. 25 involved strings new in the v0.3.0 sync and were fixed in "fix(i18n): give the new Italian strings one rendering each", which also fixed `menu.vcs.compareWithBranch` (still "Confronta con branch…" after its English became "Compare with Branch or Revision…"). The others were fork menu labels translated apart from the text catalog, aligned in "fix(i18n): align the Italian menu labels with the text catalog". After it the check reports only the 14 groups of section 6.
+
+The MT-3 tranche 1 strings ("feat(i18n): translate the MT-3 strings into Italian", 29 added, 2 removed) added no group: the check still reports the same 14.
 
 To run it, save this as `glossary-check.mjs` outside the repository and run `node glossary-check.mjs <repository root>`:
 
