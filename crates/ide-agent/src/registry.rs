@@ -792,6 +792,7 @@ mod tests {
             .into_iter()
             .filter(|s| s.id == "amp-acp")
             .map(|s| AgentProvider {
+                extra_args: Vec::new(),
                 id: s.id,
                 name: s.name,
                 command: s.command,

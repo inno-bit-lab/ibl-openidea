@@ -251,6 +251,12 @@ impl AgentManager {
     fn with_connector(paths: AgentPaths, runtime: tokio::runtime::Handle, connector: Connector) -> Self {
         let known =
             std::fs::read(&paths.models_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        if let Some(custom_dir) = &paths.custom_agents_dir {
+            let tools = paths.models_file.parent().unwrap_or(custom_dir).join("tools");
+            if let Err(error) = provider::migrate_legacy(custom_dir, &tools) {
+                tracing::warn!("could not migrate legacy agents in {}: {error}", custom_dir.display());
+            }
+        }
         let providers = RwLock::new(provider::load(paths.custom_agents_dir.as_deref()));
         let shared = Arc::new(Shared {
             paths,
@@ -299,9 +305,11 @@ impl AgentManager {
     /// The agents (custom ones re-read), whether each is installed, and what they offered last time.
     pub fn providers(&self) -> Vec<AgentProvider> {
         let specs = provider::load(self.shared.paths.custom_agents_dir.as_deref());
+        let extra_args = provider::extra_args(self.shared.paths.custom_agents_dir.as_deref());
         let list = specs
             .iter()
             .map(|p| AgentProvider {
+                extra_args: extra_args.get(&p.id).cloned().unwrap_or_default(),
                 id: p.id.clone(),
                 name: p.name.clone(),
                 command: std::iter::once(p.command.as_str())

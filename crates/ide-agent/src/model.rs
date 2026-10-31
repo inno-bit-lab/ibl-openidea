@@ -318,6 +318,9 @@ pub enum AgentEntry {
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProvider {
+    /// Additional user arguments, independent of the provider definition.
+    #[serde(default)]
+    pub extra_args: Vec<String>,
     pub id: String,
     pub name: String,
     /// The command line that starts its ACP server.
