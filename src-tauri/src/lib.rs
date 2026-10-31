@@ -10,6 +10,7 @@ mod events;
 mod logging;
 mod menu;
 mod migrate;
+mod migration_feedback;
 mod remote_dev;
 
 mod state;
@@ -52,13 +53,28 @@ pub fn run() {
         std::env::var(migrate::SEED_FROM_ENV).ok().as_deref(),
         &identifier,
     );
+    let progress = Arc::new(migrate::Progress::default());
+    let feedback = seed_from.as_ref().map(|_| migration_feedback::start(progress.clone()));
     let seeded = seed_from.map(|from| {
-        let report = migrate::seed_profile(&migrate::profile_bases(), &from, &identifier);
+        let report = migrate::seed_profile_with_progress(&migrate::profile_bases(), &from, &identifier, &progress);
         (from, report)
     });
+    if let Some(feedback) = feedback {
+        feedback.finish();
+    }
     logging::init(&context.config().identifier);
     if let Some((from, report)) = &seeded {
         report.log(from, &identifier);
+        if let Some(error) = progress.feedback_error() {
+            tracing::warn!("profile migration feedback: {error}");
+        }
+        if progress.dialog_shown_ms() > 0 {
+            tracing::info!(
+                dialog_shown_ms = progress.dialog_shown_ms(),
+                content = progress.last_content(),
+                "profile migration dialog closed"
+            );
+        }
     } else if cfg!(debug_assertions) && std::env::var_os(migrate::SEED_FROM_ENV).is_some_and(|v| !v.is_empty()) {
         tracing::warn!("{} ignored: it must be a plain identifier other than {identifier}", migrate::SEED_FROM_ENV);
     }
