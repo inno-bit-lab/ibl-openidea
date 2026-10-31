@@ -5,7 +5,12 @@ import type { Commit } from "@/bindings";
 const vcsLog = vi.fn();
 const vcsFileAt = vi.fn();
 const vcsCommitFiles = vi.fn();
+const vcsCommitsChanges = vi.fn();
+const vcsConfigGet = vi.fn();
+const vcsDiffWithWorktree = vi.fn();
+const vcsDiffRevisions = vi.fn();
 const fsReadText = vi.fn();
+const editor = vi.hoisted(() => ({ current: undefined as { openInput: (...args: unknown[]) => unknown } | undefined }));
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -17,9 +22,28 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
       vcsLog: (repo: string | null, opts: unknown) => vcsLog(repo, opts),
       vcsFileAt: (path: string, rev: string) => vcsFileAt(path, rev),
       vcsCommitFiles: (repo: string | null, id: string) => vcsCommitFiles(repo, id),
+      vcsCommitsChanges: (repo: string | null, ids: string[]) => vcsCommitsChanges(repo, ids),
+      vcsConfigGet: (repo: string | null, key: string) => vcsConfigGet(repo, key),
+      vcsDiffWithWorktree: (repo: string | null, rev: string) => vcsDiffWithWorktree(repo, rev),
+      vcsDiffRevisions: (repo: string | null, from: string, to: string) => vcsDiffRevisions(repo, from, to),
       fsReadText: (path: string) => fsReadText(path),
     },
   };
+});
+
+// No editor service unless a test provides one (Compare then opens as a dialog).
+vi.mock("@/workbench/contributions", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/workbench/contributions")>();
+  return {
+    ...real,
+    maybeEditorService: () => editor.current as never,
+    editorService: () => (editor.current ?? real.editorService()) as never,
+  };
+});
+
+vi.mock("../graph", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../graph")>();
+  return { ...real, computeGraph: vi.fn(real.computeGraph) };
 });
 
 vi.mock("../DiffEditor", async (importOriginal) => {
@@ -52,6 +76,15 @@ vi.mock("../DiffEditor", async (importOriginal) => {
   };
 });
 
+import { registerActions } from "@/platform/actions";
+import type { MenuItem } from "@/ui";
+import { ContextMenuHost, hideContextMenu } from "@/ui/Menu";
+import { commonBranchMenu, selectedBranchesMenu } from "../branchMenu";
+import { CompareBranchesEditor, showCompareBranches } from "../CompareBranches";
+import { compareBranchesInput, compareBranchesTitle } from "../compareBranchesKind";
+import { VcsDialogHost } from "../dialogs";
+import { computeGraph } from "../graph";
+import { commitKey } from "../multiRoot";
 import {
   SelectionHistoryDialog,
   buildSelectionRevisions,
@@ -319,5 +352,342 @@ describe("SelectionHistoryDialog", () => {
     expect(vcsCommitFiles).toHaveBeenCalledWith("/p", "c2222222");
     expect(screen.getByTestId("diff-left-text")).toHaveTextContent("export const v = 1;");
     expect(screen.getByTestId("diff-right-text")).toHaveTextContent("export const v = 2;");
+  });
+});
+
+describe("CompareBranchesEditor", () => {
+  const ok = (data: unknown) => Promise.resolve({ status: "ok", data });
+  const run = (items: MenuItem[], label: string) => {
+    const item = items.find((i) => "label" in i && i.label === label);
+    expect(item).toBeDefined();
+    (item as { run: () => void }).run();
+  };
+  const closeDialogs = (name: string) => {
+    for (const d of screen.queryAllByRole("dialog", { name }))
+      fireEvent.click(within(d).getAllByRole("button", { name: "Close" })[0]!);
+  };
+
+  beforeEach(() => {
+    hideContextMenu();
+    editor.current = undefined;
+    vcsCommitsChanges.mockReset().mockResolvedValue({ status: "ok", data: [] });
+    vcsConfigGet.mockReset().mockResolvedValue({ status: "ok", data: "alice@example.com" });
+    vcsDiffWithWorktree.mockReset().mockResolvedValue({ status: "ok", data: [] });
+    vcsDiffRevisions.mockReset().mockResolvedValue({ status: "ok", data: [] });
+    vi.mocked(computeGraph).mockClear();
+    useVcs.setState({
+      branches: [
+        {
+          name: "main",
+          remote: false,
+          current: true,
+          upstream: "origin/main",
+          ahead: 0,
+          behind: 0,
+          lastCommitMs: 0,
+          commit: "c3333333",
+        },
+        {
+          name: "origin/develop",
+          remote: true,
+          current: false,
+          upstream: null,
+          ahead: 0,
+          behind: 0,
+          lastCommitMs: 0,
+          commit: "d4444444",
+        },
+      ],
+      branchesLoaded: true,
+    });
+  });
+
+  it("renders top and bottom branch comparison panes with warning banners, filters, and changed files", async () => {
+    const incomingCommit = makeCommit("d4444444", "feat: add new payment gateway", ["c0000000"], "Elena");
+    const outgoingCommit = makeCommit("c3333333", "fix: hotfix null pointer on checkout", ["c0000000"], "Marco");
+
+    // Each side is the branch against HEAD (the current branch) of the repository.
+    vcsLog.mockImplementation((_repo: string | null, opts: { range?: string }) => {
+      if (opts.range === "HEAD..origin/develop") return ok([incomingCommit]);
+      if (opts.range === "origin/develop..HEAD") return ok([outgoingCommit]);
+      return ok([]);
+    });
+    vcsCommitFiles.mockResolvedValue({
+      status: "ok",
+      data: [{ path: "src/payment.ts", oldPath: null, kind: "modified" }],
+    });
+
+    const input = compareBranchesInput("origin/develop", "main", "/p");
+    expect(compareBranchesTitle(input.data as never)).toBe("Compare: origin/develop and main");
+
+    render(
+      <>
+        <CompareBranchesEditor input={input} />
+        <ContextMenuHost />
+        <VcsDialogHost />
+      </>,
+    );
+
+    // Both warning banners match IntelliJ IDEA's exact phrasing
+    expect(await screen.findByText("Commits that exist in origin/develop but don't exist in main")).toBeInTheDocument();
+    expect(await screen.findByText("Commits that exist in main but don't exist in origin/develop")).toBeInTheDocument();
+
+    // Both panes load their respective commits
+    const topList = screen.getByRole("listbox", { name: "Commits in origin/develop not in main" });
+    const bottomList = screen.getByRole("listbox", { name: "Commits in main not in origin/develop" });
+    await waitFor(() => expect(within(topList).getAllByRole("option")).toHaveLength(1));
+    await waitFor(() => expect(within(bottomList).getAllByRole("option")).toHaveLength(1));
+
+    expect(topList).toHaveTextContent("feat: add new payment gateway");
+    expect(bottomList).toHaveTextContent("fix: hotfix null pointer on checkout");
+
+    // Changed files header shows "Changes to <shortId> <summary>"
+    expect(await screen.findByText("Changes to d4444444 feat: add new payment gateway")).toBeInTheDocument();
+    expect(await screen.findByText("Changes to c3333333 fix: hotfix null pointer on checkout")).toBeInTheDocument();
+
+    // Filtering the top pane by text hides non-matching commits
+    const searchFields = screen.getAllByPlaceholderText("Text or hash");
+    fireEvent.change(searchFields[0]!, { target: { value: "nonexistent-commit-hash" } });
+    await waitFor(() => expect(within(topList).queryAllByRole("option")).toHaveLength(0));
+    expect(within(bottomList).getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("queries only the compared repository, filters by a typed path and shows a file's history", async () => {
+    const backend = "/p/open-idea-backend";
+    useVcs.setState({
+      root: "/p",
+      roots: [backend, "/p/open-idea-frontend"],
+      repo: backend,
+      heads: {
+        [backend]: { head: "feature/auth", headCommit: "f1111111" },
+        "/p/open-idea-frontend": { head: "main", headCommit: "f2222222" },
+      },
+    });
+    const showHistory = vi.fn();
+    const dispose = registerActions([
+      { id: "vcs.showHistory", title: "Show History", run: ({ arg }) => showHistory(arg) },
+    ]);
+
+    const backendCommit = makeCommit("a9999999", "feat(backend): add payment endpoint", ["a0000000"], "Marco");
+    vcsLog.mockResolvedValue({ status: "ok", data: [backendCommit] });
+    vcsCommitFiles.mockResolvedValue({
+      status: "ok",
+      data: [{ path: "src/payment.ts", oldPath: null, kind: "modified" }],
+    });
+
+    const input = compareBranchesInput("main", "feature/auth", backend);
+    render(
+      <>
+        <CompareBranchesEditor input={input} />
+        <ContextMenuHost />
+        <VcsDialogHost />
+      </>,
+    );
+
+    const topToolbar = screen.getByRole("toolbar", { name: "Compare main with feature/auth" });
+    await waitFor(() => expect(vcsLog).toHaveBeenCalledWith(backend, expect.objectContaining({ range: "HEAD..main" })));
+
+    // Paths › Select Folders…: a path relative to the compared repository
+    fireEvent.click(within(topToolbar).getByRole("button", { name: "Paths" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Select Folders…" }));
+    const prompt = await screen.findByRole("dialog", { name: "Filter by Path" });
+    fireEvent.change(within(prompt).getByRole("textbox", { name: "File or folder" }), { target: { value: "src" } });
+    fireEvent.click(within(prompt).getByRole("button", { name: "OK" }));
+    await waitFor(() =>
+      expect(vcsLog).toHaveBeenCalledWith(
+        backend,
+        expect.objectContaining({ range: "HEAD..main", path: `${backend}/src` }),
+      ),
+    );
+    expect(topToolbar).toHaveTextContent("Paths:");
+    expect(topToolbar).toHaveTextContent("src");
+    // Another repository of the project is never asked.
+    expect(vcsLog.mock.calls.every(([repo]) => repo === backend)).toBe(true);
+
+    // Right-click payment.ts -> Show History with its path in the compared repository
+    const fileItems = await screen.findAllByText("payment.ts");
+    fireEvent.contextMenu(fileItems[0]!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Show History" }));
+    await waitFor(() => expect(showHistory).toHaveBeenCalledWith(`${backend}/src/payment.ts`));
+    dispose();
+  });
+
+  it("includes Compare with Current in commonBranchMenu for multi-repo branches", async () => {
+    const roots = ["/p/repo-a", "/p/repo-b"];
+    useVcs.setState({
+      roots,
+      repo: roots[0],
+      heads: {
+        "/p/repo-a": { head: "main", headCommit: "a1111111" },
+        "/p/repo-b": { head: "main", headCommit: "b1111111" },
+      },
+    });
+    const items = commonBranchMenu({ name: "origin/develop", remote: true, current: false, favorite: false }, roots);
+
+    render(<VcsDialogHost />);
+    run(items, "Compare with Current");
+    expect(await screen.findByRole("dialog", { name: "Compare: origin/develop and main" })).toBeInTheDocument();
+    // The branch against HEAD in each repository.
+    await waitFor(() =>
+      expect(vcsLog).toHaveBeenCalledWith("/p/repo-a", expect.objectContaining({ range: "HEAD..origin/develop" })),
+    );
+    expect(vcsLog).toHaveBeenCalledWith("/p/repo-b", expect.objectContaining({ range: "HEAD..origin/develop" }));
+    closeDialogs("Compare: origin/develop and main");
+  });
+
+  it("shows every file that differs between the branches, in each compared repository", async () => {
+    vcsLog.mockImplementation(() => ok([]));
+    render(
+      <>
+        <CompareBranchesEditor input={compareBranchesInput("develop", "main", "/p/a", ["/p/a", "/p/b"])} />
+        <VcsDialogHost />
+      </>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Show Diff Between Branches" }));
+    await waitFor(() =>
+      expect(vcsDiffRevisions.mock.calls).toEqual([
+        ["/p/a", "develop", "HEAD"],
+        ["/p/b", "develop", "HEAD"],
+      ]),
+    );
+    expect(screen.getAllByRole("button", { name: "Show Diff Between Branches" })).toHaveLength(1);
+  });
+
+  it("opens CompareBranchesEditor via showCompareBranches fallback dialog when no editorService is mounted", async () => {
+    render(<VcsDialogHost />);
+    showCompareBranches("origin/develop");
+    expect(await screen.findByRole("dialog", { name: "Compare: origin/develop and main" })).toBeInTheDocument();
+    expect(await screen.findByRole("listbox", { name: "Commits in origin/develop not in main" })).toBeInTheDocument();
+    closeDialogs("Compare: origin/develop and main");
+  });
+
+  it("offers Compare with Current and Show Diff with Working Tree for branches selected in several repositories", async () => {
+    const [a, b] = ["/p/a", "/p/b"];
+    useVcs.setState({
+      roots: [a, b],
+      repo: a,
+      heads: { [a]: { head: "main", headCommit: "a1111111" }, [b]: { head: "main", headCommit: "b1111111" } },
+    });
+    const develop = (repo: string, name = "develop") => ({
+      repo,
+      branch: {
+        name,
+        remote: false,
+        current: false,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        lastCommitMs: 0,
+        commit: "d4444444",
+      },
+    });
+    const labels = (items: MenuItem[]) => items.flatMap((i) => ("label" in i && i.label ? [i.label] : []));
+    const items = selectedBranchesMenu([develop(a), develop(b)]);
+    // Different branches have no common "current" to compare with.
+    expect(labels(selectedBranchesMenu([develop(a), develop(b, "feature")]))).not.toContain("Compare with Current");
+    // Current in one repository only: still compared in the others.
+    const currentInA = { ...develop(a), branch: { ...develop(a).branch, current: true } };
+    expect(labels(selectedBranchesMenu([currentInA, develop(b)]))).toContain("Compare with Current");
+    expect(labels(selectedBranchesMenu([currentInA, { ...currentInA, repo: b }]))).not.toContain(
+      "Compare with Current",
+    );
+
+    render(<VcsDialogHost />);
+    run(items, "Compare with Current");
+    expect(await screen.findByRole("dialog", { name: "Compare: develop and main" })).toBeInTheDocument();
+    await waitFor(() => expect(vcsLog).toHaveBeenCalledWith(b, expect.objectContaining({ range: "HEAD..develop" })));
+    expect(vcsLog).toHaveBeenCalledWith(a, expect.objectContaining({ range: "HEAD..develop" }));
+    closeDialogs("Compare: develop and main");
+
+    // Each selected branch against the working tree of its own repository.
+    run(items, "Show Diff with Working Tree");
+    await waitFor(() =>
+      expect(vcsDiffWithWorktree.mock.calls).toEqual([
+        [a, "develop"],
+        [b, "develop"],
+      ]),
+    );
+    closeDialogs("Changes between develop and Local Working Tree");
+  });
+
+  it("keeps identical SHAs distinct across Compare repositories", async () => {
+    const [a, b] = ["/p/a", "/p/b"];
+    useVcs.setState({
+      root: "/p",
+      roots: [a, b],
+      repo: a,
+      heads: { [a]: { head: "main", headCommit: "a1111111" }, [b]: { head: "main", headCommit: "b1111111" } },
+    });
+    const openInput = vi.fn();
+    editor.current = { openInput };
+    const consoleError = vi.spyOn(console, "error");
+    // The same commit id in both repositories (e.g. one cloned from the other).
+    const sha = "abcdef0123456789abcdef0123456789abcdef01";
+    const inA = { ...makeCommit(sha, "same id in a", ["9999999999"]), commitTimeMs: 2_000 };
+    const inB = { ...makeCommit(sha, "same id in b", ["9999999999"]), commitTimeMs: 1_000 };
+    vcsLog.mockImplementation((repo: string | null, opts: { range?: string }) =>
+      ok(opts.range === "HEAD..develop" ? (repo === a ? [inA] : repo === b ? [inB] : []) : []),
+    );
+    vcsCommitFiles.mockImplementation((repo: string | null) =>
+      ok([{ path: repo === a ? "src/a.ts" : "src/b.ts", oldPath: null, kind: "modified" }]),
+    );
+
+    render(
+      <>
+        <CompareBranchesEditor input={compareBranchesInput("develop", "main", a, [a, b])} />
+        <ContextMenuHost />
+      </>,
+    );
+    const top = screen.getByRole("listbox", { name: "Commits in develop not in main" });
+    await waitFor(() => expect(within(top).getAllByRole("option")).toHaveLength(2));
+    const [rowA, rowB] = within(top).getAllByRole("option");
+
+    // (c) Each repository is asked in its own name.
+    expect(vcsLog).toHaveBeenCalledWith(a, expect.objectContaining({ range: "HEAD..develop" }));
+    expect(vcsLog).toHaveBeenCalledWith(b, expect.objectContaining({ range: "HEAD..develop" }));
+    expect(vcsConfigGet).toHaveBeenCalledWith(a, "user.email");
+    expect(vcsConfigGet).toHaveBeenCalledWith(b, "user.email");
+
+    // (b) The graph links commits by repository-qualified keys.
+    const laid = vi
+      .mocked(computeGraph)
+      .mock.calls.map(([commits]) => commits)
+      .find((commits) => commits.length === 2);
+    expect(laid?.map((c) => c.id)).toEqual([commitKey({ id: sha, repo: a }), commitKey({ id: sha, repo: b })]);
+    expect(laid?.map((c) => c.parents)).toEqual([
+      [commitKey({ id: "9999999999", repo: a })],
+      [commitKey({ id: "9999999999", repo: b })],
+    ]);
+
+    // (a) Rows and selection tell the two apart: one row is selected at a time.
+    expect(rowA).toHaveAttribute("aria-selected", "true");
+    expect(rowB).toHaveAttribute("aria-selected", "false");
+    await waitFor(() => expect(vcsCommitFiles).toHaveBeenCalledWith(a, sha));
+    fireEvent.mouseDown(rowB!, { button: 0 });
+    expect(rowB).toHaveAttribute("aria-selected", "true");
+    expect(rowA).toHaveAttribute("aria-selected", "false");
+    await waitFor(() => expect(vcsCommitFiles).toHaveBeenCalledWith(b, sha));
+    expect(await screen.findByText("b.ts")).toBeInTheDocument();
+    // Ctrl-click in another repository starts a new selection there.
+    fireEvent.mouseDown(rowA!, { button: 0, ctrlKey: true });
+    expect(rowA).toHaveAttribute("aria-selected", "true");
+    expect(rowB).toHaveAttribute("aria-selected", "false");
+    expect(vcsCommitsChanges).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.some((args) => args.some((x) => String(x).includes("same key")))).toBe(false);
+
+    // (d) The diff reads the file in the commit's own repository.
+    expect(await screen.findByText("a.ts")).toBeInTheDocument();
+    fireEvent.doubleClick(rowA!);
+    await waitFor(() => expect(openInput).toHaveBeenCalled());
+    expect(openInput.mock.calls[0]![0]).toMatchObject({
+      path: `${a}/src/a.ts`,
+      data: { left: { type: "rev", rev: "9999999999" }, right: { type: "rev", rev: sha } },
+    });
+    fireEvent.mouseDown(rowB!, { button: 0 });
+    expect(await screen.findByText("b.ts")).toBeInTheDocument();
+    fireEvent.doubleClick(rowB!);
+    await waitFor(() => expect(openInput).toHaveBeenCalledTimes(2));
+    expect(openInput.mock.calls[1]![0]).toMatchObject({ path: `${b}/src/b.ts` });
+    consoleError.mockRestore();
   });
 });

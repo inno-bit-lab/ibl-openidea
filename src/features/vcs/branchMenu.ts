@@ -25,13 +25,16 @@ import {
   updateBranches,
   useFavoriteBranches,
 } from "./branchOps";
-import { showCompareBranches } from "./CompareBranches";
 import { showDiffWithWorkingTree } from "./operations";
 import type { CommonBranch } from "./repoBranches";
 import { runRemote, saveAll } from "./ops";
 import { showUpdateDialog } from "./remoteUi";
 import { currentRepo, focusRepo, useVcs } from "./store";
 import { tx } from "@/platform/i18n";
+
+/** Compare with Current: the editor (and the Git log it reuses) loads when first asked for. */
+const showCompareBranches = (branch: string, repo?: string | readonly string[]) =>
+  import("./CompareBranches").then((m) => m.showCompareBranches(branch, repo));
 
 /** `git pull <remote> <branch>` into the current branch (`origin/feat/x` → origin, feat/x). */
 async function pullInto(remoteBranch: string, rebase: boolean) {
@@ -151,6 +154,8 @@ export function commonBranchMenu(b: CommonBranch, roots: readonly string[], done
     { label: "Checkout", run: run(() => checkoutInRepos(b.name, roots)) },
     newFrom,
     { kind: "separator" },
+    { label: "Compare with Current", icon: "diff", run: run(() => showCompareBranches(b.name, roots)) },
+    { kind: "separator" },
     { label: tx`Rebase Current onto '${b.name}'`, run: run(() => rebaseInRepos(b.name, roots)) },
     { label: tx`Merge '${b.name}' into Current`, run: run(() => mergeInRepos(b.name, roots)) },
   ];
@@ -196,6 +201,14 @@ export function selectedBranchesMenu(
       icon: "git-push",
       disabled: !allCurrent,
       run: run(() => executeAction("vcs.push", { repos: roots })),
+    },
+    { kind: "separator" },
+    ...(common && !allCurrent
+      ? [{ label: "Compare with Current", icon: "diff", run: run(() => showCompareBranches(name, roots)) }]
+      : []),
+    {
+      label: "Show Diff with Working Tree",
+      run: run(() => list.forEach((t) => showDiffWithWorkingTree(t.branch.name, t.branch.name, t.repo ?? undefined))),
     },
     { kind: "separator" },
     {

@@ -6,7 +6,6 @@ import { call, commands } from "@/platform/ipc";
 import { notifications } from "@/workbench/contributions";
 import { ask } from "@/workbench/messages";
 import { isFavoriteBranch, pushRecent, shortRemoteName } from "./branches";
-import { showCommitRange } from "./CompareBranches";
 import { confirmDialog, promptText } from "./dialogs";
 import { runOp, runRemote, saveAll } from "./ops";
 import { showUpdateDialog } from "./remoteUi";
@@ -276,7 +275,15 @@ export async function deleteBranch(name: string, repo: string | null = currentRe
         },
       },
       ...(deleted.unmerged
-        ? [{ label: "View Commits", run: () => showCommitRange(`Commits of ${name}`, "HEAD", deleted.tip, repo) }]
+        ? [
+            {
+              label: "View Commits",
+              run: () =>
+                void import("./CompareBranches").then((m) =>
+                  m.showCommitRange(`Commits of ${name}`, "HEAD", deleted.tip, repo),
+                ),
+            },
+          ]
         : []),
       ...(tracked && !otherTracking
         ? [

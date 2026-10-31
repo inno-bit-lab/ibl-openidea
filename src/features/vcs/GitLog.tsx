@@ -512,7 +512,7 @@ export function BranchesPanel() {
 
 // --- filters ----------------------------------------------------------------
 
-const DAY = 86_400_000;
+export const DAY = 86_400_000;
 /** Keyboard moves through several files quickly: preview the one the selection settles on. */
 const PREVIEW_DELAY = 120;
 
@@ -526,14 +526,14 @@ function fileNodeAt<F>(nodes: readonly FileTreeNode<F>[], key: string): FileTree
   }
   return null;
 }
-const DATE_OPTIONS: { label: string; days: number }[] = [
+export const DATE_OPTIONS: { label: string; days: number }[] = [
   { label: "Last 24 Hours", days: 1 },
   { label: "Last 7 Days", days: 7 },
   { label: "Last 30 Days", days: 30 },
   { label: "Last Year", days: 365 },
 ];
 
-function menuBelow(anchor: HTMLElement | ReactMouseEvent<HTMLElement>, items: MenuItem[]) {
+export function menuBelow(anchor: HTMLElement | ReactMouseEvent<HTMLElement>, items: MenuItem[]) {
   const r = ("currentTarget" in anchor ? anchor.currentTarget : anchor).getBoundingClientRect();
   showContextMenu({ x: r.left, y: r.bottom + 2 }, items);
 }
@@ -545,7 +545,7 @@ interface LogFilter {
   onClear: () => void;
 }
 
-function FilterButton({ label, value, onOpen, onClear, hidden }: LogFilter & { hidden?: boolean }) {
+export function FilterButton({ label, value, onOpen, onClear, hidden }: LogFilter & { hidden?: boolean }) {
   return (
     <span
       className={clsx(styles.filterButton, value && styles.filterActive, hidden && styles.filterHidden)}
@@ -1498,7 +1498,7 @@ export function CommitDetails({ commits }: { commits: Commit[] }) {
 }
 
 /** A commit's message and metadata; `compact` (one of several selected): without the body. */
-function CommitMessage({ commit, compact = false }: { commit: Commit; compact?: boolean }) {
+export function CommitMessage({ commit, compact = false }: { commit: Commit; compact?: boolean }) {
   const [subject, ...bodyLines] = commit.message.replace(/\s+$/, "").split("\n");
   const body = compact ? "" : bodyLines.join("\n").replace(/^\n+/, "");
   return (
@@ -1562,7 +1562,13 @@ export function changesMenu(changes: LogChange[]): MenuItem[] {
   ];
 }
 
-function ChangedFileRow({ node, flat = false }: { node: FileTreeNode<ChangedFile | LogChange>; flat?: boolean }) {
+export function ChangedFileRow({
+  node,
+  flat = false,
+}: {
+  node: FileTreeNode<ChangedFile | LogChange>;
+  flat?: boolean;
+}) {
   if (!node.file)
     return (
       <span className={styles.fileRow}>

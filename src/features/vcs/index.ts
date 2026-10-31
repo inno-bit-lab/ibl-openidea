@@ -33,6 +33,7 @@ import { installHunkPopup } from "./HunkPopup";
 import { LOCAL_HISTORY_KIND } from "./localHistoryKind";
 import { registerLocalHistoryActions } from "./localHistoryActions";
 import { MERGE_KIND, type MergeData } from "./mergeKind";
+import { COMPARE_BRANCHES_KIND, compareBranchesTitle, type CompareBranchesData } from "./compareBranchesKind";
 import { baseName } from "./model";
 import { installDiagnosticsTracking } from "./commitChecks";
 import { installPreparedMessage, useCommit } from "./commitStore";
@@ -208,6 +209,12 @@ export function activate(): () => void {
       component: lazyComponent(() => import("./LocalHistory").then((m) => m.LocalHistoryEditor)),
       title: (input) => `Local History: ${baseName((input.data as { path: string }).path)}`,
       icon: () => "clock",
+    }),
+    registerEditorKind({
+      kind: COMPARE_BRANCHES_KIND,
+      component: lazyComponent(() => import("./CompareBranches").then((m) => m.CompareBranchesEditor)),
+      title: (input) => compareBranchesTitle(input.data as CompareBranchesData),
+      icon: () => "branch",
     }),
     registerEditorContribution({
       id: "vcs.changeMarkers",

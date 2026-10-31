@@ -472,10 +472,15 @@ export function showCompareVersions(older: Commit, newer: Commit) {
   ));
 }
 
-/** Files that differ between two revisions (e.g. two branches from Compare with Current). */
-export function showCompareRevisions(from: string, to: string, fromLabel = from, toLabel = to) {
+/** Files that differ between two revisions (e.g. two branches from Compare with Current) of `repo` (default: the selected one). */
+export function showCompareRevisions(from: string, to: string, fromLabel = from, toLabel = to, repo?: string) {
   openDialog((close) => (
-    <ChangesBetweenDialog from={{ rev: from, label: fromLabel }} to={{ rev: to, label: toLabel }} onClose={close} />
+    <ChangesBetweenDialog
+      from={{ rev: from, label: fromLabel }}
+      to={{ rev: to, label: toLabel }}
+      repo={repo}
+      onClose={close}
+    />
   ));
 }
 

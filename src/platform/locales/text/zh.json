@@ -594,7 +594,6 @@
   "Dev plugin": "开发插件",
   "Diff": "差异",
   "Different tool window background": "不同的工具窗口背景",
-  "Direction": "方向",
   "Directory": "目录",
   "Directory (relative to project root)": "目录（相对于项目根目录）",
   "Directory Mappings": "目录映射",
@@ -4051,7 +4050,6 @@
   "{title} views": "{title}视图",
   "{title} options": "{title}选项",
   "Delete the layout '{name}'?": "是否删除布局 '{name}'？",
-  "In {left}, not in {right}": "在 {left} 中，不在 {right} 中",
   "Local branch '{local}' has commits that do not exist in '{remote}'. Rebase '{local}' onto '{remote}', or drop local commits?": "本地分支 '{local}' 有 '{remote}' 中不存在的提交。是将 '{local}' 变基到 '{remote}'，还是丢弃本地提交？",
   "Add Language Server…": "添加语言服务器…",
   "Use {displayName}": "使用 {displayName}",
@@ -5253,5 +5251,10 @@
   "{dirs} directory and {regular} file": "{dirs} 个目录和 {regular} 个文件",
   "{dirs} directory and {regular} files": "{dirs} 个目录和 {regular} 个文件",
   "{dirs} directories and {regular} file": "{dirs} 个目录和 {regular} 个文件",
-  "{dirs} directories and {regular} files": "{dirs} 个目录和 {regular} 个文件"
+  "{dirs} directories and {regular} files": "{dirs} 个目录和 {regular} 个文件",
+  "Compare: {branch} and {current}": "比较：{branch} 与 {current}",
+  "Commits that exist in {toBranch} but don't exist in {fromBranch}": "存在于 {toBranch} 但不存在于 {fromBranch} 的提交",
+  "Commits in {toBranch} not in {fromBranch}": "在 {toBranch} 中但不在 {fromBranch} 中的提交",
+  "Changes to {shortId} {summary}": "对 {shortId} {summary} 的更改",
+  "Show Diff Between Branches": "显示分支之间的差异"
 }
