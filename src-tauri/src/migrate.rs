@@ -1634,6 +1634,74 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn dialog_is_visible_while_the_copy_is_blocked_and_the_target_is_closed() {
+        use crate::migration_feedback::{self, testing};
+        let f = Fixture::new();
+        let progress = std::sync::Arc::new(Progress::default());
+        let feedback = migration_feedback::start(progress.clone());
+        let first_ended = feedback.worker_ended_flag();
+        let gate = ProgressCopyGate::start(f.bases(), progress.clone());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let (visible, content) = loop {
+            let windows = testing::visible_dialogs();
+            let content = progress.last_content();
+            let counter_line = content.lines().last().unwrap_or_default();
+            if !windows.is_empty()
+                && counter_line.contains(" MB")
+                && counter_line.chars().filter(char::is_ascii_digit).count() >= 2
+            {
+                break (windows, content);
+            }
+            if std::time::Instant::now() >= deadline {
+                break (windows, content);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let targets_at_visibility: Vec<_> = f.bases().iter().map(|base| exists(&base.join(TO))).collect();
+        if let Some(window) = visible.first() {
+            testing::request_close(*window);
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let after_close_request = testing::visible_dialogs();
+        let waiting = std::sync::Arc::new(Progress::default());
+        waiting.set_phase(ProgressPhase::WaitingForOtherStart);
+        let second_feedback = migration_feedback::start(waiting.clone());
+        let second_ended = second_feedback.worker_ended_flag();
+        // Keep the second start alive past its initial delay, so it must search for the first window.
+        std::thread::sleep(Duration::from_millis(700));
+        let while_second_waits = testing::visible_dialogs();
+        let second_shown = waiting.dialog_shown_ms();
+        let report = gate.finish();
+        feedback.finish();
+        second_feedback.finish();
+        let after_finish = testing::visible_dialogs();
+
+        eprintln!(
+            "MIGRATION_W3 visible={visible:?} content={content:?} targets={targets_at_visibility:?} after_close={after_close_request:?} second={while_second_waits:?} after_finish={after_finish:?} feedback_error={:?} waiting_error={:?}",
+            progress.feedback_error(),
+            waiting.feedback_error()
+        );
+        assert_eq!(visible.len(), 1, "migration dialog was not visible with its counter within5s");
+        let counter_line = content.lines().last().unwrap_or_default();
+        assert!(counter_line.contains(" MB") && counter_line.chars().filter(char::is_ascii_digit).count() >= 2);
+        assert!(targets_at_visibility.iter().all(|exists| !exists), "profile opened before the copy finished");
+        assert_eq!(after_close_request, visible, "dialog was dismissible while copying");
+        assert_eq!(while_second_waits, visible, "waiting start opened a second dialog");
+        assert_eq!(second_shown, 0);
+        assert_eq!(waiting.dialog_shown_ms(), 0);
+        assert!(after_finish.is_empty(), "migration dialog survived finish");
+        assert!(first_ended.load(Ordering::Acquire));
+        assert!(second_ended.load(Ordering::Acquire));
+        assert!(progress.feedback_error().is_none(), "{:?}", progress.feedback_error());
+        assert!(waiting.feedback_error().is_none(), "{:?}", waiting.feedback_error());
+        assert_eq!(report.outcome, SeedOutcome::Seeded);
+        for base in f.bases() {
+            assert_eq!(target(&base), expected(&base));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn skips_a_locked_webview_profile() {
         use std::os::windows::fs::OpenOptionsExt;
         let f = Fixture::new();

@@ -69,3 +69,6 @@ ide-tools = { path = "../crates/ide-tools" }
 ide-plugin = { path = "../crates/ide-plugin" }
 ide-docker = { path = "../crates/ide-docker" }
 ide-github = { path = "../crates/ide-github" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Threading", "Win32_UI_Controls", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }

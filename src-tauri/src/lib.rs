@@ -10,6 +10,7 @@ mod events;
 mod logging;
 mod menu;
 mod migrate;
+mod migration_feedback;
 mod remote_dev;
 
 mod state;
