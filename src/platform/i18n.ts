@@ -33,7 +33,7 @@ export type MessageParams = Record<string, string | number | boolean | null | un
 export type Translate = (key: string, params?: MessageParams) => string;
 
 export const DEFAULT_LOCALE = "en";
-export const SUPPORTED_LOCALES = ["en", "zh"] as const;
+export const SUPPORTED_LOCALES = ["en", "it", "zh"] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 const loaders = import.meta.glob<Catalog>(["./locales/*.json", "!./locales/en.json"], { import: "default" });

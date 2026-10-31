@@ -120,6 +120,11 @@ describe("menu config", () => {
     expect(zh.locale).toBe("zh");
     expect(zh.labels["menu.file"]).toBe("文件");
     expect(zh.labels["menu.file.save"]).toBe("全部保存");
+    await setLocale("it");
+    const itCfg = buildMenuConfig("macos");
+    expect(itCfg.locale).toBe("it");
+    expect(itCfg.labels["menu.file"]).toBe("File");
+    expect(itCfg.labels["menu.file.save"]).toBe("Salva tutto");
   });
 
   it("formats chords", () => {
