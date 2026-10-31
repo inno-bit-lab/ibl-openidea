@@ -16,6 +16,8 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +39,87 @@ const MARKER: &str = ".migrated.json";
 /// One attempt plus five retries.
 const RENAME_ATTEMPTS: usize = 6;
 const RENAME_DELAY: Duration = Duration::from_millis(200);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ProgressPhase {
+    Checking,
+    WaitingForOtherStart,
+    Copying,
+    Publishing,
+    Done,
+}
+
+/// Bootstrap feedback kept entirely in memory, independent of the profile.
+#[derive(Default)]
+pub struct Progress {
+    phase: AtomicU8,
+    files: AtomicU64,
+    bytes: AtomicU64,
+    feedback_error: Mutex<Option<String>>,
+    dialog_shown_ms: AtomicU64,
+    last_content: Mutex<String>,
+}
+
+impl Progress {
+    pub fn phase(&self) -> ProgressPhase {
+        match self.phase.load(Ordering::Acquire) {
+            0 => ProgressPhase::Checking,
+            1 => ProgressPhase::WaitingForOtherStart,
+            2 => ProgressPhase::Copying,
+            3 => ProgressPhase::Publishing,
+            _ => ProgressPhase::Done,
+        }
+    }
+
+    pub(crate) fn set_phase(&self, phase: ProgressPhase) {
+        self.phase.store(phase as u8, Ordering::Release);
+    }
+
+    pub fn files(&self) -> u64 {
+        self.files.load(Ordering::Relaxed)
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.bytes.load(Ordering::Relaxed)
+    }
+
+    fn set_counters(&self, files: u64, bytes: u64) {
+        self.files.store(files, Ordering::Relaxed);
+        self.bytes.store(bytes, Ordering::Relaxed);
+    }
+
+    pub fn feedback_error(&self) -> Option<String> {
+        self.feedback_error.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn set_feedback_error(&self, error: String) {
+        let mut stored = self.feedback_error.lock().unwrap_or_else(|e| e.into_inner());
+        if stored.is_none() {
+            *stored = Some(error);
+        }
+    }
+
+    pub fn dialog_shown_ms(&self) -> u64 {
+        self.dialog_shown_ms.load(Ordering::Relaxed)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn set_dialog_shown_ms(&self, milliseconds: u64) {
+        // Zero means that no dialog was ever shown, including a sub-millisecond dialog.
+        self.dialog_shown_ms.store(milliseconds.max(1), Ordering::Relaxed);
+    }
+
+    pub fn last_content(&self) -> String {
+        self.last_content.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn set_last_content(&self, content: String) {
+        *self.last_content.lock().unwrap_or_else(|e| e.into_inner()) = content;
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeedOutcome {
@@ -116,8 +199,15 @@ pub fn seed_source(debug: bool, env_value: Option<&str>, to: &str) -> Option<Str
 /// Copies the `from` profile into `to` in every base when `to` exists in
 /// none of them. Never panics, never changes `from`, and returns once this or
 /// another process has finished the job.
+// Retained entry point for callers that do not need bootstrap feedback.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn seed_profile(bases: &[PathBuf], from: &str, to: &str) -> SeedReport {
-    seed_profile_with(bases, from, to, &mut |_| Ok(()), RENAME_DELAY)
+    seed_profile_with_progress(bases, from, to, &Progress::default())
+}
+
+/// The same migration, with an in-memory progress record for bootstrap feedback.
+pub fn seed_profile_with_progress(bases: &[PathBuf], from: &str, to: &str, progress: &Progress) -> SeedReport {
+    seed_run(bases, from, to, progress, &mut |_| Ok(()), RENAME_DELAY)
 }
 
 /// Whether the marker asks to tell the user that the WebView profile was not copied.
@@ -226,15 +316,32 @@ struct Marker {
     notified: bool,
 }
 
+#[cfg(test)]
 fn seed_profile_with(bases: &[PathBuf], from: &str, to: &str, hook: Hook<'_>, rename_delay: Duration) -> SeedReport {
+    seed_run(bases, from, to, &Progress::default(), hook, rename_delay)
+}
+
+fn seed_run(
+    bases: &[PathBuf],
+    from: &str,
+    to: &str,
+    progress: &Progress,
+    hook: Hook<'_>,
+    rename_delay: Duration,
+) -> SeedReport {
     let bases = dedup(bases);
-    let Some(config) = bases.first().cloned() else { return SeedReport::new() };
-    let mut run = Run { bases, config, from, to, hook, rename_delay, report: SeedReport::new(), keep_journal: false };
+    let Some(config) = bases.first().cloned() else {
+        progress.set_phase(ProgressPhase::Done);
+        return SeedReport::new();
+    };
+    let mut run =
+        Run { bases, config, from, to, progress, hook, rename_delay, report: SeedReport::new(), keep_journal: false };
     run.report.outcome = match run.start() {
         Ok(outcome) => outcome,
         Err(Fault::Io(e)) => SeedOutcome::Failed(e.to_string()),
         Err(Fault::Crash) => SeedOutcome::Failed("interrupted".to_owned()),
     };
+    progress.set_phase(ProgressPhase::Done);
     run.report
 }
 
@@ -244,6 +351,7 @@ struct Run<'a> {
     config: PathBuf,
     from: &'a str,
     to: &'a str,
+    progress: &'a Progress,
     hook: Hook<'a>,
     rename_delay: Duration,
     report: SeedReport,
@@ -270,7 +378,14 @@ impl Run<'_> {
             .open(self.config.join(format!("{}.migration.lock", self.to)))?;
         // Released by the OS if this process dies. A second process waits
         // here, then evaluates the state from the beginning.
-        lock.lock()?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                self.progress.set_phase(ProgressPhase::WaitingForOtherStart);
+                lock.lock()?;
+            }
+            Err(std::fs::TryLockError::Error(error)) => return Err(Fault::Io(error)),
+        }
         self.locked()
     }
 
@@ -351,16 +466,19 @@ impl Run<'_> {
     /// Copies every participating base into `<to>.partial` and records the
     /// result in the journal, ready to rename.
     fn copy_phase(&mut self, journal: &mut Journal) -> Result<(), Fault> {
+        self.progress.set_phase(ProgressPhase::Copying);
         journal.phase = Phase::Copying;
         self.write_journal(journal)?;
         for base in self.bases.clone() {
             self.remove_partial(&base)?;
         }
         self.report = SeedReport { errors: std::mem::take(&mut self.report.errors), ..SeedReport::new() };
+        self.progress.set_counters(0, 0);
         for base in journal.bases.clone() {
             self.copy_root(&base.join(self.from), &partial_path(&base, self.to))?;
         }
         journal.phase = Phase::Renaming;
+        self.progress.set_phase(ProgressPhase::Publishing);
         self.save_report(journal);
         self.write_journal(journal)
     }
@@ -368,6 +486,7 @@ impl Run<'_> {
     /// Renames each copy into place and writes the marker. The journal is
     /// in `renaming` on disk.
     fn publish(&mut self, mut journal: Journal, outcome: SeedOutcome) -> Result<SeedOutcome, Fault> {
+        self.progress.set_phase(ProgressPhase::Publishing);
         for base in journal.bases.clone() {
             let partial = partial_path(&base, self.to);
             let target = base.join(self.to);
@@ -405,6 +524,7 @@ impl Run<'_> {
         self.report.copied.clear();
         self.report.files_copied = 0;
         self.report.bytes_copied = 0;
+        self.progress.set_counters(0, 0);
         self.report.notify_webview_skipped = false;
         self.save_report(&mut journal);
         let path = self.journal_path();
@@ -484,6 +604,7 @@ impl Run<'_> {
             self.step(Step::Copy(dst.to_path_buf()))?;
             self.report.bytes_copied += fs::copy(src, dst).map_err(at(src))?;
             self.report.files_copied += 1;
+            self.progress.set_counters(self.report.files_copied, self.report.bytes_copied);
             Ok(())
         } else {
             self.report.skipped.push((src.to_path_buf(), "not a file, directory or link".to_owned()));
@@ -497,6 +618,7 @@ impl Run<'_> {
         self.step(Step::Copy(dst.to_path_buf()))?;
         std::os::unix::fs::symlink(&target, dst).map_err(at(dst))?;
         self.report.files_copied += 1;
+        self.progress.set_counters(self.report.files_copied, self.report.bytes_copied);
         Ok(())
     }
 
@@ -618,6 +740,7 @@ impl Run<'_> {
         self.report.skipped.clone_from(&journal.skipped);
         self.report.files_copied = journal.files_copied;
         self.report.bytes_copied = journal.bytes_copied;
+        self.progress.set_counters(self.report.files_copied, self.report.bytes_copied);
         self.report.notify_webview_skipped = journal.webview_skipped;
     }
 
@@ -1351,6 +1474,159 @@ mod tests {
         go_tx.send(()).unwrap();
         assert_eq!(first.join().unwrap(), SeedOutcome::Seeded);
         assert_eq!(second.join().unwrap(), SeedOutcome::NotNeeded);
+        for base in f.bases() {
+            assert_eq!(target(&base), expected(&base));
+        }
+    }
+
+    struct ProgressCopyGate {
+        release: Option<mpsc::Sender<()>>,
+        worker: Option<std::thread::JoinHandle<SeedReport>>,
+    }
+
+    impl ProgressCopyGate {
+        fn start(bases: Vec<PathBuf>, progress: std::sync::Arc<Progress>) -> Self {
+            let (entered_tx, entered_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let mut blocked = false;
+                let mut hook = |step: &Step| {
+                    if matches!(step, Step::Copy(_)) && !blocked {
+                        blocked = true;
+                        let _ = entered_tx.send(());
+                        // Dropping the sender also releases the barrier after a failed assertion.
+                        let _ = release_rx.recv();
+                    }
+                    Ok(())
+                };
+                seed_run(&bases, FROM, TO, &progress, &mut hook, Duration::ZERO)
+            });
+            let gate = Self { release: Some(release_tx), worker: Some(worker) };
+            entered_rx.recv_timeout(Duration::from_secs(10)).expect("migration did not reach its first copy");
+            gate
+        }
+
+        fn finish(mut self) -> SeedReport {
+            let _ = self.release.take().unwrap().send(());
+            self.worker.take().unwrap().join().unwrap()
+        }
+    }
+
+    impl Drop for ProgressCopyGate {
+        fn drop(&mut self) {
+            if let Some(release) = self.release.take() {
+                let _ = release.send(());
+            }
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+        }
+    }
+
+    #[test]
+    fn progress_is_published_before_the_copy_and_the_target_stays_closed() {
+        let f = Fixture::new();
+        let sources = f.sources();
+        let progress = std::sync::Arc::new(Progress::default());
+        let gate = ProgressCopyGate::start(f.bases(), progress.clone());
+        let phase_before_copy = progress.phase();
+        let targets_before_copy: Vec<_> = f.bases().iter().map(|base| exists(&base.join(TO))).collect();
+        let journal_before_copy = exists(&journal_path(&f.roaming, TO));
+        let lock_before_copy = exists(&f.roaming.join(format!("{TO}.migration.lock")));
+        let report = gate.finish();
+
+        eprintln!(
+            "MIGRATION_W1 phase={phase_before_copy:?} targets={targets_before_copy:?} journal={journal_before_copy} lock={lock_before_copy}"
+        );
+        assert_eq!(phase_before_copy, ProgressPhase::Copying);
+        assert!(targets_before_copy.iter().all(|exists| !exists), "profile was published before the copy");
+        assert!(journal_before_copy && lock_before_copy);
+        assert_eq!(report.outcome, SeedOutcome::Seeded);
+        assert_eq!(progress.phase(), ProgressPhase::Done);
+        assert_eq!(progress.files(), report.files_copied);
+        assert_eq!(progress.bytes(), report.bytes_copied);
+        for base in f.bases() {
+            assert_eq!(target(&base), expected(&base));
+        }
+        assert_eq!(f.sources(), sources);
+    }
+
+    #[test]
+    fn second_start_during_the_copy_reports_waiting_and_converges() {
+        let f = Fixture::new();
+        let first_progress = std::sync::Arc::new(Progress::default());
+        let gate = ProgressCopyGate::start(f.bases(), first_progress);
+        let second_progress = std::sync::Arc::new(Progress::default());
+        let observed = second_progress.clone();
+        let bases = f.bases();
+        let (done_tx, done_rx) = mpsc::channel();
+        let second = std::thread::spawn(move || {
+            let report = seed_profile_with_progress(&bases, FROM, TO, &observed);
+            let _ = done_tx.send(report);
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while second_progress.phase() != ProgressPhase::WaitingForOtherStart && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let waiting_phase = second_progress.phase();
+        let early_result = done_rx.recv_timeout(Duration::from_millis(500));
+        let returned_early = early_result.is_ok();
+        let first_report = gate.finish();
+        let second_report = early_result.unwrap_or_else(|_| {
+            done_rx.recv_timeout(Duration::from_secs(10)).expect("second start did not finish after the copy")
+        });
+        second.join().unwrap();
+
+        eprintln!("MIGRATION_W2 phase={waiting_phase:?} returned_early={returned_early}");
+        assert_eq!(waiting_phase, ProgressPhase::WaitingForOtherStart);
+        assert!(!returned_early, "second start returned while the first copy was blocked");
+        assert_eq!(first_report.outcome, SeedOutcome::Seeded);
+        assert_eq!(second_report.outcome, SeedOutcome::NotNeeded);
+        assert_eq!(second_progress.phase(), ProgressPhase::Done);
+        for base in f.bases() {
+            assert_eq!(target(&base), expected(&base));
+        }
+    }
+
+    #[test]
+    fn progress_finishes_with_cleared_counters_after_a_copy_failure() {
+        let f = Fixture::new();
+        let progress = Progress::default();
+        let mut files_before_failure = 0;
+        let mut hook = |step: &Step| {
+            if matches!(step, Step::Copy(path) if path.file_name() == Some(OsStr::new("settings.toml"))) {
+                files_before_failure = progress.files();
+                return Err(Fault::Io(io::Error::other("copy failure fixture")));
+            }
+            Ok(())
+        };
+        let report = seed_run(&f.bases(), FROM, TO, &progress, &mut hook, Duration::ZERO);
+        assert!(files_before_failure > 0, "fixture did not copy a file before its error");
+        assert!(matches!(report.outcome, SeedOutcome::Failed(_)));
+        assert_eq!(report.files_copied, 0);
+        assert_eq!(progress.files(), report.files_copied);
+        assert_eq!(progress.bytes(), report.bytes_copied);
+        assert_eq!(progress.phase(), ProgressPhase::Done);
+    }
+
+    #[test]
+    fn resumed_publish_restores_progress_counters() {
+        let f = Fixture::new();
+        let interrupted = seed_profile_with(
+            &f.bases(),
+            FROM,
+            TO,
+            &mut |step| if matches!(step, Step::Rename(_)) { Err(Fault::Crash) } else { Ok(()) },
+            Duration::ZERO,
+        );
+        assert!(matches!(interrupted.outcome, SeedOutcome::Failed(_)));
+        assert!(interrupted.files_copied > 0);
+        let progress = Progress::default();
+        let report = seed_profile_with_progress(&f.bases(), FROM, TO, &progress);
+        assert_eq!(report.outcome, SeedOutcome::Resumed);
+        assert_eq!(progress.files(), report.files_copied);
+        assert_eq!(progress.bytes(), report.bytes_copied);
+        assert_eq!(progress.phase(), ProgressPhase::Done);
         for base in f.bases() {
             assert_eq!(target(&base), expected(&base));
         }
