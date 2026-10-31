@@ -18,6 +18,10 @@ struct FakeAgent {
     drops_mode_on_set: AtomicBool,
     notifies_mode_change_on_set: AtomicBool,
     notifies_mode_change_after_mode_set: AtomicBool,
+    reports_previous_mode: AtomicBool,
+    reports_mode_without_current: AtomicBool,
+    reports_conflicting_legacy_mode: AtomicBool,
+    fails_new_once: AtomicBool,
     cwds: Mutex<Vec<PathBuf>>,
     requests: Mutex<Vec<(String, Value)>>,
     permissions: Mutex<Vec<Value>>,
@@ -125,6 +129,9 @@ impl Handler for FakeAgent {
                     "sessionCapabilities": {"fork": {}}, "_meta": {"openidea": {"rollback": true, "steer": true}}}}))
             }
             "session/new" => {
+                if self.fails_new_once.swap(false, Ordering::Relaxed) {
+                    return Err((codes::INTERNAL_ERROR, "fixture startup failed".into()));
+                }
                 let mut reply = json!({
                     "sessionId": "s1",
                     "configOptions": [{"id": "model", "category": "model", "type": "select", "currentValue": "big",
@@ -179,6 +186,27 @@ impl Handler for FakeAgent {
                     return Err((codes::INTERNAL_ERROR, "cannot set mode".into()));
                 }
                 self.calls.lock().push(format!("{method} {}", params.get("value").or(params.get("modeId")).unwrap()));
+                if is_mode && self.reports_conflicting_legacy_mode.load(Ordering::Relaxed) {
+                    return Ok(json!({"configOptions":[{"id":"mode", "category":"permissions", "type":"select",
+                        "currentValue":"bypassPermissions",
+                        "options":[{"value":"read-only"},{"value":"bypassPermissions"}]}]}));
+                }
+                if is_mode
+                    && (self.reports_previous_mode.load(Ordering::Relaxed)
+                        || self.reports_mode_without_current.load(Ordering::Relaxed))
+                {
+                    let modes = self.modes.lock();
+                    let (current, available) = modes.as_ref().unwrap();
+                    let options: Vec<Value> =
+                        available.iter().map(|(id, name)| json!({"value": id, "name": name})).collect();
+                    let current = if self.reports_mode_without_current.load(Ordering::Relaxed) {
+                        json!(123)
+                    } else {
+                        json!(current)
+                    };
+                    return Ok(json!({"configOptions":[{"id":"mode", "category":"mode", "type":"select",
+                        "currentValue":current, "options":options}]}));
+                }
                 if is_mode && self.notifies_mode_change_after_mode_set.load(Ordering::Relaxed) {
                     self.update(
                         &session,
@@ -1155,6 +1183,47 @@ async fn complete_refuses_when_the_mode_cannot_be_set() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_when_the_mode_reply_reports_another_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("read-only", "Read only"), ("bypassPermissions", "Bypass")],
+    ));
+    agent.v2.store(true, Ordering::Relaxed);
+    agent.reports_previous_mode.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let error = mgr.complete("claude", "Name this change", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert!(error.message.contains("cannot run read-only"), "{error}");
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_accepts_a_mode_reply_without_a_parseable_current_value() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes(
+        "bypassPermissions",
+        &[("read-only", "Read only"), ("bypassPermissions", "Bypass")],
+    ));
+    agent.v2.store(true, Ordering::Relaxed);
+    agent.reports_mode_without_current.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    assert!(!mgr.complete("claude", "Name this change", &[], Duration::from_secs(5)).await.unwrap().is_empty());
+    assert_eq!(agent.prompts.lock().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_a_conflicting_mode_reply_with_a_stale_legacy_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent =
+        Arc::new(FakeAgent::with_modes("read-only", &[("read-only", "Read only"), ("bypassPermissions", "Bypass")]));
+    agent.reports_conflicting_legacy_mode.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let error = mgr.complete("claude", "Name this change", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert!(error.message.contains("cannot run read-only"), "{error}");
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn complete_refuses_when_another_setting_drops_the_mode() {
     let tmp = tempfile::tempdir().unwrap();
     let agent = Arc::new(FakeAgent::with_modes("ask", &[("ask", "Ask"), ("default", "Default")]));
@@ -1351,6 +1420,70 @@ async fn instructions_go_to_the_first_turn_only() {
     assert_eq!(task.title, "Fix the lexer");
     assert!(matches!(&mgr.entries(&task.id,None).unwrap()[0],AgentEntry::User{text,..} if text=="Fix the lexer"));
     mgr.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn instructions_survive_a_turn_that_fails_before_the_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    agent.fails_new_once.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let task = mgr
+        .create(NewAgentTask {
+            project_root: None,
+            prompt: text("Fix the lexer"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+            instructions: Some("Always run tests first.".into()),
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Failed).await;
+    assert!(agent.prompts.lock().is_empty());
+    mgr.prompt(&task.id, text("again"), false).await.unwrap();
+    // With instructions this is a first prompt, so the fake agent asks permission.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while agent.prompts.lock().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(agent.prompts.lock()[0], "Always run tests first.\n\nagain");
+    wait_for(&mgr, &task.id, AgentStatus::NeedsInput).await;
+    mgr.cancel(&task.id, None).unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    mgr.prompt(&task.id, text("again"), false).await.unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    assert_eq!(*agent.prompts.lock(), ["Always run tests first.\n\nagain", "again"]);
+    mgr.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn argument_store_errors_keep_their_public_error_kinds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agents = tmp.path().join("agents");
+    let models = agents.join("models.json");
+    let mut mgr = manager(tmp.path(), Arc::new(FakeAgent::default()));
+    Arc::get_mut(&mut mgr.shared).unwrap().paths.custom_agents_dir = Some(agents.clone());
+    for error in [
+        mgr.set_custom_args("unknown", &[]).unwrap_err(),
+        set_custom_args_in(&agents, &models, "unknown", &[]).unwrap_err(),
+    ] {
+        assert_eq!(error.kind, ide_core::error::ErrorKind::NotFound);
+        assert_eq!(error.message, "unknown agent");
+    }
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(agents.join("extra-args.json"), "{broken").unwrap();
+    for error in [
+        mgr.set_custom_args("claude", &[]).unwrap_err(),
+        set_custom_args_in(&agents, &models, "claude", &[]).unwrap_err(),
+    ] {
+        assert_eq!(error.kind, ide_core::error::ErrorKind::InvalidInput);
+        assert!(error.message.starts_with("invalid extra-args.json at line "));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -218,6 +218,8 @@ struct Task {
     shared: Arc<Shared>,
     state: Mutex<TaskState>,
     live: Mutex<Option<Live>>,
+    /// Kept across startup failures until the first prompt request has been sent.
+    pending_instructions: Mutex<Option<String>>,
     /// Serializes starting the agent.
     connecting: tokio::sync::Mutex<()>,
     /// Unanswered permission requests: where to send the chosen option id.
@@ -283,8 +285,16 @@ pub fn set_custom_args_in(
     args: &[String],
 ) -> IdeResult<Vec<AgentProvider>> {
     migrate_agents(custom_dir, models_file);
-    provider::set_custom_args(custom_dir, provider, args).map_err(|error| IdeError::internal(error.to_string()))?;
+    provider::set_custom_args(custom_dir, provider, args).map_err(argument_store_error)?;
     Ok(providers_from(custom_dir, models_file))
+}
+
+fn argument_store_error(error: std::io::Error) -> IdeError {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => IdeError::not_found(error.to_string()),
+        std::io::ErrorKind::InvalidData => IdeError::invalid(error.to_string()),
+        _ => IdeError::internal(error.to_string()),
+    }
 }
 
 impl AgentManager {
@@ -383,7 +393,7 @@ impl AgentManager {
             .custom_agents_dir
             .as_deref()
             .ok_or_else(|| IdeError::unavailable("custom agents directory is not configured"))?;
-        provider::set_custom_args(dir, provider, args).map_err(|error| IdeError::internal(error.to_string()))?;
+        provider::set_custom_args(dir, provider, args).map_err(argument_store_error)?;
         Ok(self.providers())
     }
 
@@ -1013,6 +1023,7 @@ impl Task {
                 busy: false,
             }),
             live: Mutex::new(None),
+            pending_instructions: Mutex::new(None),
             connecting: tokio::sync::Mutex::new(()),
             permissions: Mutex::new(HashMap::new()),
             next_permission: AtomicU32::new(1),
@@ -1130,9 +1141,13 @@ impl Task {
 
     /// Runs `prompt`, then the queued messages, until the queue is empty, a turn fails, or
     /// the user stops one. The caller set `busy`.
-    async fn run(self: Arc<Self>, mut prompt: AgentPrompt, mut instructions: Option<String>) {
+    async fn run(self: Arc<Self>, mut prompt: AgentPrompt, instructions: Option<String>) {
+        if instructions.is_some() {
+            *self.pending_instructions.lock() = instructions;
+        }
         loop {
-            let result = self.turn(&prompt, instructions.take().as_deref()).await;
+            let instructions = self.pending_instructions.lock().clone();
+            let result = self.turn(&prompt, instructions.as_deref()).await;
             self.cancel_pending.store(false, Ordering::Release);
             tokio::time::sleep(TURN_GRACE).await;
             let changed = self.state.lock().conversation.end_turn(Some(now_ms()));
@@ -1275,6 +1290,7 @@ impl Task {
         let content = self.content(&live, outgoing).await;
         let result: Result<Value, RpcError> =
             live.peer.request("session/prompt", json!({ "sessionId": live.session, "prompt": content }), None).await;
+        self.pending_instructions.lock().take();
         match result {
             Ok(v) => Ok(v.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned()),
             Err(e) => Err(self.failure(e)),
@@ -1751,24 +1767,31 @@ fn restrictive_mode(options: &[AgentConfigOption]) -> Result<String, String> {
     Err(opt.values.iter().map(|v| v.value.as_str()).collect::<Vec<_>>().join(", "))
 }
 
-/// Sets `target` to `value` in session `id` and records it in `options`.
+/// Sets `target` to `value`; returns a conflicting mode reported by the reply.
 async fn set_option(
     peer: &acp::Conn,
     id: &str,
     options: &mut Vec<AgentConfigOption>,
     target: &AgentConfigOption,
     value: &str,
-) -> Result<(), RpcError> {
+) -> Result<Option<String>, RpcError> {
     let (method, mut params) = config::set_request(target, value);
     params["sessionId"] = json!(id);
     let reply: Value = peer.request(method, params, None).await?;
+    let reported_current = reply
+        .get("configOptions")
+        .map(config::parse_options)
+        .and_then(|fresh| fresh.into_iter().find(|o| o.id == target.id))
+        .and_then(|o| o.current);
     if let Some(fresh) = reply.get("configOptions") {
         config::merge_update(options, fresh);
     }
-    if let Some(o) = options.iter_mut().find(|o| o.id == target.id) {
+    if let Some(o) = options.iter_mut().find(|o| o.id == target.id)
+        && (!is_mode_option(target) || reported_current.is_none())
+    {
         o.current = Some(value.to_owned());
     }
-    Ok(())
+    Ok(reported_current.filter(|current| is_mode_option(target) && current != value))
 }
 
 /// One question in a new session (`initialize`, `session/new`, mandatory restrictive mode +
@@ -1848,7 +1871,9 @@ async fn ask(
         return Err(read_only("none".into()));
     };
     // Restore it explicitly even when the setup snapshot already named this mode.
-    set_option(peer, id, &mut options, &target, &mode).await?;
+    if let Some(reported) = set_option(peer, id, &mut options, &target, &mode).await? {
+        return Err(read_only(format!("reported {reported} after selecting {mode}")));
+    }
     collector.merge_config(&mut options).await;
     // A setting response or notification can withdraw the mode; fail closed before prompting.
     if !options.iter().any(|o| {

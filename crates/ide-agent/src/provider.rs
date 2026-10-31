@@ -422,18 +422,22 @@ pub(crate) fn migrate_legacy(custom_dir: &Path, tools_dir: &Path) -> io::Result<
             if let Some(base) = native_adapter {
                 if legacy.name.is_some() || !legacy.env.is_empty() || (!old_native && !legacy.args.is_empty()) {
                     let destination = custom_dir.join(format!("{target_id}.toml"));
+                    let preserved = CustomAgent {
+                        name: legacy.name,
+                        driver: Driver::Acp,
+                        command: base.command,
+                        args: if !old_native && !legacy.args.is_empty() { legacy.args } else { base.args },
+                        env: legacy.env,
+                        registry: None,
+                    };
                     if destination.try_exists()? {
-                        tracing::warn!("kept existing agent {target_id}; legacy name/environment remain in the backup");
-                    } else {
-                        CustomAgent {
-                            name: legacy.name,
-                            driver: Driver::Acp,
-                            command: base.command,
-                            args: if !old_native && !legacy.args.is_empty() { legacy.args } else { base.args },
-                            env: legacy.env,
-                            registry: None,
+                        if CustomAgent::read(&destination).ok().as_ref() != Some(&preserved) {
+                            tracing::warn!(
+                                "kept existing agent {target_id}; legacy name/environment remain in the backup"
+                            );
                         }
-                        .write(&destination)?;
+                    } else {
+                        preserved.write(&destination)?;
                         tracing::warn!(
                             "preserved legacy metadata for {id} in {target_id}; its ACP adapter pin stays fixed"
                         );
@@ -618,6 +622,70 @@ mod tests {
     fn write_agent(dir: &Path, id: &str, text: &str) {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join(format!("{id}.toml")), text).unwrap();
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordedWarnings(std::sync::Arc<parking_lot::Mutex<Vec<String>>>);
+
+    impl tracing::Subscriber for RecordedWarnings {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            *metadata.level() == tracing::Level::WARN
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            struct Message(String);
+            impl tracing::field::Visit for Message {
+                fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                    if field.name() == "message" {
+                        self.0 = format!("{value:?}");
+                    }
+                }
+            }
+            let mut message = Message(String::new());
+            event.record(&mut message);
+            self.0.lock().push(message.0);
+        }
+    }
+
+    #[test]
+    fn migration_retries_after_acp_and_store_writes_before_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = builtins().into_iter().find(|spec| spec.id == "codex-acp").unwrap();
+        let legacy = CustomAgent {
+            name: Some("My Codex".into()),
+            driver: Driver::Acp,
+            command: base.command.clone(),
+            args: [base.args.clone(), vec!["--legacy".into()]].concat(),
+            env: BTreeMap::from([("KEY".into(), "kept".into())]),
+            registry: None,
+        };
+        legacy.write(&dir.path().join("codex.toml")).unwrap();
+        let original = std::fs::read(dir.path().join("codex.toml")).unwrap();
+        // Equivalent to a crash after both destination writes, before the legacy rename.
+        let preserved = CustomAgent { args: base.args, ..legacy };
+        preserved.write(&dir.path().join("codex-acp.toml")).unwrap();
+        write_extra_args(dir.path(), &BTreeMap::from([("codex-acp".into(), vec!["--legacy".into()])])).unwrap();
+        let destination = std::fs::read(dir.path().join("codex-acp.toml")).unwrap();
+        let store = std::fs::read(dir.path().join("extra-args.json")).unwrap();
+        let warnings = RecordedWarnings::default();
+        tracing::subscriber::with_default(warnings.clone(), || {
+            migrate_legacy(dir.path(), &dir.path().join("tools")).unwrap();
+        });
+        assert_eq!(std::fs::read(dir.path().join("codex.toml.v02")).unwrap(), original);
+        assert_eq!(std::fs::read(dir.path().join("codex-acp.toml")).unwrap(), destination);
+        assert_eq!(std::fs::read(dir.path().join("extra-args.json")).unwrap(), store);
+        assert_eq!(spec(dir.path(), "codex").driver, Driver::Codex);
+        assert!(spec(dir.path(), "codex-acp").args.ends_with(&["--legacy".into()]));
+        assert!(!warnings.0.lock().iter().any(|message| message.contains("kept existing agent")));
+        let migrated = files(dir.path());
+        migrate_legacy(dir.path(), &dir.path().join("tools")).unwrap();
+        assert_eq!(files(dir.path()), migrated);
     }
 
     fn extra_store(dir: &Path) -> BTreeMap<String, Vec<String>> {
