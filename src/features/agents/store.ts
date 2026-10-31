@@ -634,9 +634,21 @@ export function openHome(prompt?: string) {
   void editorService().openInput({ kind: HOME_KIND, key: HOME_KEY, data: {} }, { focus: true });
 }
 
-/** Opens the Agents catalog & presets editor tab. */
+/** UI-only state for the catalog while Welcome or LightEdit has no project editor. */
+export const useCatalogOverlay = create<{ input: { data: { openPresets: boolean } } | null }>(() => ({ input: null }));
+
+export function closeCatalogOverlay() {
+  useCatalogOverlay.setState({ input: null });
+}
+
+/** Opens the catalog in the current project, or above Welcome and LightEdit. */
 export function openCatalog(openPresets = false) {
   if (!useAgents.getState().providers.length && isTauri()) void refreshProviders();
+  if (!useProject.getState().project) {
+    useCatalogOverlay.setState({ input: { data: { openPresets } } });
+    return;
+  }
+  closeCatalogOverlay();
   void editorService().openInput({ kind: CATALOG_KIND, key: CATALOG_KEY, data: { openPresets } }, { focus: true });
 }
 

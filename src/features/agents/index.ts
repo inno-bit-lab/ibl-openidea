@@ -11,6 +11,7 @@ import { isVirtualUri } from "@/platform/virtualDocs";
 import {
   registerEditorKind,
   registerMenuGroup,
+  registerOverlay,
   registerSettingsPage,
   registerStatusItem,
   registerToolWindow,
@@ -43,6 +44,10 @@ export function activate(): () => void {
   sync(useProject.getState().project?.root);
   const disposers = [
     activateSettingsPages(),
+    registerOverlay({
+      id: "agents.catalog",
+      component: lazyComponent(() => import("./AgentsCatalogEditor").then((m) => m.AgentsCatalogOverlay)),
+    }),
     useProject.subscribe((s, prev) => {
       if (s.project?.root !== prev.project?.root) sync(s.project?.root);
     }),

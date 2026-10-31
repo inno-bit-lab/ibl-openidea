@@ -4,10 +4,13 @@ import clsx from "clsx";
 import type { AgentProvider } from "@/bindings";
 import { executeAction } from "@/platform/actions";
 import { useTx } from "@/platform/i18n";
+import { useProject } from "@/platform/project";
 import { isTauri } from "@/platform/ipc";
 import { Button, Checkbox, Dialog, Icon, IconButton, Input, Select, T, type SelectOption } from "@/ui";
 import { providerIcon } from "./model";
 import {
+  closeCatalogOverlay,
+  useCatalogOverlay,
   formatCliArgs,
   refreshProviders,
   savePresets,
@@ -344,6 +347,29 @@ export function ManagePresetsDialog({ open, onClose }: { open: boolean; onClose:
   );
 }
 
+/** The shared catalog above Welcome/LightEdit; project workbenches keep the editor tab. */
+export function AgentsCatalogOverlay() {
+  const projectOpen = useProject((s) => !!s.project);
+  const input = useCatalogOverlay((s) => s.input);
+  useEffect(() => {
+    if (projectOpen && input) closeCatalogOverlay();
+  }, [projectOpen, input]);
+  if (projectOpen || !input) return null;
+  return (
+    <Dialog
+      open
+      onClose={closeCatalogOverlay}
+      title="Agents"
+      width={860}
+      buttons={[{ label: "Close", role: "cancel", onClick: closeCatalogOverlay }]}
+    >
+      <div className={styles.overlayContent}>
+        <AgentsCatalogEditor input={input} />
+      </div>
+    </Dialog>
+  );
+}
+
 export function AgentsCatalogEditor({ input }: { input?: { data?: unknown } }) {
   const tx = useTx();
   const providers = useAgents((s) => s.providers);
@@ -370,6 +396,7 @@ export function AgentsCatalogEditor({ input }: { input?: { data?: unknown } }) {
       <div className={styles.topBar}>
         <Input
           className={styles.searchInput}
+          data-autofocus
           value={search}
           placeholder={tx("Search agents…")}
           aria-label={tx("Search agents")}

@@ -201,3 +201,8 @@
   gap: 8px;
   min-width: 0;
 }
+
+.overlayContent {
+  height: min(560px, 60vh);
+  min-height: 0;
+}

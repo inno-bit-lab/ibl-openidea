@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentCommand, AgentProvider } from "@/bindings";
 
@@ -34,10 +34,13 @@ import { useProject } from "@/platform/project";
 import type { ProjectInfo } from "@/bindings";
 import { defaultTaskProject } from "./project";
 import { provideEditorService } from "@/workbench/contributions";
+import { OverlayHost } from "@/workbench/OverlayHost";
+import { executeAction } from "@/platform/actions";
+import { activate } from "./index";
 import { CATALOG_KEY, CATALOG_KIND } from "./model";
 import { HomeEditor } from "./HomeEditor";
 import { AcpArgumentsDialog, AgentsCatalogEditor, ManagePresetsDialog } from "./AgentsCatalogEditor";
-import { HOME, updateComposer, useAgents } from "./store";
+import { HOME, closeCatalogOverlay, updateComposer, useAgents } from "./store";
 import { emptyDraft } from "./composerModel";
 
 const command = (name: string, description: string): AgentCommand => ({ name, description, hint: null });
@@ -55,7 +58,8 @@ const claude: AgentProvider = {
 
 beforeEach(() => {
   vi.mocked(isTauri).mockReturnValue(true);
-  useProject.setState({ project: null });
+  useProject.setState({ project: null, lightEdit: false });
+  closeCatalogOverlay();
   openInput.mockReset().mockResolvedValue(undefined);
   provideEditorService({
     openFile: async () => {},
@@ -205,6 +209,7 @@ describe("agent preferences and presets", () => {
 
   it("opens the slimmed Agents tab from the picker and keeps the registry link", async () => {
     vi.mocked(isTauri).mockReturnValue(false);
+    useProject.setState({ project: { root: "/project", name: "Project", isGit: false } as ProjectInfo });
     agentCommands.mockResolvedValue({ status: "ok", data: [] });
     const home = render(<HomeEditor />);
     fireEvent.click(screen.getByRole("button", { name: "Agent" }));
@@ -311,5 +316,62 @@ describe("agent preferences and presets", () => {
     expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
     view.rerender(<AgentsCatalogEditor input={{ data: { openPresets: true } }} />);
     expect(screen.getByRole("dialog", { name: "Manage Presets" })).toBeInTheDocument();
+  });
+});
+
+describe("agent catalog from Welcome", () => {
+  it.each([false, true])(
+    "opens the registered overlay without an editor tab (LightEdit=%s) and saves arguments",
+    async (lightEdit) => {
+      vi.mocked(isTauri).mockReturnValue(false);
+      useProject.setState({ project: null, lightEdit });
+      const deactivate = activate();
+      const view = render(<OverlayHost />);
+      try {
+        await act(async () => {
+          await executeAction("agents.manageAgents");
+        });
+        const catalog = await screen.findByRole("dialog", { name: "Agents" });
+        expect(openInput).not.toHaveBeenCalled();
+        expect(screen.getByLabelText("Search agents")).toHaveFocus();
+        fireEvent.click(within(catalog).getByRole("button", { name: "Edit arguments for Claude Code" }));
+        const argumentsDialog = await screen.findByRole("dialog", { name: "Agent Arguments" });
+        fireEvent.change(within(argumentsDialog).getByLabelText("Enter command-line arguments"), {
+          target: { value: "--trace" },
+        });
+        fireEvent.click(within(argumentsDialog).getByRole("button", { name: "OK" }));
+        await waitFor(() => expect(agentSetArgs).toHaveBeenCalledWith("claude", ["--trace"]));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Agent Arguments" })).toBeNull());
+        expect(screen.getByRole("dialog", { name: "Agents" })).toBeInTheDocument();
+        fireEvent.keyDown(document, { key: "Escape" });
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Agents" })).toBeNull());
+      } finally {
+        view.unmount();
+        deactivate();
+        closeCatalogOverlay();
+      }
+    },
+  );
+
+  it("keeps the overlay input stable after closing nested presets", async () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    const deactivate = activate();
+    const view = render(<OverlayHost />);
+    try {
+      await act(async () => {
+        await executeAction("agents.managePresets");
+      });
+      const presets = await screen.findByRole("dialog", { name: "Manage Presets" });
+      fireEvent.click(within(presets).getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
+      fireEvent.change(screen.getByLabelText("Search agents"), { target: { value: "claude" } });
+      act(() => useAgents.setState({ providers: [...useAgents.getState().providers] }));
+      expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
+      expect(screen.getByRole("dialog", { name: "Agents" })).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      deactivate();
+      closeCatalogOverlay();
+    }
   });
 });
