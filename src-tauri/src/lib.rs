@@ -7,6 +7,7 @@ mod commands;
 mod events;
 mod logging;
 mod menu;
+mod migrate;
 mod remote_dev;
 
 mod state;
@@ -53,7 +54,23 @@ pub fn export_bindings(builder: &tauri_specta::Builder<tauri::Wry>) -> Result<()
 pub fn run() {
     ide_workspace::process::mark_start();
     let context = tauri::generate_context!();
+    // Copy the legacy profile before anything below reads or creates the identifier's directories.
+    let identifier = context.config().identifier.clone();
+    let seed_from = migrate::seed_source(
+        cfg!(debug_assertions),
+        std::env::var(migrate::SEED_FROM_ENV).ok().as_deref(),
+        &identifier,
+    );
+    let seeded = seed_from.map(|from| {
+        let report = migrate::seed_profile(&migrate::profile_bases(), &from, &identifier);
+        (from, report)
+    });
     logging::init(&context.config().identifier);
+    if let Some((from, report)) = &seeded {
+        report.log(from, &identifier);
+    } else if cfg!(debug_assertions) && std::env::var_os(migrate::SEED_FROM_ENV).is_some_and(|v| !v.is_empty()) {
+        tracing::warn!("{} ignored: it must be a plain identifier other than {identifier}", migrate::SEED_FROM_ENV);
+    }
 
     let refresh_shell_path = ide_host::shell_env::inherit_login_shell_path(&context.config().identifier);
     // Managed LSP/DAP installs; must run before other threads start and before PATH is cached.
@@ -109,7 +126,24 @@ pub fn run() {
             app.manage(windows);
             app.manage(menu_state);
             app.on_menu_event(on_menu_event);
-            windows::create_main_window(app.handle())?;
+            let main = windows::create_main_window(app.handle())?;
+            // Once, when the first start could not copy the WebView profile (see `migrate`).
+            if let Some(config) = dirs::config_dir()
+                && migrate::webview_notice_pending(&config, &app.config().identifier)
+            {
+                use tauri_plugin_dialog::DialogExt;
+                let identifier = app.config().identifier.clone();
+                app.dialog()
+                    .message(migrate::WEBVIEW_SKIPPED_MESSAGE)
+                    .title(&app.package_info().name)
+                    .parent(&main)
+                    .show(move |_| {
+                        // Persist after dismissal so a crash before display cannot lose the notice.
+                        if let Err(e) = migrate::mark_notified(&config, &identifier) {
+                            tracing::warn!("could not record the migration notice: {e}");
+                        }
+                    });
+            }
             Ok(())
         })
         .on_window_event(|window, event| match event {
