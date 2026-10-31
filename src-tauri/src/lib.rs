@@ -7,6 +7,7 @@ mod commands;
 mod events;
 mod logging;
 mod menu;
+mod migrate;
 mod remote_dev;
 
 mod state;
