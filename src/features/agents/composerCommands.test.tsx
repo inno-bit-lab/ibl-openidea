@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentCommand, AgentProvider } from "@/bindings";
@@ -6,6 +7,7 @@ import type { AgentCommand, AgentProvider } from "@/bindings";
 const agentCommands = vi.fn();
 const agentCreate = vi.fn();
 const agentSetArgs = vi.fn();
+const agentProviders = vi.fn();
 const openInput = vi.fn();
 const vcsBranches = vi.fn();
 const vcsBranchInfo = vi.fn();
@@ -20,6 +22,7 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
       agentCommands: (provider: string, task: string | null) => agentCommands(provider, task),
       agentCreate: (request: unknown) => agentCreate(request),
       agentSetArgs: (provider: string, args: string[]) => agentSetArgs(provider, args),
+      agentProviders: () => agentProviders(),
       vcsBranchInfo: (root: string | null) => vcsBranchInfo(root),
       vcsBranches: (root: string | null) => vcsBranches(root),
     },
@@ -40,7 +43,7 @@ import { activate } from "./index";
 import { CATALOG_KEY, CATALOG_KIND } from "./model";
 import { HomeEditor } from "./HomeEditor";
 import { AcpArgumentsDialog, AgentsCatalogEditor, ManagePresetsDialog } from "./AgentsCatalogEditor";
-import { HOME, closeCatalogOverlay, updateComposer, useAgents } from "./store";
+import { HOME, closeCatalogOverlay, openCatalog, refreshProviders, updateComposer, useAgents } from "./store";
 import { emptyDraft } from "./composerModel";
 
 const command = (name: string, description: string): AgentCommand => ({ name, description, hint: null });
@@ -69,6 +72,7 @@ beforeEach(() => {
     saveAll: async () => {},
   });
   agentSetArgs.mockReset().mockResolvedValue({ status: "ok", data: [claude] });
+  agentProviders.mockReset().mockResolvedValue({ status: "ok", data: [claude] });
   vcsBranches.mockReset().mockResolvedValue({ status: "ok", data: [] });
   vcsBranchInfo
     .mockReset()
@@ -79,6 +83,7 @@ beforeEach(() => {
   agentCreate.mockReset().mockResolvedValue({ status: "error", error: { kind: "invalid", message: "stop here" } });
   useAgents.setState({
     providers: [claude],
+    providersLoaded: true,
     presets: [],
     disabledProviders: [],
     draft: { provider: "claude", config: {}, isolation: "local", base: null },
@@ -214,10 +219,7 @@ describe("agent preferences and presets", () => {
     const home = render(<HomeEditor />);
     fireEvent.click(screen.getByRole("button", { name: "Agent" }));
     fireEvent.click(screen.getByRole("option", { name: "Manage Agents…" }));
-    expect(openInput).toHaveBeenCalledWith(
-      { kind: CATALOG_KIND, key: CATALOG_KEY, data: { openPresets: false } },
-      { focus: true },
-    );
+    expect(openInput).toHaveBeenCalledWith({ kind: CATALOG_KIND, key: CATALOG_KEY }, { focus: true });
     home.unmount();
     render(<AgentsCatalogEditor input={openInput.mock.calls[0]![0]} />);
     expect(screen.getByRole("checkbox", { name: "Enable Claude Code" })).toBeChecked();
@@ -305,17 +307,18 @@ describe("agent preferences and presets", () => {
     expect(screen.getByLabelText("Name")).toHaveValue("Italian");
   });
 
-  it("reopens Manage Presets only for a new catalog request", () => {
+  it("reopens Manage Presets only for a new catalog request", async () => {
     vi.mocked(isTauri).mockReturnValue(false);
+    useProject.setState({ project: { root: "/project", name: "Project", isGit: false } as ProjectInfo });
     useAgents.setState({ presets: [italianPreset] });
-    const data = { openPresets: true };
-    const view = render(<AgentsCatalogEditor input={{ data }} />);
-    expect(screen.getByRole("dialog", { name: "Manage Presets" })).toBeInTheDocument();
+    openCatalog(true);
+    render(<AgentsCatalogEditor input={openInput.mock.calls[0]![0]} />);
+    expect(await screen.findByRole("dialog", { name: "Manage Presets" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.change(screen.getByLabelText("Search agents"), { target: { value: "claude" } });
     expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
-    view.rerender(<AgentsCatalogEditor input={{ data: { openPresets: true } }} />);
-    expect(screen.getByRole("dialog", { name: "Manage Presets" })).toBeInTheDocument();
+    act(() => openCatalog(true));
+    expect(await screen.findByRole("dialog", { name: "Manage Presets" })).toBeInTheDocument();
   });
 });
 
@@ -374,4 +377,62 @@ describe("agent catalog from Welcome", () => {
       closeCatalogOverlay();
     }
   });
+});
+
+describe("review regressions: transient presets and provider loading", () => {
+  it("consumes the live preset intent once and does not replay it from a restored catalog tab", async () => {
+    vi.mocked(isTauri).mockReturnValue(false);
+    useProject.setState({ project: { root: "/project", name: "Project", isGit: false } as ProjectInfo });
+    openCatalog(true);
+    const input = openInput.mock.calls[0]![0];
+    const view = render(
+      <StrictMode>
+        <AgentsCatalogEditor input={input} />
+      </StrictMode>,
+    );
+    const firstDialog = await screen.findByRole("dialog", { name: "Manage Presets" });
+    fireEvent.click(within(firstDialog).getByRole("button", { name: "Cancel" }));
+    view.unmount();
+    // Editor input data survives app restart. It must never retain an action to replay.
+    const restored = JSON.parse(JSON.stringify(input));
+    const restoredView = render(<AgentsCatalogEditor input={restored} />);
+    expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
+    // Profiles written before the fix can still carry the old restorable command.
+    restoredView.rerender(<AgentsCatalogEditor input={{ data: { openPresets: true } }} />);
+    expect(screen.queryByRole("dialog", { name: "Manage Presets" })).toBeNull();
+    act(() => openCatalog(true));
+    expect(await screen.findByRole("dialog", { name: "Manage Presets" })).toBeInTheDocument();
+  });
+
+  it.each([
+    { providers: [] as AgentProvider[], missing: true },
+    { providers: [claude], missing: false },
+  ])(
+    "waits for the provider response before classifying a missing agent ($missing)",
+    async ({ providers, missing }) => {
+      let resolveProviders!: (result: { status: "ok"; data: AgentProvider[] }) => void;
+      agentProviders.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveProviders = resolve;
+          }),
+      );
+      useAgents.setState({ providers: [], providersLoaded: false });
+      let loading!: Promise<void>;
+      act(() => {
+        loading = refreshProviders();
+      });
+      render(<HomeEditor />);
+      expect(screen.queryByText("Not installed")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+      expect(screen.queryByText("Not installed")).toBeNull();
+      fireEvent.keyDown(document, { key: "Escape" });
+      await act(async () => {
+        resolveProviders({ status: "ok", data: providers });
+        await loading;
+      });
+      if (missing) expect(screen.getByText("Not installed")).toBeInTheDocument();
+      else expect(screen.queryByText("Not installed")).toBeNull();
+    },
+  );
 });

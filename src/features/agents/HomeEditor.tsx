@@ -31,6 +31,7 @@ export function HomeEditor() {
   const txTemplate = useTxTemplate();
   const draft = useAgents((s) => s.draft);
   const providers = useAgents((s) => s.providers);
+  const providersLoaded = useAgents((s) => s.providersLoaded);
   const presets = useAgents((s) => s.presets);
   const disabledProviders = useAgents((s) => s.disabledProviders);
   const history = useAgents((s) => s.history);
@@ -79,7 +80,9 @@ export function HomeEditor() {
   const probe = useProbe(provider?.installed ? provider.id : null);
   const agentCommands = useAgentCommands(provider?.id, null, provider?.commands ?? NO_COMMANDS);
   const agents = agentOptions(
-    providers.filter((p) => !disabledProviders.includes(p.id) || p.id === provider?.id),
+    providers.filter(
+      (p) => (providersLoaded || p.installed) && (!disabledProviders.includes(p.id) || p.id === provider?.id),
+    ),
     tx,
     providerIcon,
   );
@@ -92,10 +95,20 @@ export function HomeEditor() {
       label: preset.name,
       icon: providerIcon(preset.provider),
       disabled: !providers.some((p) => p.id === preset.provider && p.installed),
-      detail: providers.some((p) => p.id === preset.provider && p.installed) ? undefined : tx("Not installed"),
+      detail:
+        providersLoaded && !providers.some((p) => p.id === preset.provider && p.installed)
+          ? tx("Not installed")
+          : undefined,
     })),
     ...(!provider && !draft.presetId && draft.provider
-      ? [{ value: draft.provider, label: draft.provider, disabled: true, detail: tx("Not installed") }]
+      ? [
+          {
+            value: draft.provider,
+            label: draft.provider,
+            disabled: true,
+            detail: providersLoaded ? tx("Not installed") : undefined,
+          },
+        ]
       : []),
     ...agents.slice(-1),
     { value: "__manage__", label: tx("Manage Agents…"), icon: "settings" },
@@ -232,7 +245,7 @@ export function HomeEditor() {
               : [probe.name, probe.version, probe.protocol].filter(Boolean).join(" · ")}
           </p>
         )}
-        {!provider && (
+        {providersLoaded && !provider && (
           <p className={styles.warning}>
             <T>Not installed</T>
           </p>

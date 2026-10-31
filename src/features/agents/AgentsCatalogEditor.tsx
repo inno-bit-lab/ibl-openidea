@@ -10,6 +10,7 @@ import { Button, Checkbox, Dialog, Icon, IconButton, Input, Select, T, type Sele
 import { providerIcon } from "./model";
 import {
   closeCatalogOverlay,
+  consumeCatalogPresetsRequest,
   useCatalogOverlay,
   formatCliArgs,
   refreshProviders,
@@ -370,20 +371,26 @@ export function AgentsCatalogOverlay() {
   );
 }
 
-export function AgentsCatalogEditor({ input }: { input?: { data?: unknown } }) {
+export function AgentsCatalogEditor(_props: { input?: { data?: unknown } }) {
   const tx = useTx();
   const providers = useAgents((s) => s.providers);
   const disabledProviders = useAgents((s) => s.disabledProviders);
-  const inputData = input?.data;
-  const openPresets = Boolean((inputData as { openPresets?: boolean } | undefined)?.openPresets);
+  const presetsRequested = useCatalogOverlay((s) => s.presetsRequested);
   const [search, setSearch] = useState("");
-  const [presetsOpen, setPresetsOpen] = useState(openPresets);
-  const [previousData, setPreviousData] = useState(inputData);
+  const [presetsOpen, setPresetsOpen] = useState(false);
   const [editingArgsFor, setEditingArgsFor] = useState<string | null>(null);
-  if (inputData !== previousData) {
-    setPreviousData(inputData);
-    if (openPresets) setPresetsOpen(true);
-  }
+  useEffect(() => {
+    let mounted = true;
+    if (presetsRequested) {
+      // Deliver the intent only after this mount commits; cancelled mounts must not consume it.
+      queueMicrotask(() => {
+        if (mounted && consumeCatalogPresetsRequest()) setPresetsOpen(true);
+      });
+    }
+    return () => {
+      mounted = false;
+    };
+  }, [presetsRequested]);
   useEffect(() => {
     if (isTauri()) void refreshProviders();
   }, []);

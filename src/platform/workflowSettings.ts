@@ -3,7 +3,7 @@
  * consume them: every field present and in range (mirrors
  * `ide-core::workflow_settings` defaults). Normalisation never throws.
  */
-import { legacyAgentId } from "@/features/agents/model";
+import { legacyAgentId } from "./agentIds";
 import { useProject } from "./project";
 import { DEFAULT_REMOTE, validateRemote, type RemoteSettings } from "./remoteSettings";
 

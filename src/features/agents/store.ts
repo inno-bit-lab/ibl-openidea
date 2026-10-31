@@ -69,6 +69,8 @@ interface AgentsState {
   entries: Map<string, AgentEntry[]>;
   changes: Map<string, AgentChange[]>;
   providers: AgentProvider[];
+  /** Whether an authoritative provider list has arrived for the current project/profile. */
+  providersLoaded: boolean;
   presets: AgentPreset[];
   disabledProviders: string[];
   draft: Draft;
@@ -134,6 +136,7 @@ export const useAgents = create<AgentsState>(() => ({
   entries: new Map(),
   changes: new Map(),
   providers: [],
+  providersLoaded: false,
   presets: loadSelection<AgentPreset[]>(PRESETS_KEY, [], (presets) => presets.map(canonicalPreset)),
   disabledProviders: loadSelection<string[]>(DISABLED_KEY, [], (ids) => [...new Set(ids.map(legacyAgentId))]),
   draft: loadSelection(DRAFT_KEY, fallbackDraft, (draft) => ({
@@ -361,7 +364,7 @@ export async function setProviderArgs(providerId: string, rawArgs: string): Prom
   await queueArgsWrite(async () => {
     const providers = await call(commands.agentSetArgs(id, args));
     explicitArgsRevision++;
-    useAgents.setState({ providers });
+    useAgents.setState({ providers, providersLoaded: true });
     // An explicit edit/clear resolves legacy values for this id, even when they conflicted.
     const pending = readLegacyArgs();
     if (!pending) return;
@@ -452,6 +455,7 @@ export async function connect(): Promise<void> {
     entries: new Map(),
     changes: new Map(),
     providers: argsRevision === explicitArgsRevision ? providers : useAgents.getState().providers,
+    providersLoaded: true,
   });
   // Restored tabs of tasks deleted meanwhile close, like editors of deleted files.
   const editors = editorService();
@@ -466,6 +470,7 @@ export function disconnect() {
   generation++;
   useAgents.setState({
     loaded: false,
+    providersLoaded: false,
     error: null,
     tasks: new Map(),
     unread: new Set(),
@@ -585,7 +590,9 @@ export async function refreshProviders() {
   const providers = await call(commands.agentProviders()).catch(() => null);
   if (!providers || gen !== generation) return;
   const imported = await importLegacyArgs(providers);
-  if (gen === generation && argsRevision === explicitArgsRevision) useAgents.setState({ providers: imported });
+  if (gen === generation && argsRevision === explicitArgsRevision) {
+    useAgents.setState({ providers: imported, providersLoaded: true });
+  }
 }
 
 export const NO_COMMANDS: readonly AgentCommand[] = [];
@@ -634,22 +641,31 @@ export function openHome(prompt?: string) {
   void editorService().openInput({ kind: HOME_KIND, key: HOME_KEY, data: {} }, { focus: true });
 }
 
-/** UI-only state for the catalog while Welcome or LightEdit has no project editor. */
-export const useCatalogOverlay = create<{ input: { data: { openPresets: boolean } } | null }>(() => ({ input: null }));
+/** Transient catalog intent; editor inputs contain no commands to replay after restoration. */
+export const useCatalogOverlay = create<{
+  input: { data?: unknown } | null;
+  presetsRequested: boolean;
+}>(() => ({ input: null, presetsRequested: false }));
 
 export function closeCatalogOverlay() {
-  useCatalogOverlay.setState({ input: null });
+  useCatalogOverlay.setState({ input: null, presetsRequested: false });
+}
+
+export function consumeCatalogPresetsRequest(): boolean {
+  if (!useCatalogOverlay.getState().presetsRequested) return false;
+  useCatalogOverlay.setState({ presetsRequested: false });
+  return true;
 }
 
 /** Opens the catalog in the current project, or above Welcome and LightEdit. */
 export function openCatalog(openPresets = false) {
   if (!useAgents.getState().providers.length && isTauri()) void refreshProviders();
   if (!useProject.getState().project) {
-    useCatalogOverlay.setState({ input: { data: { openPresets } } });
+    useCatalogOverlay.setState({ input: {}, presetsRequested: openPresets });
     return;
   }
-  closeCatalogOverlay();
-  void editorService().openInput({ kind: CATALOG_KIND, key: CATALOG_KEY, data: { openPresets } }, { focus: true });
+  useCatalogOverlay.setState({ input: null, presetsRequested: openPresets });
+  void editorService().openInput({ kind: CATALOG_KIND, key: CATALOG_KEY }, { focus: true });
 }
 
 /** `isolation` overrides the draft's (a project without git can only use the local checkout). */
