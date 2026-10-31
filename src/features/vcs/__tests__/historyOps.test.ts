@@ -1,10 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Commit } from "@/bindings";
+
+const vcsOperation = vi.fn();
+
+vi.mock("@tauri-apps/api/core", () => ({
+  Channel: class {
+    onmessage = () => {};
+  },
+}));
+
+vi.mock("@/platform/ipc", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/platform/ipc")>();
+  return {
+    ...real,
+    commands: {
+      ...real.commands,
+      vcsOperation: (repo: string | null, _request: number, op: unknown, _onProgress: unknown) =>
+        vcsOperation(repo, op),
+    },
+  };
+});
+
 import { operationActions } from "../BranchWidget";
-import { controlLabel, inProgress, operationControls, operationTitle, validateTagName } from "../operations";
+import { cherryPick, controlLabel, inProgress, operationControls, operationTitle, validateTagName } from "../operations";
 import { suggestedPatchName } from "../patches";
 import { commitMenu } from "../GitLog";
 import { extendCommitSelection, selectCommit, selectedCommits, toggleCommitSelection, useGitLog } from "../logStore";
+import { useVcs } from "../store";
 
 const commit = (summary: string, id = "0123456789abcdef0123456789abcdef01234567"): Commit => ({
   id,
@@ -149,5 +171,41 @@ describe("Git Log commit actions", () => {
     );
     expect(suggestedPatchName({ kind: "commits", commits: [commit("a"), commit("b")] }, "x")).toBe("2_commits.patch");
     expect(suggestedPatchName({ kind: "changes", files: [] }, "///")).toBe("changes.patch");
+  });
+
+  describe("multi-repo cherryPick", () => {
+    beforeEach(() => {
+      vcsOperation.mockReset().mockResolvedValue({ status: "ok", data: null });
+      useVcs.setState({ root: "/p", roots: ["/p/a", "/p/b"], repo: "/p/a", remoteBusy: null, status: [] });
+      useGitLog.setState({ commits: [] });
+    });
+
+    it("cherry-picks commits from two repositories as two operations, each on its own repository", async () => {
+      const a2 = { ...commit("A2", "2".repeat(40)), timeMs: 200, repo: "/p/a" };
+      const a1 = { ...commit("A1", "1".repeat(40)), timeMs: 100, repo: "/p/a" };
+      const b2 = { ...commit("B2", "4".repeat(40)), timeMs: 400, repo: "/p/b" };
+      const b1 = { ...commit("B1", "3".repeat(40)), timeMs: 300, repo: "/p/b" };
+
+      await cherryPick([a2, a1, b2, b1]);
+
+      expect(vcsOperation.mock.calls).toEqual([
+        ["/p/a", { op: "cherryPick", commits: [a1.id, a2.id] }],
+        ["/p/b", { op: "cherryPick", commits: [b1.id, b2.id] }],
+      ]);
+    });
+
+    it("stops after the first repository that fails", async () => {
+      vcsOperation
+        .mockResolvedValueOnce({ status: "error", error: "conflict" })
+        .mockResolvedValueOnce({ status: "ok", data: null });
+      const a1 = { ...commit("A1", "1".repeat(40)), repo: "/p/a" };
+      const b1 = { ...commit("B1", "2".repeat(40)), repo: "/p/b" };
+
+      await cherryPick([a1, b1]);
+
+      expect(vcsOperation.mock.calls).toEqual([
+        ["/p/a", { op: "cherryPick", commits: [a1.id] }],
+      ]);
+    });
   });
 });

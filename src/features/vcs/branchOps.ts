@@ -288,8 +288,15 @@ export async function deleteBranch(name: string, repo: string | null = currentRe
 }
 
 /** Deletes a branch on its remote (`git push <remote> --delete <name>`); `name` is e.g. `origin/feature`. */
-export async function deleteRemoteBranch(name: string, repo: string | null = currentRepo()) {
-  const ok = await confirmDialog({
+export async function deleteRemoteBranch(
+  name: string,
+  repo: string | null = currentRepo(),
+  opts?: { confirm?: boolean },
+) {
+  const ok =
+    opts?.confirm === false
+      ? true
+      : await confirmDialog({
     title: "Delete Remote Branch",
     message: tx`Delete branch '${shortRemoteName(name)}' on the remote? The remote-tracking branch '${name}' is removed as well.`,
     okLabel: "Delete",
@@ -446,8 +453,11 @@ export async function updateInRepos(
 }
 
 /** Deletes local branch `name` in every repository of `roots`. */
-export async function deleteInRepos(name: string, roots: readonly string[]) {
-  const ok = await confirmDialog({
+export async function deleteInRepos(name: string, roots: readonly string[], opts?: { confirm?: boolean }) {
+  const ok =
+    opts?.confirm === false
+      ? true
+      : await confirmDialog({
     title: "Delete Branch",
     message: tx`Delete branch '${name}' in ${roots.length} repositories? Unmerged commits are discarded.`,
     okLabel: "Delete",
@@ -465,8 +475,11 @@ export async function deleteInRepos(name: string, roots: readonly string[]) {
 }
 
 /** Deletes remote branch `name` on its remote in every repository of `roots`. */
-export async function deleteRemoteInRepos(name: string, roots: readonly string[]) {
-  const ok = await confirmDialog({
+export async function deleteRemoteInRepos(name: string, roots: readonly string[], opts?: { confirm?: boolean }) {
+  const ok =
+    opts?.confirm === false
+      ? true
+      : await confirmDialog({
     title: "Delete Remote Branch",
     message: tx`Delete branch '${shortRemoteName(name)}' on the remote in ${roots.length} repositories? The remote-tracking branch '${name}' is removed as well.`,
     okLabel: "Delete",

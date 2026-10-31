@@ -351,6 +351,8 @@ async function notifyUpdated(updated: readonly UpdatedRange[]) {
 // Local history operations (continue / abort / cherry-pick / revert / reset)
 
 export interface GitOperationOptions {
+  /** Repository to run the operation in (default: `currentRepo()`). */
+  repo?: string | null;
   /** Status bar / balloon text while running, e.g. "Cherry-picking". */
   progress: string;
   /** Past-tense balloon on success, e.g. "Cherry-picked abc123"; a function is called after the status refreshed. */
@@ -388,13 +390,14 @@ export async function runGitOperation(op: GitOperation, opts: GitOperationOption
     actions: [{ label: "Cancel", run: cancelRemote }],
   });
   logConsole("cmd", `git ${describeOperation(op)}`);
-  const channel = new Channel<string>();
+  const channel = isTauri() ? new Channel<string>() : ({ onmessage: () => {} } as unknown as Channel<string>);
   channel.onmessage = (line) => {
     logConsole("out", line);
     task(line.trim() || null, false);
   };
   try {
-    await call(commands.vcsOperation(currentRepo(), request, op, channel));
+    const repo = opts.repo !== undefined ? opts.repo : currentRepo();
+    await call(commands.vcsOperation(repo, request, op, channel));
     let success = opts.success;
     if (typeof success === "function") {
       await refreshNow();

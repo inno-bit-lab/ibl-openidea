@@ -294,6 +294,7 @@ impl Host {
                     .join(&project_key),
                 models_file: self.data_dir.join("agents").join("models.json"),
                 custom_agents_dir: Some(self.config_dir.join("agents")),
+                managed_agents_dir: self.managed_agents_dir.clone(),
                 home_dir: dirs::home_dir(),
             },
             self.runtime.clone(),

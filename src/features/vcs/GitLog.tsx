@@ -103,7 +103,7 @@ import {
   filterFavoriteBranchTree,
   type BranchTreeNode,
 } from "./branches";
-import { chooseDateRange, chooseMany, choosePathInTree, promptText } from "./dialogs";
+import { chooseDateRange, chooseMany, choosePathInTree, confirmDialog, promptText } from "./dialogs";
 import { buildFileTree, dirKeys, type FileTreeNode } from "./fileTree";
 import styles from "./GitLog.module.css";
 import { tx } from "@/platform/i18n";
@@ -495,14 +495,32 @@ export function BranchesPanel({
   };
 
   const handleDeleteSelected = async () => {
+    if (!deletableBranches.length) return;
+    const batch = deletableBranches.length > 1;
+    if (batch) {
+      const list = deletableBranches
+        .map((n) => (n.branch!.remote ? tx`${n.branch!.name} (remote)` : n.branch!.name))
+        .join("\n");
+      const ok = await confirmDialog({
+        title: "Delete Branches",
+        message: tx`Delete the following branches?\n${list}`,
+        okLabel: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     for (const n of deletableBranches) {
       const b = n.branch!;
       if (multiRepo && n.repoRoots && n.repoRoots.length > 1) {
-        await (b.remote ? deleteRemoteInRepos(b.name, n.repoRoots) : deleteInRepos(b.name, n.repoRoots));
+        await (b.remote
+          ? deleteRemoteInRepos(b.name, n.repoRoots, { confirm: !batch })
+          : deleteInRepos(b.name, n.repoRoots, { confirm: !batch }));
       } else {
         const targetRepo =
           (multiRepo && n.repoRoots?.length === 1 ? n.repoRoots[0]! : singleTargetRepo) ?? undefined;
-        await (b.remote ? deleteRemoteBranch(b.name, targetRepo) : deleteBranch(b.name, targetRepo));
+        await (b.remote
+          ? deleteRemoteBranch(b.name, targetRepo, { confirm: !batch })
+          : deleteBranch(b.name, targetRepo));
       }
     }
   };

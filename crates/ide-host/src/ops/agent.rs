@@ -24,6 +24,7 @@ pub fn providers(host: &Host, window: &str) -> IdeResult<Vec<AgentProvider>> {
         Err(_) => Ok(ide_agent::providers_from(
             Some(&host.config_dir.join("agents")),
             &host.data_dir.join("agents").join("models.json"),
+            host.managed_agents_dir.as_deref(),
         )),
     }
 }
@@ -35,6 +36,7 @@ pub fn set_args(host: &Host, window: &str, provider: String, args: Vec<String>) 
         Err(_) => ide_agent::set_custom_args_in(
             &host.config_dir.join("agents"),
             &host.data_dir.join("agents").join("models.json"),
+            host.managed_agents_dir.as_deref(),
             &provider,
             &args,
         ),
@@ -122,10 +124,7 @@ pub async fn base_text(host: &Host, window: &str, task: String, path: IpcPath) -
 pub(crate) fn register(d: &mut Dispatcher) {
     d.add("agent_subscribe", |c| async move { subscribe(&c.host, &c.window, c.channel("onEvent")?) });
     d.add("agent_providers", |c| async move { providers(&c.host, &c.window) });
-    d.add(
-        "agent_set_args",
-        |c| async move { set_args(&c.host, &c.window, c.arg("provider")?, c.arg("args")?) },
-    );
+    d.add("agent_set_args", |c| async move { set_args(&c.host, &c.window, c.arg("provider")?, c.arg("args")?) });
     d.add("agent_complete", |c| async move {
         let config = c.arg::<Option<Vec<AgentConfigChoice>>>("config").ok().flatten().unwrap_or_default();
         complete(&c.host, &c.window, c.arg("provider")?, c.arg("prompt")?, config).await
