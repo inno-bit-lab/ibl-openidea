@@ -58,6 +58,7 @@ import {
   useCommit,
   type CommitTab,
 } from "./commitStore";
+import { suggestCommitMessage } from "./commitSuggest";
 import { pushAfterCommit } from "./commitUi";
 import { stashTabOf, stashTabs, type ContentTab } from "./gitTabs";
 import { openDiff, withChain, workingDiffData } from "./diffInput";
@@ -776,6 +777,10 @@ export function CommitMessageField({ included, runner }: { included: number; run
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyTick = useCommit((s) => s.historyTick);
   const checkProblems = useCommit((s) => s.checkProblems);
+  const status = useVcs((s) => s.status);
+  const checks = useCommitChecks();
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
   const { emptyError } = runner;
 
   // The failed checks concern what was about to be committed: editing it dismisses them.
@@ -800,6 +805,34 @@ export function CommitMessageField({ included, runner }: { included: number; run
   const margin = cfg.limitBody ? cfg.bodyLimit : cfg.subjectLimit;
   const showMargin = cfg.showRightMargin && (cfg.limitBody || cfg.limitSubject);
   const history = messageHistory();
+
+  /** Asks the agent chosen in Settings › Version Control › Commit for a message for the included changes. */
+  const suggest = async () => {
+    if (suggesting) return;
+    if (!cfg.suggestAgent) {
+      setSuggestError(tx("Choose an agent to suggest commit messages in the Commit settings."));
+      return;
+    }
+    setSuggesting(true);
+    setSuggestError(null);
+    try {
+      const text = await suggestCommitMessage({
+        agent: cfg.suggestAgent,
+        model: cfg.suggestModel,
+        thinking: cfg.suggestThinking,
+        rules: cfg.suggestRules,
+        subjectLimit: cfg.limitSubject ? cfg.subjectLimit : null,
+        included: planCommit(status, checks).included,
+        checks,
+      });
+      useCommit.setState({ message: text });
+      runner.clearEmptyError();
+    } catch (e) {
+      setSuggestError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   return (
     <>
@@ -830,6 +863,13 @@ export function CommitMessageField({ included, runner }: { included: number; run
             },
           }))}
         />
+        <IconButton
+          icon="toolwindow-agents"
+          title={suggesting ? "Suggesting a commit message…" : "Suggest Commit Message"}
+          size="small"
+          disabled={!included || suggesting}
+          onClick={() => void suggest()}
+        />
         <span className={styles.grow} />
         {tooLong && (
           <span className={clsx(styles.lineLen, styles.lineLenWarn)} title={tx("Subject line length")}>
@@ -852,6 +892,7 @@ export function CommitMessageField({ included, runner }: { included: number; run
             cfg.limitBody && cfg.wrapAtMargin ? wrapAtMargin(el.value, el.selectionStart, cfg.bodyLimit) : null;
           useCommit.setState({ message: wrapped?.text ?? el.value });
           runner.clearEmptyError();
+          setSuggestError(null);
           if (wrapped) requestAnimationFrame(() => el.setSelectionRange(wrapped.caret, wrapped.caret));
         }}
         onKeyDown={(e) => {
@@ -866,6 +907,23 @@ export function CommitMessageField({ included, runner }: { included: number; run
       {emptyError && (
         <div className={clsx(styles.inspections, styles.inspectionError)} role="alert">
           <T>Specify commit message</T>
+        </div>
+      )}
+      {suggestError && (
+        <div className={clsx(styles.inspections, styles.inspectionError)} role="alert">
+          {suggestError}
+          {!cfg.suggestAgent && (
+            <>
+              {" "}
+              <button
+                type="button"
+                className={styles.checkProblemLink}
+                onClick={() => void executeAction("file.settings", "vcs.commit")}
+              >
+                <T>Open Settings</T>
+              </button>
+            </>
+          )}
         </div>
       )}
       {problems.length > 0 && (
