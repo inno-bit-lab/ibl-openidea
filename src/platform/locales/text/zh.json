@@ -5305,5 +5305,9 @@
   "Untitled": "未命名",
   "e.g. --model sonnet": "例如 --model sonnet",
   "{name} (not installed)": "{name}（未安装）",
-  "{name} Copy": "{name} 副本"
+  "{name} Copy": "{name} 副本",
+  "Suggest Commit Message": "建议提交消息",
+  "Suggesting a commit message…": "正在建议提交消息…",
+  "Choose an agent to suggest commit messages in the Commit settings.": "请在“提交”设置中选择用于建议提交消息的智能体。",
+  "Open Settings": "打开设置"
 }

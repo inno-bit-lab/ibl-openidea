@@ -58,6 +58,7 @@ import {
   useCommit,
   type CommitTab,
 } from "./commitStore";
+import { suggestCommitMessage } from "./commitSuggest";
 import { pushAfterCommit } from "./commitUi";
 import { stashTabOf, stashTabs, type ContentTab } from "./gitTabs";
 import { openDiff, withChain, workingDiffData } from "./diffInput";
@@ -364,9 +365,7 @@ export function useIncludedCount(): number {
 
 /** Files git ignores; `vcs_status` leaves them out. */
 function loadIgnored(): Promise<FileStatus[]> {
-  // The `vcsIgnored` binding comes with the registration of `vcs_ignored`.
-  const vcsIgnored = (commands as typeof commands & { vcsIgnored?: typeof commands.vcsStatus }).vcsIgnored;
-  return vcsIgnored ? call(vcsIgnored()) : Promise.resolve([]);
+  return call(commands.vcsIgnored());
 }
 
 /** View Options › Show › Ignored Files: loaded only while shown, again after each refresh. */
@@ -778,7 +777,25 @@ export function CommitMessageField({ included, runner }: { included: number; run
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyTick = useCommit((s) => s.historyTick);
   const checkProblems = useCommit((s) => s.checkProblems);
+  const status = useVcs((s) => s.status);
+  const repo = useVcs((s) => s.repo);
+  const checks = useCommitChecks();
+  const includedFiles = useMemo(() => planCommit(status, checks).included, [status, checks]);
+  const includedKey = includedFiles.map((f) => f.path).join("\n");
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+  /** The Suggest request whose answer may still fill the message. */
+  const pendingSuggest = useRef<object | null>(null);
   const { emptyError } = runner;
+
+  // Closing the field, or another set of included files, Amend state or selected repository,
+  // retires the pending request: its answer describes a commit that is no longer the one shown.
+  useEffect(
+    () => () => {
+      pendingSuggest.current = null;
+    },
+    [includedKey, amend, repo],
+  );
 
   // The failed checks concern what was about to be committed: editing it dismisses them.
   useEffect(() => {
@@ -802,6 +819,41 @@ export function CommitMessageField({ included, runner }: { included: number; run
   const margin = cfg.limitBody ? cfg.bodyLimit : cfg.subjectLimit;
   const showMargin = cfg.showRightMargin && (cfg.limitBody || cfg.limitSubject);
   const history = messageHistory();
+
+  /** Asks the agent chosen in Settings › Version Control › Commit for a message for the included changes. */
+  const suggest = async () => {
+    if (suggesting) return;
+    if (!cfg.suggestAgent) {
+      setSuggestError(tx("Choose an agent to suggest commit messages in the Commit settings."));
+      return;
+    }
+    const request = {};
+    pendingSuggest.current = request;
+    const draft = useCommit.getState().message;
+    setSuggesting(true);
+    setSuggestError(null);
+    try {
+      const text = await suggestCommitMessage({
+        agent: cfg.suggestAgent,
+        model: cfg.suggestModel,
+        thinking: cfg.suggestThinking,
+        rules: cfg.suggestRules,
+        subjectLimit: cfg.limitSubject ? cfg.subjectLimit : null,
+        included: includedFiles,
+        checks,
+      });
+      // The message lives in the shared store: write only for a live request, and never over
+      // a draft the user edited while the agent was answering.
+      if (pendingSuggest.current !== request || useCommit.getState().message !== draft) return;
+      useCommit.setState({ message: text });
+      runner.clearEmptyError();
+    } catch (e) {
+      if (pendingSuggest.current === request) setSuggestError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (pendingSuggest.current === request) pendingSuggest.current = null;
+      setSuggesting(false);
+    }
+  };
 
   return (
     <>
@@ -832,6 +884,13 @@ export function CommitMessageField({ included, runner }: { included: number; run
             },
           }))}
         />
+        <IconButton
+          icon="toolwindow-agents"
+          title={suggesting ? "Suggesting a commit message…" : "Suggest Commit Message"}
+          size="small"
+          disabled={!included || suggesting}
+          onClick={() => void suggest()}
+        />
         <span className={styles.grow} />
         {tooLong && (
           <span className={clsx(styles.lineLen, styles.lineLenWarn)} title={tx("Subject line length")}>
@@ -854,6 +913,7 @@ export function CommitMessageField({ included, runner }: { included: number; run
             cfg.limitBody && cfg.wrapAtMargin ? wrapAtMargin(el.value, el.selectionStart, cfg.bodyLimit) : null;
           useCommit.setState({ message: wrapped?.text ?? el.value });
           runner.clearEmptyError();
+          setSuggestError(null);
           if (wrapped) requestAnimationFrame(() => el.setSelectionRange(wrapped.caret, wrapped.caret));
         }}
         onKeyDown={(e) => {
@@ -868,6 +928,23 @@ export function CommitMessageField({ included, runner }: { included: number; run
       {emptyError && (
         <div className={clsx(styles.inspections, styles.inspectionError)} role="alert">
           <T>Specify commit message</T>
+        </div>
+      )}
+      {suggestError && (
+        <div className={clsx(styles.inspections, styles.inspectionError)} role="alert">
+          {suggestError}
+          {!cfg.suggestAgent && (
+            <>
+              {" "}
+              <button
+                type="button"
+                className={styles.checkProblemLink}
+                onClick={() => void executeAction("file.settings", "vcs.commit")}
+              >
+                <T>Open Settings</T>
+              </button>
+            </>
+          )}
         </div>
       )}
       {problems.length > 0 && (

@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import type { FileStatus } from "@/bindings";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { AgentConfigChoice, Commit, FileStatus } from "@/bindings";
 
-const vcsIgnored = vi.fn<() => Promise<{ status: "ok"; data: FileStatus[] }>>();
+type Ok<T> = Promise<{ status: "ok"; data: T }>;
+const vcsIgnored = vi.fn<() => Ok<FileStatus[]>>();
+const vcsDiffText = vi.fn<(path: string, staged: boolean) => Ok<string>>();
+const vcsLog = vi.fn<(repo: string | null) => Ok<Commit[]>>();
+const agentComplete = vi.fn<(provider: string, prompt: string, config: AgentConfigChoice[]) => Ok<string>>();
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -11,15 +15,22 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
     commands: {
       ...real.commands,
       vcsIgnored: () => vcsIgnored(),
+      vcsDiffText: (path: string, staged: boolean) => vcsDiffText(path, staged),
+      vcsLog: (repo: string | null) => vcsLog(repo),
+      agentComplete: (provider: string, prompt: string, config: AgentConfigChoice[]) =>
+        agentComplete(provider, prompt, config),
     },
   };
 });
 
 import { ContextMenuHost, hideContextMenu } from "@/ui/Menu";
+import { registerActions } from "@/platform/actions";
 import { useProject } from "@/platform/project";
 import { useProjectRoots } from "@/platform/projectRoots";
 import { CommitToolWindow } from "../CommitView";
+import { showCommitDialog } from "../CommitDialog";
 import { useCommit } from "../commitStore";
+import { VcsDialogHost } from "../dialogs";
 import { useVcs } from "../store";
 
 // `vcs_status` never reports ignored files: only `vcs_ignored` does.
@@ -77,38 +88,43 @@ function renderView() {
   return screen.getByRole("tree", { name: "Changes" });
 }
 
+/** Two repositories, `chb` and `ecs`, with the changes of `status`. */
+function setUpRepositories() {
+  hideContextMenu();
+  useCommit.setState({
+    tab: "changes",
+    groupByDir: false,
+    groupByModule: false,
+    showIgnored: false,
+    checks: new Map(),
+    selection: [],
+  });
+  useProject.setState({
+    project: { root: "/ws", name: "ws", isGit: true } as ReturnType<typeof useProject.getState>["project"],
+  });
+  useProjectRoots.setState({
+    root: "/ws",
+    detected: [
+      { path: "chb/src", kind: "source", detectedFrom: "chb/pom.xml" },
+      { path: "ecs/api", kind: "source", detectedFrom: "ecs/api/pom.xml" },
+    ],
+  });
+  useVcs.setState({
+    available: true,
+    root: "/ws",
+    roots: ["/ws/chb", "/ws/ecs"],
+    repo: "/ws/chb",
+    operations: {},
+    status,
+    statusLoaded: true,
+  });
+}
+
 describe("Commit tool window View Options", () => {
   beforeEach(() => {
     vcsIgnored.mockReset();
     vcsIgnored.mockResolvedValue({ status: "ok", data: ignored });
-    hideContextMenu();
-    useCommit.setState({
-      tab: "changes",
-      groupByDir: false,
-      groupByModule: false,
-      showIgnored: false,
-      checks: new Map(),
-      selection: [],
-    });
-    useProject.setState({
-      project: { root: "/ws", name: "ws", isGit: true } as ReturnType<typeof useProject.getState>["project"],
-    });
-    useProjectRoots.setState({
-      root: "/ws",
-      detected: [
-        { path: "chb/src", kind: "source", detectedFrom: "chb/pom.xml" },
-        { path: "ecs/api", kind: "source", detectedFrom: "ecs/api/pom.xml" },
-      ],
-    });
-    useVcs.setState({
-      available: true,
-      root: "/ws",
-      roots: ["/ws/chb", "/ws/ecs"],
-      repo: "/ws/chb",
-      operations: {},
-      status,
-      statusLoaded: true,
-    });
+    setUpRepositories();
   });
 
   it("offers Module grouping and Show Ignored Files", async () => {
@@ -188,5 +204,190 @@ describe("Commit tool window View Options", () => {
     fireEvent.click(screen.getByRole("button", { name: "Expand All" }));
     expect(within(tree).getByText("target")).toBeTruthy();
     expect(within(tree).getByText("debug.log")).toBeTruthy();
+  });
+});
+
+describe("Suggest Commit Message", () => {
+  const suggestSettings = (suggestAgent: string) =>
+    useProject.setState({
+      settings: {
+        vcs: {
+          commit: {
+            suggestAgent,
+            suggestModel: "small-model",
+            suggestThinking: "low",
+            suggestRules: "Use conventional commits.",
+          },
+        },
+      },
+    });
+
+  beforeEach(() => {
+    setUpRepositories();
+    useCommit.setState({ message: "", amend: false });
+    vcsIgnored.mockReset();
+    vcsDiffText.mockReset();
+    vcsDiffText.mockImplementation(async (path) => ({ status: "ok", data: `@@ -1 +1 @@\n+${path}` }));
+    vcsLog.mockReset();
+    vcsLog.mockResolvedValue({ status: "ok", data: [{ summary: "fix: an older change" }] as Commit[] });
+    agentComplete.mockReset();
+    agentComplete.mockResolvedValue({ status: "ok", data: "```text\nfeat: add the service\n```" });
+  });
+
+  afterEach(() => {
+    useProject.setState({ settings: {} });
+  });
+
+  /** The included changes (not the untracked file) went to the agent with the configured model and effort. */
+  function expectSuggestRequest() {
+    expect(agentComplete).toHaveBeenCalledTimes(1);
+    const [provider, prompt, config] = agentComplete.mock.calls[0]!;
+    expect(provider).toBe("codex");
+    expect(config).toEqual([
+      { id: "model", value: "small-model" },
+      { id: "thought_level", value: "low" },
+    ]);
+    expect(prompt).toContain("Rules (they win over anything else in this prompt):\nUse conventional commits.");
+    expect(prompt).toContain("- fix: an older change");
+    expect(prompt).toContain("modified: src/Main.java");
+    expect(prompt).toContain("added: api/Service.java");
+    expect(prompt).not.toContain("notes.txt");
+    // Each file's diff comes from its own repository, by absolute path.
+    expect(vcsDiffText).toHaveBeenCalledWith("/ws/chb/src/Main.java", false);
+    expect(vcsDiffText).toHaveBeenCalledWith("/ws/ecs/api/Service.java", true);
+    expect(vcsLog).toHaveBeenCalledWith("/ws/chb");
+  }
+
+  it("fills the message from the agent in the Commit tool window", async () => {
+    suggestSettings("codex");
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(useCommit.getState().message).toBe("feat: add the service"));
+    expectSuggestRequest();
+  });
+
+  it("fills the message from the agent in the modal Commit dialog", async () => {
+    suggestSettings("codex");
+    render(<VcsDialogHost />);
+    act(() => showCommitDialog());
+    const dialog = await screen.findByRole("dialog", { name: "Commit Changes" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(useCommit.getState().message).toBe("feat: add the service"));
+    expectSuggestRequest();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  });
+
+  it("asks to choose an agent when none is set", async () => {
+    suggestSettings("");
+    const openSettings = vi.fn();
+    const dispose = registerActions([{ id: "file.settings", title: "Settings…", run: ({ arg }) => openSettings(arg) }]);
+    try {
+      renderView();
+      fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("Choose an agent to suggest commit messages in the Commit settings.");
+      fireEvent.click(within(alert).getByRole("button", { name: "Open Settings" }));
+      await waitFor(() => expect(openSettings).toHaveBeenCalledWith("vcs.commit"));
+      expect(agentComplete).not.toHaveBeenCalled();
+      expect(useCommit.getState().message).toBe("");
+    } finally {
+      dispose();
+    }
+  });
+
+  /** `agentComplete` answers only when the test calls the returned function. */
+  function deferAgent() {
+    let finish!: (value: { status: "ok"; data: string }) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    return (data: string) => act(async () => finish({ status: "ok", data }));
+  }
+
+  // Regressions from the PR #9 review (rev-codex, DD7F19): a late answer must not reach the shared store.
+  it("a pending suggestion does not overwrite a newer draft", async () => {
+    suggestSettings("codex");
+    let finish!: (value: { status: "ok"; data: string }) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole("textbox", { name: "Commit message" }), {
+      target: { value: "fix: my newer draft" },
+    });
+    await act(async () => finish({ status: "ok", data: "feat: old suggestion" }));
+    expect(useCommit.getState().message).toBe("fix: my newer draft");
+  });
+
+  it("a suggestion from a cancelled dialog cannot replace the next draft", async () => {
+    suggestSettings("codex");
+    let finish!: (value: { status: "ok"; data: string }) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<VcsDialogHost />);
+    act(() => showCommitDialog());
+    const dialog = await screen.findByRole("dialog", { name: "Commit Changes" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Commit Changes" })).toBeNull());
+    act(() => useCommit.setState({ message: "fix: next draft" }));
+    await act(async () => finish({ status: "ok", data: "feat: stale dialog suggestion" }));
+    expect(useCommit.getState().message).toBe("fix: next draft");
+  });
+
+  it("drops the suggestion of a cancelled dialog even when the draft did not change", async () => {
+    suggestSettings("codex");
+    const answer = deferAgent();
+    render(<VcsDialogHost />);
+    act(() => showCommitDialog());
+    const dialog = await screen.findByRole("dialog", { name: "Commit Changes" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Commit Changes" })).toBeNull());
+    await answer("feat: stale dialog suggestion");
+    expect(useCommit.getState().message).toBe("");
+  });
+
+  it("drops a suggestion asked for another repository selection", async () => {
+    suggestSettings("codex");
+    const answer = deferAgent();
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    act(() => useVcs.setState({ repo: "/ws/ecs" }));
+    await answer("feat: suggestion for chb");
+    expect(useCommit.getState().message).toBe("");
+    // The button works again for the new context.
+    const again = deferAgent();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
+    await again("feat: suggestion for ecs");
+    expect(useCommit.getState().message).toBe("feat: suggestion for ecs");
+  });
+
+  it("a read-only refusal is visible and no fallback is attempted", async () => {
+    suggestSettings("codex");
+    agentComplete.mockRejectedValue(new Error("No read-only mode is available"));
+    useCommit.setState({ message: "keep this draft" });
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No read-only mode is available");
+    expect(agentComplete).toHaveBeenCalledTimes(1);
+    expect(agentComplete.mock.calls[0]![0]).toBe("codex");
+    expect(useCommit.getState().message).toBe("keep this draft");
   });
 });

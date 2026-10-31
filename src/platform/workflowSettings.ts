@@ -226,7 +226,7 @@ export const DEFAULT_WORKFLOW: WorkflowSettings = {
     confirmation: {
       onCreate: "ask",
       onDelete: "ask",
-      showUpdateOptions: true,
+      showUpdateOptions: false,
       confirmDropCommits: true,
       onPatchCreated: "ask",
     },
