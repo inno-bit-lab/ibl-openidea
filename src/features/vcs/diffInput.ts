@@ -14,7 +14,7 @@ export type DiffSide =
   | { type: "worktree"; label?: string }
   /** Another file (Compare With…, Compare Files); editable like the working file. */
   | { type: "file"; path: string; label?: string }
-  | { type: "text"; text: string; label: string }
+  | { type: "text"; text: string; label: string; firstLine?: number }
   /** A Local History revision. */
   | { type: "history"; id: string; label: string };
 
@@ -133,7 +133,7 @@ export function workingDiffData(path: string, line?: number): DiffData {
   const st = statusOf(path);
   const kind = st ? effectiveKind(st) : null;
   const left: DiffSide =
-    kind === "untracked" || kind === "added"
+    kind === "untracked" || kind === "added" || kind === "ignored"
       ? { type: "text", text: "", label: "(does not exist)" }
       : st?.renamedFrom
         ? { type: "rev", rev: "HEAD", path: renamedFromPath(st) ?? undefined, label: `HEAD (${st.renamedFrom})` }

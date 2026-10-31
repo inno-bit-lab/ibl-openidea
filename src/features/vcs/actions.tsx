@@ -38,7 +38,9 @@ import {
   showRebaseDialog,
   showWorktrees,
 } from "./gitMenuDialogs";
-import { refreshNow, repoName } from "./store";
+import { showSelectionHistory } from "./SelectionHistory";
+import { stripSlash } from "./model";
+import { currentRepoRoot, refreshNow, repoName, repoOf, useVcs } from "./store";
 import { tx } from "@/platform/i18n";
 
 import { addToIgnore } from "./ignore";
@@ -58,6 +60,30 @@ function argPaths(arg: unknown): string[] | undefined {
   const p = argPath(arg);
   return p ? [p] : undefined;
 }
+
+/**
+ * Repositories an action argument names, with several in the project: `{ repo }`, `{ repos }`, or
+ * file / folder paths (the repository of each, or every repository inside a folder). `undefined`: none.
+ */
+function argRepos(arg: unknown): string[] | undefined {
+  if (arg && typeof arg === "object" && !Array.isArray(arg)) {
+    const { repo, repos } = arg as { repo?: unknown; repos?: unknown };
+    const list = Array.isArray(repos) ? repos.filter((r): r is string => typeof r === "string") : [];
+    if (list.length) return list;
+    if (typeof repo === "string") return [repo];
+  }
+  const roots = useVcs.getState().roots;
+  const paths = argPaths(arg);
+  if (!paths?.length || roots.length < 2) return undefined;
+  const found = new Set<string>();
+  for (const path of paths.map(stripSlash)) {
+    const inside = roots.filter((r) => r === path || r.startsWith(`${path}/`));
+    for (const r of inside.length ? inside : [repoOf(path, roots)]) if (r) found.add(r);
+  }
+  return found.size ? [...found] : undefined;
+}
+
+const argRepo = (arg: unknown): string | undefined => argRepos(arg)?.[0];
 
 /** The change tree is focused: the Commit window, or the Git window's Local Changes tab. */
 export const commitWindowFocused = () => {
@@ -100,6 +126,7 @@ const OPERATIONS: MenuItem[] = [
   { kind: "action", action: "vcs.rollback" },
   { kind: "separator" },
   { kind: "action", action: "vcs.showHistory" },
+  { kind: "action", action: "vcs.showHistoryForSelection" },
   { kind: "action", action: "vcs.annotate" },
   { kind: "action", action: "vcs.showDiff" },
   { kind: "separator" },
@@ -192,7 +219,13 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "git-push",
       when: VCS,
-      run: ({ arg }) => void showPushDialog(arg && typeof arg === "object" ? (arg as PushTarget) : {}),
+      // A push target (`{ branch, revision, repo, repos }`), else the repositories of the selected paths.
+      run: ({ arg }) =>
+        void showPushDialog(
+          arg && typeof arg === "object" && !Array.isArray(arg) && !("path" in arg)
+            ? (arg as PushTarget)
+            : { repos: argRepos(arg) },
+        ),
     },
     {
       id: "vcs.update",
@@ -201,7 +234,7 @@ export function registerVcsActions(): () => void {
       icon: "git-pull",
       when: VCS,
       keywords: ["pull"],
-      run: showUpdateDialog,
+      run: ({ arg }) => void showUpdateDialog({ repos: argRepos(arg) }),
     },
     {
       id: "vcs.pull",
@@ -209,7 +242,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "git-pull",
       when: VCS,
-      run: showPullDialog,
+      run: ({ arg }) => showPullDialog(argRepo(arg)),
     },
     {
       id: "vcs.merge",
@@ -217,7 +250,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["merge branch"],
-      run: showMergeDialog,
+      run: ({ arg }) => showMergeDialog(argRepo(arg)),
     },
     {
       id: "vcs.rebase",
@@ -225,7 +258,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["rebase branch"],
-      run: showRebaseDialog,
+      run: ({ arg }) => showRebaseDialog(argRepo(arg)),
     },
     {
       id: "vcs.manageRemotes",
@@ -233,7 +266,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["remote", "origin", "url"],
-      run: showManageRemotes,
+      run: ({ arg }) => showManageRemotes(argRepo(arg)),
     },
     {
       id: "vcs.newWorktree",
@@ -241,7 +274,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["worktree"],
-      run: () => showNewWorktree(),
+      run: ({ arg }) => showNewWorktree(undefined, argRepo(arg)),
     },
     {
       id: "vcs.worktrees",
@@ -249,7 +282,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       when: VCS,
       keywords: ["worktree"],
-      run: showWorktrees,
+      run: ({ arg }) => showWorktrees(argRepo(arg)),
     },
     {
       id: "vcs.fetch",
@@ -257,7 +290,7 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "git-fetch",
       when: VCS,
-      run: () => void runRemote({ op: "fetch" }, undefined, allRepos()),
+      run: ({ arg }) => void runRemote({ op: "fetch" }, undefined, argRepos(arg) ?? allRepos()),
     },
     {
       id: "vcs.refresh",
@@ -332,6 +365,40 @@ export function registerVcsActions(): () => void {
         const rev = await chooseRevision("Compare with Branch or Revision");
         if (!rev) return;
         await openDiff({ path, left: { type: "rev", rev, label: rev }, right: { type: "worktree" } });
+      },
+    },
+    {
+      id: "vcs.showCurrentRevision",
+      title: "Show Current Revision",
+      category: "Git",
+      icon: "commit",
+      when: VCS,
+      run: ({ arg }) => {
+        // The HEAD of the file's repository (the selected one without a file).
+        const path = contextPaths(arg)[0];
+        const repo = (path ? repoOf(path) : null) ?? currentRepoRoot();
+        const { branch, heads } = useVcs.getState();
+        const head = (repo ? heads[repo] : undefined) ?? branch;
+        if (!head) return;
+        const name = head.head ?? "HEAD";
+        const headLabel = head.headCommit ? `${name} (${head.headCommit.slice(0, 8)})` : name;
+        const commit = head.headCommit;
+        notifications().notify({
+          group: "vcs",
+          level: "info",
+          title: tx`Current revision: ${headLabel}`,
+          actions: commit
+            ? [
+                {
+                  label: "Show in Git Log",
+                  run: () => {
+                    showGitWindow();
+                    void revealCommit(commit, repo);
+                  },
+                },
+              ]
+            : undefined,
+        });
       },
     },
     {
@@ -445,6 +512,15 @@ export function registerVcsActions(): () => void {
       },
     },
     {
+      id: "vcs.showHistoryForSelection",
+      title: "Show History for Selection…",
+      category: "Git",
+      icon: "history",
+      when: VCS,
+      keywords: ["history", "selection", "line history"],
+      run: ({ arg }) => showSelectionHistory(arg),
+    },
+    {
       id: "vcs.showCommit",
       title: "Show Commit in Git Log",
       category: "Git",
@@ -483,14 +559,14 @@ export function registerVcsActions(): () => void {
       category: "Git",
       icon: "stash",
       when: VCS,
-      run: () => void stashChanges(),
+      run: ({ arg }) => void stashChanges(argRepo(arg)),
     },
     {
       id: "vcs.unstash",
       title: "Unstash Changes…",
       category: "Git",
       when: VCS,
-      run: () => showUnstashDialog(),
+      run: ({ arg }) => showUnstashDialog(0, argRepo(arg)),
     },
     {
       id: "vcs.resolveConflicts",

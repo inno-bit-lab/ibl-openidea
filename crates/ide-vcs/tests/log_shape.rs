@@ -73,6 +73,20 @@ fn date_order_follows_commit_time_and_reports_it() {
     let out = log(&h, LogQuery { order: LogOrder::Date, ..Default::default() });
     assert_eq!(ids(&out), vec![h.c3.clone(), h.m.clone(), h.c2.clone(), h.s1.clone(), h.c1.clone()]);
     assert_eq!(out[0].commit_time_ms, 5_000_000.0);
+
+    // A branch filter of the multi-repository Git window may name branches only some repositories
+    // have: the missing ones are left out, and a filter with none of them fails.
+    let subset = h
+        .repo
+        .log(&LogQuery {
+            branches: vec!["nonexistent-in-this-repo".into(), "side".into()],
+            order: LogOrder::Date,
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(ids(&subset), vec![h.s1.clone(), h.c1.clone()]);
+    let none = h.repo.log(&LogQuery { branches: vec!["nonexistent-in-this-repo".into()], ..Default::default() });
+    assert!(none.is_err());
 }
 
 #[test]

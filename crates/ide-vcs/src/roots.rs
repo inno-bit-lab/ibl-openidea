@@ -40,9 +40,6 @@ impl Repos {
     /// folders `skip` rejects are not searched).
     pub fn discover(project_root: &Path, skip: &dyn Fn(&Path) -> bool) -> IdeResult<Self> {
         let mut repos: Vec<Repo> = Vec::new();
-        if let Some(r) = Repo::discover(project_root)? {
-            repos.push(r);
-        }
         let mut stack: Vec<(PathBuf, usize)> = vec![(project_root.to_path_buf(), 0)];
         while let Some((dir, depth)) = stack.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -68,11 +65,25 @@ impl Repos {
                 }
             }
         }
+        // The repository containing `project_root` counts when it is the project root's own,
+        // or when nothing is nested (a folder of a monorepo). A folder of repositories that
+        // sits inside an outer repository is a workspace of its own: the outer one is left out.
+        if (project_root.join(".git").exists() || repos.is_empty())
+            && let Some(r) = Repo::discover(project_root)?
+            && (r.root() == project_root || repos.is_empty())
+            && !repos.iter().any(|x| x.root() == r.root())
+        {
+            repos.push(r);
+        }
         Ok(Self::new(repos, project_root))
     }
 
-    /// Only the repository containing `project_root` (the quick lookup on project open).
+    /// Only the repository containing `project_root` (the quick lookup on project open);
+    /// none for a folder of repositories, whose repositories [`Repos::discover`] finds.
     pub fn enclosing(project_root: &Path) -> IdeResult<Self> {
+        if !project_root.join(".git").exists() && has_direct_child_repo(project_root) {
+            return Ok(Self::default());
+        }
         Ok(Self::new(Repo::discover(project_root)?.into_iter().collect(), project_root))
     }
 
@@ -143,6 +154,13 @@ impl Repos {
     /// enclosing one's "untracked folder" entry for it is dropped. A repository that cannot
     /// be read (e.g. deleted since the last scan) is left out; fails only when all fail.
     pub fn status(&self) -> IdeResult<Vec<FileStatus>> {
+        self.status_with_ignored(false)
+    }
+
+    /// Like [`Repos::status`], with `include_ignored` also listing git-ignored files. A nested
+    /// repository's root is dropped from the enclosing one's entries whether untracked or
+    /// ignored there; the ignored files inside the nested repository come from its own status.
+    pub fn status_with_ignored(&self, include_ignored: bool) -> IdeResult<Vec<FileStatus>> {
         let mut out = Vec::new();
         let mut first_error = None;
         let mut read = 0;
@@ -153,7 +171,7 @@ impl Repos {
                 .map(|r| r.root())
                 .filter(|r| *r != repo.root() && r.starts_with(repo.root()))
                 .collect();
-            let status = match repo.status() {
+            let status = match repo.status_with_ignored(include_ignored) {
                 Ok(status) => {
                     read += 1;
                     status
@@ -165,9 +183,9 @@ impl Repos {
                 }
             };
             out.extend(status.into_iter().filter(|f| {
-                let untracked_root =
-                    f.unstaged == Some(crate::ChangeKind::Untracked) && nested.iter().any(|n| f.path.0 == *n);
-                !untracked_root
+                let nested_root = matches!(f.unstaged, Some(crate::ChangeKind::Untracked | crate::ChangeKind::Ignored))
+                    && nested.iter().any(|n| f.path.0 == *n);
+                !nested_root
             }));
         }
         match first_error {
@@ -175,6 +193,19 @@ impl Repos {
             _ => Ok(out),
         }
     }
+}
+
+/// `project_root` has a repository among its own (searched) child folders.
+fn has_direct_child_repo(project_root: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(project_root) else { return false };
+    entries.flatten().any(|entry| {
+        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            return false;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        !name.starts_with('.') && !SKIPPED.contains(&name.as_ref()) && entry.path().join(".git").exists()
+    })
 }
 
 /// Index of the innermost of `roots` containing `path`. With `strict`, a root equal to
@@ -254,5 +285,81 @@ mod tests {
         assert_eq!(repos.all().len(), 2);
         assert_eq!(repos.primary().unwrap().root(), root.join("a"), "the first when none contains the project root");
         assert!(repos.for_path(&root.join("c.txt")).is_none());
+    }
+
+    #[test]
+    fn multi_repo_folder_inside_outer_repository_ignores_ancestor_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = dunce::canonicalize(tmp.path()).unwrap();
+        git_init(&outer);
+        let workspace = outer.join("repos");
+        git_init(&workspace.join("chb"));
+        git_init(&workspace.join("ecs"));
+
+        assert!(Repos::enclosing(&workspace).unwrap().is_empty());
+        let repos = Repos::discover(&workspace, &|_| false).unwrap();
+        let roots: Vec<&Path> = repos.all().iter().map(|r| r.root()).collect();
+        assert_eq!(roots, [&workspace.join("chb"), &workspace.join("ecs")]);
+        assert_eq!(repos.primary().unwrap().root(), workspace.join("chb"));
+
+        // A plain folder of the outer repository still belongs to it.
+        std::fs::create_dir_all(outer.join("docs")).unwrap();
+        let docs = Repos::discover(&outer.join("docs"), &|_| false).unwrap();
+        assert_eq!(docs.all().iter().map(|r| r.root()).collect::<Vec<_>>(), [outer.as_path()]);
+        assert_eq!(Repos::enclosing(&outer.join("docs")).unwrap().primary().unwrap().root(), outer);
+    }
+
+    #[test]
+    fn workspace_roots_keep_the_ancestor_rule_per_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = dunce::canonicalize(tmp.path()).unwrap();
+        git_init(&outer);
+        git_init(&outer.join("left/a"));
+        git_init(&outer.join("right/b"));
+        std::fs::create_dir_all(outer.join("docs")).unwrap();
+
+        // Two folders of repositories: only their repositories.
+        let repos = Repos::discover_roots(&[outer.join("left"), outer.join("right")], &|_| false).unwrap();
+        let roots: Vec<&Path> = repos.all().iter().map(|r| r.root()).collect();
+        assert_eq!(roots, [&outer.join("left/a"), &outer.join("right/b")]);
+
+        // A plain folder of the outer repository next to them adds the outer one, once.
+        let roots =
+            Repos::discover_roots(&[outer.join("left"), outer.join("docs"), outer.join("docs")], &|_| false).unwrap();
+        let roots: Vec<&Path> = roots.all().iter().map(|r| r.root()).collect();
+        assert_eq!(roots, [outer.as_path(), &outer.join("left/a")]);
+    }
+
+    #[test]
+    fn ignored_status_lists_a_nested_repository_once_and_its_ignored_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(tmp.path()).unwrap();
+        git_init(&root);
+        git_init(&root.join("child"));
+        // The outer repository ignores the nested one's folder and its own logs.
+        std::fs::write(root.join(".gitignore"), "child/\n*.log\n").unwrap();
+        std::fs::write(root.join("build.log"), "x").unwrap();
+        std::fs::write(root.join("child/.gitignore"), "*.tmp\n").unwrap();
+        std::fs::write(root.join("child/cache.tmp"), "x").unwrap();
+        std::fs::write(root.join("child/main.rs"), "fn main() {}").unwrap();
+
+        let repos = Repos::discover(&root, &|_| false).unwrap();
+        let rel = |f: &FileStatus| f.path.0.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+        let ignored = |list: &[FileStatus]| -> Vec<String> {
+            list.iter().filter(|f| f.unstaged == Some(crate::ChangeKind::Ignored)).map(rel).collect()
+        };
+
+        let with = repos.status_with_ignored(true).unwrap();
+        let ignored_with = ignored(&with);
+        assert!(ignored_with.contains(&"build.log".to_owned()), "{ignored_with:?}");
+        assert!(ignored_with.contains(&"child/cache.tmp".to_owned()), "{ignored_with:?}");
+        assert!(
+            !ignored_with.iter().any(|p| p.trim_end_matches('/') == "child"),
+            "the nested root is listed by its own repository, not as ignored: {ignored_with:?}"
+        );
+        assert!(with.iter().any(|f| rel(f) == "child/main.rs"), "the nested repository's own changes stay");
+
+        // The plain status never reports ignored entries.
+        assert!(ignored(&repos.status().unwrap()).is_empty());
     }
 }

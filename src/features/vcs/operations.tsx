@@ -456,9 +456,9 @@ export function showCompareWithLocal(commit: Commit) {
   showDiffWithWorkingTree(commit.id, short(commit.id));
 }
 
-/** Files that differ between `rev` (a commit or branch) and the working tree. */
-export function showDiffWithWorkingTree(rev: string, label = rev) {
-  openDialog((close) => <ChangesBetweenDialog from={{ rev, label }} to={null} onClose={close} />);
+/** Files that differ between `rev` (a commit or branch) and the working tree of `repo` (default: the selected one). */
+export function showDiffWithWorkingTree(rev: string, label = rev, repo?: string) {
+  openDialog((close) => <ChangesBetweenDialog from={{ rev, label }} to={null} repo={repo} onClose={close} />);
 }
 
 /** IDEA's Compare Versions of two Git Log commits: files that differ between them, older first. */
@@ -472,10 +472,15 @@ export function showCompareVersions(older: Commit, newer: Commit) {
   ));
 }
 
-/** Files that differ between two revisions (e.g. two branches from Compare with Current). */
-export function showCompareRevisions(from: string, to: string, fromLabel = from, toLabel = to) {
+/** Files that differ between two revisions (e.g. two branches from Compare with Current) of `repo` (default: the selected one). */
+export function showCompareRevisions(from: string, to: string, fromLabel = from, toLabel = to, repo?: string) {
   openDialog((close) => (
-    <ChangesBetweenDialog from={{ rev: from, label: fromLabel }} to={{ rev: to, label: toLabel }} onClose={close} />
+    <ChangesBetweenDialog
+      from={{ rev: from, label: fromLabel }}
+      to={{ rev: to, label: toLabel }}
+      repo={repo}
+      onClose={close}
+    />
   ));
 }
 
@@ -484,10 +489,21 @@ interface Revision {
   label: string;
 }
 
-/** Files that differ between `from` and `to` (`null`: the working tree). */
-function ChangesBetweenDialog({ from, to, onClose }: { from: Revision; to: Revision | null; onClose: () => void }) {
-  const [root] = useState(currentRepoRoot);
-  const [repo] = useState(currentRepo);
+/** Files that differ between `from` and `to` (`null`: the working tree), in `repo` (default: the selected one). */
+function ChangesBetweenDialog({
+  from,
+  to,
+  repo: target,
+  onClose,
+}: {
+  from: Revision;
+  to: Revision | null;
+  repo?: string;
+  onClose: () => void;
+}) {
+  // Read once: later selections of another repository do not move an open dialog.
+  const [root] = useState(() => target ?? currentRepoRoot());
+  const [repo] = useState(() => target ?? currentRepo());
   const [files, setFiles] = useState<ChangedFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState(0);

@@ -22,7 +22,7 @@ pub(crate) fn branch_info(r: &Repo) -> IdeResult<BranchInfo> {
     {
         info.upstream = Some(upstream_name);
         if let (Some(local), Some(up)) = (head_commit, upstream_id) {
-            let (a, b) = ahead_behind(&repo, local, up)?;
+            let (a, b) = ahead_behind(&repo, local, up).unwrap_or((0, 0));
             info.ahead = a;
             info.behind = b;
         }
@@ -92,7 +92,7 @@ pub(crate) fn branches(r: &Repo) -> IdeResult<Vec<Branch>> {
     let mut out = Vec::new();
 
     for reference in platform.local_branches().map_err(gx)? {
-        let mut reference = reference.map_err(gx)?;
+        let Ok(mut reference) = reference else { continue };
         let full = reference.name().to_owned();
         let Ok(id) = reference.peel_to_id().map(|id| id.detach()) else { continue };
         let current = head_name.as_ref().is_some_and(|h| h == &full);
@@ -109,7 +109,7 @@ pub(crate) fn branches(r: &Repo) -> IdeResult<Vec<Branch>> {
         if let Some((up, up_id)) = upstream_of(&repo, full.as_ref()) {
             branch.upstream = Some(up);
             if let Some(up_id) = up_id {
-                let (a, b) = ahead_behind(&repo, id, up_id)?;
+                let (a, b) = ahead_behind(&repo, id, up_id).unwrap_or((0, 0));
                 branch.ahead = a;
                 branch.behind = b;
             }
@@ -117,7 +117,7 @@ pub(crate) fn branches(r: &Repo) -> IdeResult<Vec<Branch>> {
         out.push(branch);
     }
     for reference in platform.remote_branches().map_err(gx)? {
-        let mut reference = reference.map_err(gx)?;
+        let Ok(mut reference) = reference else { continue };
         let full = reference.name().to_owned();
         // Skip `refs/remotes/<remote>/HEAD` symbolic pointers.
         if full.as_bstr().ends_with(b"/HEAD") {

@@ -36,8 +36,11 @@ import {
   buildChangeTree,
   checkOf,
   filesOf,
+  groupOf,
   ignoreTargets,
+  ignoredCountSummary,
   isPartiallyStaged,
+  isStatusDir,
   planCommit,
   toggledCheck,
   type ChangeNode,
@@ -46,12 +49,21 @@ import { applyStash, commitChanges, dropStash, showUnstashDialog, stashChanges }
 import { CommitOptionsPopup } from "./CommitOptions";
 import { DEFAULT_LIST_NAME, useChangelists, withListDefaults } from "./changelists";
 import { moveToChangelist } from "./changelistsUi";
-import { messageHistory, setAmend, setGroupByDir, useCommit, type CommitTab } from "./commitStore";
+import {
+  messageHistory,
+  setAmend,
+  setGroupByDir,
+  setGroupByModule,
+  setShowIgnored,
+  useCommit,
+  type CommitTab,
+} from "./commitStore";
 import { pushAfterCommit } from "./commitUi";
 import { stashTabOf, stashTabs, type ContentTab } from "./gitTabs";
 import { openDiff, withChain, workingDiffData } from "./diffInput";
 import { KIND_COLOR, KIND_LABEL, fileCount, formatTime, stashLabel, stripSlash } from "./model";
 import { call, commands } from "@/platform/ipc";
+import { useProjectModules } from "@/platform/projectRoots";
 import type { FileStatus } from "@/bindings";
 import { OperationBanner } from "./operations";
 import { ShelfPanel, loadShelves, useShelf } from "./shelf";
@@ -163,7 +175,12 @@ const bottomLeft = (el: HTMLElement) => {
 
 /** Opens a file's diff; F7 continues through the other files of its group, in tree order. */
 function openNode(n: ChangeNode, roots: readonly ChangeNode[]) {
-  if (n.type !== "file" || !n.path) return;
+  if (n.type !== "file" || !n.path || isStatusDir(n.files[0]!)) return;
+  // Ignored files have no diff: they open in the editor.
+  if (n.group === "ignored") {
+    void editorService().openFile(n.path, { focus: true });
+    return;
+  }
   const group = roots.find((g) => g.files.some((f) => f.path === n.files[0]?.path)) ?? null;
   const paths: string[] = [];
   const walk = (ns: readonly ChangeNode[]) =>
@@ -215,9 +232,27 @@ export function listMenu(id: string, active: boolean, files: readonly FileStatus
 }
 
 function nodeMenu(nodes: ChangeNode[], repos: readonly string[]): MenuItem[] {
-  const files = filesOf(nodes);
+  // Ignored files are only shown: none of the actions on changes applies to them.
+  if (nodes.every((n) => n.group === "ignored")) {
+    const ignored = filesOf(nodes).map((f) => stripSlash(f.path));
+    const file = nodes.find((n) => n.type === "file" && !isStatusDir(n.files[0]!));
+    return [
+      {
+        label: "Jump to Source",
+        icon: "external-link",
+        shortcut: "F4",
+        disabled: !file?.path,
+        run: () => file?.path && void editorService().openFile(file.path, { focus: true }),
+      },
+      { kind: "separator" },
+      { kind: "action", action: "vcs.localHistory", arg: file?.path },
+      { kind: "separator" },
+      { label: "Copy Path", icon: "copy", run: () => void navigator.clipboard?.writeText(ignored.join("\n")) },
+    ];
+  }
+  const files = filesOf(nodes).filter((f) => groupOf(f));
   const paths = files.map((f) => f.path);
-  const first = nodes.find((n) => n.type === "file");
+  const first = nodes.find((n) => n.type === "file" && n.group !== "ignored");
   const untracked = files.filter((f) => f.unstaged === "untracked");
   const toIgnore = ignoreTargets(nodes, repos);
   const conflicted = files.filter((f) => f.unstaged === "conflicted");
@@ -327,6 +362,30 @@ export function useIncludedCount(): number {
   return useMemo(() => planCommit(status, checks).included.length, [status, checks]);
 }
 
+/** Files git ignores; `vcs_status` leaves them out. */
+function loadIgnored(): Promise<FileStatus[]> {
+  // The `vcsIgnored` binding comes with the registration of `vcs_ignored`.
+  const vcsIgnored = (commands as typeof commands & { vcsIgnored?: typeof commands.vcsStatus }).vcsIgnored;
+  return vcsIgnored ? call(vcsIgnored()) : Promise.resolve([]);
+}
+
+/** View Options › Show › Ignored Files: loaded only while shown, again after each refresh. */
+function useIgnoredFiles(shown: boolean): FileStatus[] {
+  const version = useVcs((s) => s.version);
+  const [ignored, setIgnored] = useState<FileStatus[]>([]);
+  useEffect(() => {
+    if (!shown) return;
+    let live = true;
+    void loadIgnored()
+      .then((files) => live && setIgnored(files))
+      .catch(() => live && setIgnored([]));
+    return () => {
+      live = false;
+    };
+  }, [shown, version]);
+  return ignored;
+}
+
 /** The Commit tool window's Commit tab: changes with inclusion checkboxes above the message. */
 function ChangesPanel() {
   const included = useIncludedCount();
@@ -352,20 +411,29 @@ export function ChangesTree({ mode }: { mode: "commit" | "local" | "dialog" }) {
   const status = useVcs((s) => s.status);
   const root = useVcs((s) => s.root) ?? "";
   const groupByDir = useCommit((s) => s.groupByDir);
+  const groupByModule = useCommit((s) => s.groupByModule);
+  const showIgnored = useCommit((s) => s.showIgnored);
+  const modules = useProjectModules();
+  const ignored = useIgnoredFiles(showIgnored);
   const lists = useChangelists((s) => s.state);
   const checks = useCommitChecks();
   const checkboxes = mode !== "local";
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  // IDEA starts with Unversioned Files collapsed.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(["group:unversioned"]));
+  // IDEA starts with Unversioned Files and Ignored Files collapsed.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(["group:unversioned", "group:ignored"]));
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const treeRef = useRef<TreeHandle>(null);
   const viewRef = useRef<HTMLButtonElement>(null);
 
   const repos = useVcs((s) => s.roots);
   const roots = useMemo(
-    () => buildChangeTree(status, root, groupByDir, lists, repos),
-    [status, root, groupByDir, lists, repos],
+    () =>
+      buildChangeTree(showIgnored ? [...status, ...ignored] : status, root, groupByDir, lists, repos, {
+        groupByModule,
+        modules,
+        showIgnored,
+      }),
+    [status, ignored, root, groupByDir, groupByModule, modules, showIgnored, lists, repos],
   );
   const [byKey, parents] = useMemo(() => {
     const m = new Map<string, ChangeNode>();
@@ -406,7 +474,8 @@ export function ChangesTree({ mode }: { mode: "commit" | "local" | "dialog" }) {
   }, [status]);
 
   const toggle = useCallback((nodes: ChangeNode[]) => {
-    const files = filesOf(nodes);
+    const files = filesOf(nodes).filter((f) => groupOf(f));
+    if (!files.length) return;
     const { status: st, root: r } = useVcs.getState();
     const cur = withListDefaults(st, r ?? "", useChangelists.getState().state, useCommit.getState().checks);
     const agg = aggregateCheck(files, cur);
@@ -437,6 +506,10 @@ export function ChangesTree({ mode }: { mode: "commit" | "local" | "dialog" }) {
             showContextMenu(bottomLeft(viewRef.current), [
               { kind: "header", label: "Group By" },
               { label: "Directory", checked: groupByDir, run: () => setGroupByDir(!groupByDir) },
+              { label: "Module", checked: groupByModule, run: () => setGroupByModule(!groupByModule) },
+              { kind: "separator" },
+              { kind: "header", label: "Show" },
+              { label: "Ignored Files", checked: showIgnored, run: () => setShowIgnored(!showIgnored) },
             ])
           }
         />
@@ -468,7 +541,7 @@ export function ChangesTree({ mode }: { mode: "commit" | "local" | "dialog" }) {
               void executeAction("vcs.changelist.delete", group.changelist);
             }
           } else if (e.key === "F4") {
-            const n = selectedNodes().find((x) => x.type === "file");
+            const n = selectedNodes().find((x) => x.type === "file" && !isStatusDir(x.files[0]!));
             if (n?.path) {
               e.preventDefault();
               void editorService().openFile(n.path, { focus: true });
@@ -569,7 +642,7 @@ export function ChangesTree({ mode }: { mode: "commit" | "local" | "dialog" }) {
                 className={clsx(styles.nodeRow, n.type === "group" && dropTarget === n.changelist && styles.dropTarget)}
                 {...dnd}
               >
-                {checkboxes && (
+                {checkboxes && n.group !== "ignored" && (
                   <CheckMark
                     checked={agg.checked}
                     indeterminate={agg.indeterminate}
@@ -579,13 +652,25 @@ export function ChangesTree({ mode }: { mode: "commit" | "local" | "dialog" }) {
                 )}
                 {n.type === "group" ? null : (
                   <Icon
-                    name={n.type === "dir" ? (st.expanded ? "folder-open" : "folder") : fileIconName(n.label)}
+                    name={
+                      n.type === "module"
+                        ? "module"
+                        : n.type === "dir" || isStatusDir(n.files[0]!)
+                          ? st.expanded
+                            ? "folder-open"
+                            : "folder"
+                          : fileIconName(n.label)
+                    }
                     size={16}
                     className={styles.icon}
                   />
                 )}
                 {label}
-                {n.type === "group" && <span className={styles.detail}>{fileCount(n.files.length)}</span>}
+                {n.type === "group" && (
+                  <span className={styles.detail}>
+                    {n.group === "ignored" ? ignoredCountSummary(n.files) : fileCount(n.files.length)}
+                  </span>
+                )}
                 {n.type === "file" && n.files[0] && isPartiallyStaged(n.files[0]) && (
                   <span className={styles.partial} title={tx("Partially staged: only staged hunks are committed")}>
                     <T>partial</T>

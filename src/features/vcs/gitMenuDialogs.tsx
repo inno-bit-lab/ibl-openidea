@@ -1,7 +1,7 @@
 /** Git menu dialogs: Pull…, Merge…, Rebase…, Manage Remotes… and Worktrees. */
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import type { Branch, MergeOptions, Remote, Worktree } from "@/bindings";
+import type { Branch, BranchInfo, MergeOptions, Remote, Worktree } from "@/bindings";
 import { executeAction } from "@/platform/actions";
 import { call, commands } from "@/platform/ipc";
 import { notifications } from "@/workbench/contributions";
@@ -81,19 +81,67 @@ function MergeFlags({
   );
 }
 
-function useBranches(): Branch[] {
-  const [repo] = useState(currentRepo);
-  const [branches, setBranches] = useState<Branch[]>([]);
+/** The repository a Git dialog acts on: `initial` when it is one of the project's, else the selected one. */
+export function useDialogRepo(initial?: string | null) {
+  const roots = useVcs((s) => s.roots);
+  const [repo, setRepo] = useState<string | null>(() =>
+    initial && useVcs.getState().roots.includes(initial) ? initial : currentRepo(),
+  );
+  return { repo, roots, setRepo };
+}
+
+/** A Git dialog's repository picker; nothing in a single-repository project. */
+export function RepoSelect({
+  roots,
+  value,
+  onChange,
+}: {
+  roots: readonly string[];
+  value: string | null;
+  onChange: (repo: string) => void;
+}) {
+  if (roots.length < 2) return null;
+  return (
+    <>
+      <div className={styles.fieldLabel}>
+        <T>Repository:</T>
+      </div>
+      <Select
+        aria-label="Repository"
+        value={value ?? roots[0] ?? null}
+        options={roots.map((r) => ({ value: r, label: repoName(r), detail: r, icon: "folder" }))}
+        onChange={onChange}
+      />
+    </>
+  );
+}
+
+/** `load(repo)` once per repository the dialog shows; `undefined` until it settles. */
+function useRepoValue<T>(repo: string | null, load: (repo: string | null) => Promise<T>): T | undefined {
+  const [value, setValue] = useState<{ repo: string | null; value: T }>();
   useEffect(() => {
     let live = true;
-    void call(commands.vcsBranches(repo))
-      .then((b) => live && setBranches(b))
+    void load(repo)
+      .then((v) => live && setValue({ repo, value: v }))
       .catch(() => undefined);
     return () => {
       live = false;
     };
-  }, []);
-  return branches;
+  }, [repo]);
+  return value && value.repo === repo ? value.value : undefined;
+}
+
+const NO_BRANCHES: Branch[] = [];
+
+function useBranches(repo: string | null): Branch[] {
+  return useRepoValue(repo, (r) => call(commands.vcsBranches(r))) ?? NO_BRANCHES;
+}
+
+/** `repo`'s current branch and upstream (the selected repository's at once, the others' once read). */
+function useBranchInfo(repo: string | null): BranchInfo | null {
+  const [selected] = useState(() => ({ repo: currentRepo(), info: useVcs.getState().branch }));
+  const read = useRepoValue(repo, (r) => call(commands.vcsBranchInfo(r)));
+  return read ?? (repo === selected.repo ? selected.info : null);
 }
 
 const branchOptions = (list: readonly Branch[]): SelectOption[] =>
@@ -109,14 +157,14 @@ export function remoteBranchesOf(branches: readonly Branch[], remote: string): s
 
 // --- Pull -------------------------------------------------------------------
 
-export function showPullDialog() {
-  openDialog((close) => <PullDialog onClose={close} />);
+export function showPullDialog(repo?: string | null) {
+  openDialog((close) => <PullDialog initialRepo={repo} onClose={close} />);
 }
 
-function PullDialog({ onClose }: { onClose: () => void }) {
-  const [repo] = useState(currentRepo);
-  const [info] = useState(() => useVcs.getState().branch);
-  const branches = useBranches();
+function PullDialog({ initialRepo, onClose }: { initialRepo?: string | null; onClose: () => void }) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
+  const info = useBranchInfo(repo);
+  const branches = useBranches(repo);
   const [remotes, setRemotes] = useState<Remote[] | null>(null);
   const [remote, setRemote] = useState<string | null>(null);
   const [chosenBranch, setBranch] = useState<string | null>(null);
@@ -136,7 +184,7 @@ function PullDialog({ onClose }: { onClose: () => void }) {
     return () => {
       alive = false;
     };
-  }, [info?.upstream]);
+  }, [repo, info?.upstream]);
 
   const remoteBranches = useMemo(() => (remote ? remoteBranchesOf(branches, remote) : []), [branches, remote]);
   // Default: the upstream's branch, else the same name as the current branch.
@@ -178,6 +226,7 @@ function PullDialog({ onClose }: { onClose: () => void }) {
       ]}
     >
       <div className={styles.form}>
+        <RepoSelect roots={roots} value={repo} onChange={setRepo} />
         {remotes && !remotes.length ? (
           <div className={styles.hint}>
             <T>No remotes are configured. Add one with Git › Manage Remotes….</T>
@@ -215,14 +264,14 @@ function PullDialog({ onClose }: { onClose: () => void }) {
 
 // --- Merge ------------------------------------------------------------------
 
-export function showMergeDialog() {
-  openDialog((close) => <MergeDialog onClose={close} />);
+export function showMergeDialog(repo?: string | null) {
+  openDialog((close) => <MergeDialog initialRepo={repo} onClose={close} />);
 }
 
-function MergeDialog({ onClose }: { onClose: () => void }) {
-  const [repo] = useState(currentRepo);
-  const [head] = useState(() => useVcs.getState().branch?.head ?? null);
-  const branches = useBranches();
+function MergeDialog({ initialRepo, onClose }: { initialRepo?: string | null; onClose: () => void }) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
+  const head = useBranchInfo(repo)?.head ?? null;
+  const branches = useBranches(repo);
   const [branch, setBranch] = useState<string | null>(null);
   const [flags, setFlags] = useState<Set<MergeFlag>>(() => new Set());
   const [withMessage, setWithMessage] = useState(false);
@@ -257,6 +306,14 @@ function MergeDialog({ onClose }: { onClose: () => void }) {
       ]}
     >
       <div className={styles.form}>
+        <RepoSelect
+          roots={roots}
+          value={repo}
+          onChange={(r) => {
+            setRepo(r);
+            setBranch(null);
+          }}
+        />
         <div className={styles.fieldLabel}>
           <T>Branch to merge:</T>
         </div>
@@ -287,14 +344,14 @@ function MergeDialog({ onClose }: { onClose: () => void }) {
 
 // --- Rebase -----------------------------------------------------------------
 
-export function showRebaseDialog() {
-  openDialog((close) => <RebaseDialog onClose={close} />);
+export function showRebaseDialog(repo?: string | null) {
+  openDialog((close) => <RebaseDialog initialRepo={repo} onClose={close} />);
 }
 
-function RebaseDialog({ onClose }: { onClose: () => void }) {
-  const [repo] = useState(currentRepo);
-  const [head] = useState(() => useVcs.getState().branch?.head ?? null);
-  const branches = useBranches();
+function RebaseDialog({ initialRepo, onClose }: { initialRepo?: string | null; onClose: () => void }) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
+  const head = useBranchInfo(repo)?.head ?? null;
+  const branches = useBranches(repo);
   const [upstream, setUpstream] = useState<string | null>(null);
   const [useOnto, setUseOnto] = useState(false);
   const [onto, setOnto] = useState<string | null>(null);
@@ -339,6 +396,15 @@ function RebaseDialog({ onClose }: { onClose: () => void }) {
       ]}
     >
       <div className={styles.form}>
+        <RepoSelect
+          roots={roots}
+          value={repo}
+          onChange={(r) => {
+            setRepo(r);
+            setUpstream(null);
+            setOnto(null);
+          }}
+        />
         <div className={styles.fieldLabel}>
           {useOnto ? tx`Rebase commits of ${head ?? "HEAD"} not on:` : `Rebase ${head ?? "HEAD"} onto:`}
         </div>
@@ -374,47 +440,83 @@ export function validateRemoteName(name: string, existing: readonly string[]): s
   return null;
 }
 
-export function showManageRemotes() {
-  openDialog((close) => <RemotesDialog onClose={close} />);
+export function showManageRemotes(repo?: string | null) {
+  openDialog((close) => <RemotesDialog initialRepo={repo} onClose={close} />);
 }
 
-function RemotesDialog({ onClose }: { onClose: () => void }) {
-  const [repo] = useState(currentRepo);
-  const [remotes, setRemotes] = useState<Remote[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+/** A remote of one of the dialog's repositories. */
+interface RemoteRef {
+  repo: string | null;
+  name: string;
+}
+
+function RemotesDialog({ initialRepo, onClose }: { initialRepo?: string | null; onClose: () => void }) {
+  const { repo: initial, roots } = useDialogRepo(initialRepo);
+  // Several repositories: each one's remotes under its name.
+  const [repos] = useState<Array<string | null>>(() => (roots.length > 1 ? [...roots] : [initial]));
+  const grouped = repos.length > 1;
+  const [byRepo, setByRepo] = useState<ReadonlyMap<string | null, Remote[]>>(() => new Map());
+  const [selected, setSelected] = useState<RemoteRef | null>(null);
+  // The repository Add Remote… defaults to: the one shown first, then the last clicked.
+  const [active, setActive] = useState<string | null>(initial);
   const [error, setError] = useState<string | null>(null);
+  const remotesOf = (repo: string | null) => byRepo.get(repo) ?? [];
+  // A repository whose remotes cannot be read shows none and reports the error.
   const reload = () =>
-    call(commands.vcsRemotes(repo))
-      .then((list) => {
-        setRemotes(list);
-        setSelected((s) => (s && list.some((r) => r.name === s) ? s : (list[0]?.name ?? null)));
-      })
-      .catch((e) => setError(errorMessage(e)));
+    Promise.all(
+      repos.map((r) =>
+        call(commands.vcsRemotes(r)).then(
+          (list) => [r, list] as const,
+          (e: unknown) => {
+            setError(errorMessage(e));
+            return [r, [] as Remote[]] as const;
+          },
+        ),
+      ),
+    ).then((entries) => {
+      const next = new Map(entries);
+      setByRepo(next);
+      setSelected((s) => {
+        if (s && next.get(s.repo)?.some((r) => r.name === s.name)) return s;
+        const repo = s ? s.repo : active;
+        const first = next.get(repo)?.[0];
+        return first ? { repo, name: first.name } : null;
+      });
+    });
   useEffect(() => {
     void reload();
   }, []);
 
-  const apply = async (edit: Parameters<typeof commands.vcsEditRemote>[1]) => {
+  const apply = async (repo: string | null, edit: Parameters<typeof commands.vcsEditRemote>[1]) => {
     try {
       await call(commands.vcsEditRemote(repo, edit));
       setError(null);
     } catch (e) {
       setError(errorMessage(e));
     }
+    setActive(repo);
+    if (edit.op !== "remove") setSelected({ repo, name: edit.op === "add" ? edit.name : edit.new_name });
     await reload();
     void loadBranches().catch(() => undefined);
   };
-  const edit = (remote?: Remote) =>
+  const edit = (target?: RemoteRef & { remote: Remote }) =>
     openDialog((close) => (
       <RemoteEditDialog
-        remote={remote}
-        existing={remotes.map((r) => r.name).filter((n) => n !== remote?.name)}
+        remote={target?.remote}
+        roots={target || !grouped ? [] : (repos as string[])}
+        initialRepo={target?.repo ?? active}
+        existing={(repo) =>
+          remotesOf(repo)
+            .map((r) => r.name)
+            .filter((n) => n !== target?.name)
+        }
         onDone={(r) => {
           close();
           if (!r) return;
           void apply(
-            remote
-              ? { op: "edit", name: remote.name, new_name: r.name, url: r.url }
+            target ? target.repo : r.repo,
+            target
+              ? { op: "edit", name: target.name, new_name: r.name, url: r.url }
               : { op: "add", name: r.name, url: r.url },
           );
         }}
@@ -424,13 +526,33 @@ function RemotesDialog({ onClose }: { onClose: () => void }) {
     if (!selected) return;
     const ok = await confirmDialog({
       title: "Remove Remote",
-      message: tx`Remove remote '${selected}'? Its remote-tracking branches are deleted.`,
+      message: tx`Remove remote '${selected.name}'? Its remote-tracking branches are deleted.`,
       okLabel: "Remove",
       danger: true,
     });
-    if (ok) await apply({ op: "remove", name: selected });
+    if (ok) await apply(selected.repo, { op: "remove", name: selected.name });
   };
-  const current = remotes.find((r) => r.name === selected);
+  const current = selected && remotesOf(selected.repo).find((r) => r.name === selected.name);
+  const remoteRow = (repo: string | null, r: Remote) => {
+    const isSelected = selected?.repo === repo && selected.name === r.name;
+    return (
+      <button
+        key={r.name}
+        type="button"
+        role="option"
+        aria-selected={isSelected}
+        className={clsx(styles.manageRow, isSelected && styles.manageRowSelected)}
+        onClick={() => {
+          setActive(repo);
+          setSelected({ repo, name: r.name });
+        }}
+        onDoubleClick={() => edit({ repo, name: r.name, remote: r })}
+      >
+        <span className={clsx(styles.fileName, grouped && styles.remoteNested)}>{r.name}</span>
+        <span className={clsx(styles.fileDir, styles.mono)}>{r.url}</span>
+      </button>
+    );
+  };
 
   return (
     <Dialog
@@ -450,28 +572,40 @@ function RemotesDialog({ onClose }: { onClose: () => void }) {
             disabled={!current}
             onClick={() => void remove()}
           />
-          <IconButton icon="edit" title="Edit Remote…" size="small" disabled={!current} onClick={() => edit(current)} />
+          <IconButton
+            icon="edit"
+            title="Edit Remote…"
+            size="small"
+            disabled={!current}
+            onClick={() => selected && current && edit({ ...selected, remote: current })}
+          />
         </div>
         <div className={styles.choiceList} role="listbox" aria-label={tx("Remotes")}>
-          {!remotes.length && (
+          {grouped
+            ? repos.map((repo) => (
+                <div key={repo ?? ""} role="group" aria-label={repo ? repoName(repo) : undefined}>
+                  <button
+                    type="button"
+                    className={clsx(
+                      styles.remoteRepoHeader,
+                      repo === active && !selected && styles.remoteRepoHeaderActive,
+                    )}
+                    onClick={() => {
+                      setActive(repo);
+                      setSelected(null);
+                    }}
+                  >
+                    {repo ? repoName(repo) : ""}
+                  </button>
+                  {remotesOf(repo).map((r) => remoteRow(repo, r))}
+                </div>
+              ))
+            : remotesOf(repos[0] ?? null).map((r) => remoteRow(repos[0] ?? null, r))}
+          {!grouped && !remotesOf(repos[0] ?? null).length && (
             <div className={styles.empty}>
               <T>No remotes</T>
             </div>
           )}
-          {remotes.map((r) => (
-            <button
-              key={r.name}
-              type="button"
-              role="option"
-              aria-selected={r.name === selected}
-              className={clsx(styles.manageRow, r.name === selected && styles.manageRowSelected)}
-              onClick={() => setSelected(r.name)}
-              onDoubleClick={() => edit(r)}
-            >
-              <span className={styles.fileName}>{r.name}</span>
-              <span className={clsx(styles.fileDir, styles.mono)}>{r.url}</span>
-            </button>
-          ))}
         </div>
         {error && <div className={styles.error}>{error}</div>}
       </div>
@@ -481,18 +615,26 @@ function RemotesDialog({ onClose }: { onClose: () => void }) {
 
 function RemoteEditDialog({
   remote,
-  existing,
+  roots,
+  initialRepo,
+  existing: existingIn,
   onDone,
 }: {
   remote?: Remote;
-  existing: readonly string[];
-  onDone: (r: { name: string; url: string } | null) => void;
+  /** Repositories a new remote can go to (a picker for several). */
+  roots: readonly string[];
+  initialRepo: string | null;
+  /** The other remotes' names in a repository. */
+  existing: (repo: string | null) => readonly string[];
+  onDone: (r: { repo: string | null; name: string; url: string } | null) => void;
 }) {
+  const [repo, setRepo] = useState(initialRepo);
+  const existing = existingIn(repo);
   const [name, setName] = useState(remote?.name ?? (existing.includes("origin") ? "" : "origin"));
   const [url, setUrl] = useState(remote?.url ?? "");
   const error = validateRemoteName(name, existing) ?? (url.trim() ? null : "Enter the remote URL");
   const submit = () => {
-    if (!error) onDone({ name: name.trim(), url: url.trim() });
+    if (!error) onDone({ repo, name: name.trim(), url: url.trim() });
   };
   return (
     <Dialog
@@ -512,6 +654,7 @@ function RemoteEditDialog({
           submit();
         }}
       >
+        <RepoSelect roots={roots} value={repo} onChange={setRepo} />
         <label className={styles.fieldLabel}>
           <T>Name:</T>
         </label>
@@ -539,13 +682,16 @@ export function defaultWorktreePath(repoRoot: string, branch: string): string {
   return `${parent}${sep}${name}-${suffix || "worktree"}`;
 }
 
-export function showWorktrees() {
+/** Worktrees…; `repo` (a project repository) is selected first, the panel's picker switches it. */
+export function showWorktrees(repo?: string | null) {
+  if (repo && useVcs.getState().roots.includes(repo)) void selectRepo(repo);
   openDialog((close) => <WorktreesDialog onClose={close} />);
 }
 
-export function showNewWorktree(onCreated?: () => void) {
+export function showNewWorktree(onCreated?: () => void, repo?: string | null) {
   openDialog((close) => (
     <NewWorktreeDialog
+      initialRepo={repo}
       onClose={(created) => {
         close();
         if (created) onCreated?.();
@@ -632,7 +778,7 @@ export function WorktreesPanel({ className, listClassName }: { className?: strin
           icon="plus"
           title="New Worktree…"
           size="small"
-          onClick={() => showNewWorktree(() => void reload())}
+          onClick={() => showNewWorktree(() => void reload(), repo)}
         />
         <IconButton
           icon="minus"
@@ -673,10 +819,17 @@ export function WorktreesPanel({ className, listClassName }: { className?: strin
   );
 }
 
-function NewWorktreeDialog({ onClose }: { onClose: (created: boolean) => void }) {
-  const [repo] = useState(currentRepo);
-  const [root] = useState(() => useVcs.getState().repo ?? useVcs.getState().root ?? "");
-  const branches = useBranches();
+function NewWorktreeDialog({
+  initialRepo,
+  onClose,
+}: {
+  initialRepo?: string | null;
+  onClose: (created: boolean) => void;
+}) {
+  const { repo, roots, setRepo } = useDialogRepo(initialRepo);
+  const [projectRoot] = useState(() => useVcs.getState().root ?? "");
+  const root = repo ?? projectRoot;
+  const branches = useBranches(repo);
   const [source, setSource] = useState<string | null>(null);
   const [createBranch, setCreateBranch] = useState(true);
   const [newBranch, setNewBranch] = useState("");
@@ -724,6 +877,14 @@ function NewWorktreeDialog({ onClose }: { onClose: (created: boolean) => void })
       ]}
     >
       <div className={styles.form}>
+        <RepoSelect
+          roots={roots}
+          value={repo}
+          onChange={(r) => {
+            setRepo(r);
+            setSource(null);
+          }}
+        />
         <div className={styles.fieldLabel}>
           <T>Check out:</T>
         </div>

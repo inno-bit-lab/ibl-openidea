@@ -161,6 +161,93 @@ async fn serves_projects_files_documents_search_and_runs() {
     );
 }
 
+/// A repository with a modified, an untracked and a git-ignored file.
+fn git_repo_with_ignored(dir: &std::path::Path) -> std::path::PathBuf {
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(["-c", "init.defaultBranch=main", "-c", "core.autocrlf=false"])
+            .args(args)
+            .current_dir(&repo)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "Test"]);
+    git(&["config", "commit.gpgsign", "false"]);
+    std::fs::write(repo.join(".gitignore"), "ignored.log\n").unwrap();
+    std::fs::write(repo.join("tracked.txt"), "v1\n").unwrap();
+    git(&["add", ".gitignore", "tracked.txt"]);
+    git(&["commit", "-q", "-m", "initial"]);
+    std::fs::write(repo.join("tracked.txt"), "v2\n").unwrap();
+    std::fs::write(repo.join("untracked.txt"), "new\n").unwrap();
+    std::fs::write(repo.join("ignored.log"), "secret\n").unwrap();
+    repo
+}
+
+/// A host served over an in-memory connection, with `project` open.
+async fn open_host(base: &std::path::Path, project: &std::path::Path) -> Peer {
+    let peer_slot = Arc::new(OnceLock::new());
+    let sink_peer = peer_slot.clone();
+    let host = Arc::new(Host::new(HostConfig {
+        config_dir: base.join("config"),
+        data_dir: base.join("data"),
+        languages: Arc::new(ide_language::LanguageRegistry::load(None).unwrap()),
+        syntax: Arc::default(),
+        sink_for: Box::new(move |w| rpc::event_sink(sink_peer.clone(), Some(w.to_owned()))),
+        owner: |w| w,
+        runtime: tokio::runtime::Handle::current(),
+        project_environment: false,
+    }));
+    let (client_io, server_io) = tokio::io::duplex(1 << 20);
+    let (sr, sw) = tokio::io::split(server_io);
+    tokio::spawn(rpc::serve(host, Dispatcher::standard(), peer_slot, sr, sw));
+    let (cr, cw) = tokio::io::split(client_io);
+    let peer = Peer::connect(cr, cw, Arc::new(Client::default()));
+    let _: ServerInfo = peer.request("initialize", json!({ "version": 1 }), None).await.unwrap();
+    invoke(&peer, "open_project", json!({ "path": project })).await.unwrap();
+    peer
+}
+
+fn file_names(entries: &[Value]) -> Vec<&str> {
+    entries
+        .iter()
+        .filter_map(|e| e["path"].as_str())
+        .filter_map(|p| std::path::Path::new(p).file_name()?.to_str())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vcs_status_leaves_out_ignored_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo_with_ignored(tmp.path());
+    let peer = open_host(&tmp.path().join("server"), &repo).await;
+
+    let status = invoke(&peer, "vcs_status", json!({})).await.unwrap();
+    let entries = status.as_array().unwrap();
+    let names = file_names(entries);
+    assert!(names.contains(&"tracked.txt"), "{entries:?}");
+    assert!(names.contains(&"untracked.txt"), "{entries:?}");
+    assert!(!names.contains(&"ignored.log"), "{entries:?}");
+    assert!(!entries.iter().any(|e| e["unstaged"] == "ignored"), "{entries:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vcs_ignored_lists_only_ignored_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo_with_ignored(tmp.path());
+    let peer = open_host(&tmp.path().join("server"), &repo).await;
+
+    let ignored = invoke(&peer, "vcs_ignored", json!({})).await.unwrap();
+    let entries = ignored.as_array().unwrap();
+    assert_eq!(file_names(entries), ["ignored.log"], "{entries:?}");
+    assert_eq!(entries[0]["unstaged"], "ignored");
+}
+
 trait EventType {
     fn event_type(&self) -> String;
 }

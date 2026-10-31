@@ -6,7 +6,7 @@ import { useDocMeta } from "./model/document";
 import { resetDistractionFree, setDistractionFree } from "@/workbench/distractionFree";
 import { registerActions } from "@/platform/actions";
 import { useProject } from "@/platform/project";
-import { resolveMenuItems } from "@/ui";
+import { hideContextMenu, resolveMenuItems, useContextMenuStore } from "@/ui";
 import { getContext } from "@/platform/context";
 import { installKeyboardDispatcher } from "@/platform/keymap";
 import { TEXT_WHEN } from "./actions";
@@ -254,5 +254,101 @@ describe("EditorController", () => {
     expect(items.find((i) => i.label === "Close Tabs to the Right")?.disabled).toBe(false);
     dispose();
     useProject.setState({ project: null, settings: null });
+  });
+
+  it("includes Show History for Selection… and Show Current Revision in the editor Git menu", async () => {
+    useProject.setState({
+      project: { name: "p", root: "/p", isGit: true, settings: {} } as never,
+      settings: {} as never,
+    });
+    const vcsIds = [
+      "vcs.commit",
+      "vcs.addToVcs",
+      "vcs.annotate",
+      "vcs.showDiff",
+      "vcs.compareWithBranch",
+      "vcs.showHistory",
+      "vcs.showHistoryForSelection",
+      "vcs.showCurrentRevision",
+      "vcs.rollback",
+      "vcs.push",
+      "vcs.pull",
+      "vcs.fetch",
+      "vcs.merge",
+      "vcs.rebase",
+      "vcs.branches",
+      "vcs.newBranch",
+      "vcs.newTag",
+      "vcs.resetHead",
+      "vcs.stash",
+      "vcs.unstash",
+      "vcs.manageRemotes",
+    ];
+    const dispose = registerActions(vcsIds.map((id) => ({ id, title: id, run: () => undefined })));
+    ctrl = new EditorController(createMemoryBackend({ "/p/a.ts": "line1\nline2\nline3\nline4\n" }));
+    ctrl.start();
+    await ctrl.openFile("/p/a.ts", { focus: false });
+    const s = useTabs.getState();
+    const pane = s.panes[s.activePane]!;
+    const git = resolveMenuItems(ctrl.tabMenu(pane.id, pane.tabs[0]!)).find((i) => i.label === "Git");
+    expect(git?.submenu).toBeDefined();
+    expect(resolveMenuItems(git!.submenu!).map((i) => (i.kind === "separator" ? "-" : i.label))).toEqual([
+      "Commit File…",
+      "Add",
+      "-",
+      "Annotate with Git Blame",
+      "Show Diff",
+      "Compare with Branch…",
+      "Show History",
+      "Show History for Selection…",
+      "Show Current Revision",
+      "Rollback…",
+      "-",
+      "Push…",
+      "Pull…",
+      "Fetch",
+      "Merge…",
+      "Rebase…",
+      "-",
+      "Branches…",
+      "New Branch…",
+      "New Tag…",
+      "Reset HEAD…",
+      "-",
+      "Stash Changes…",
+      "Unstash Changes…",
+      "-",
+      "Manage Remotes…",
+    ]);
+    dispose();
+    useProject.setState({ project: null, settings: null });
+  });
+
+  it("passes the selected lines to Show History for Selection… from the editor menu", async () => {
+    ctrl = new EditorController(createMemoryBackend({ "/p/a.ts": "one\ntwo\nthree\nfour\n" }));
+    ctrl.start();
+    await ctrl.openFile("/p/a.ts", { focus: false });
+    const s = useTabs.getState();
+    const slot = ctrl.slotFor(s.panes[s.activePane]!.active!)!;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const view = slot.mount(host);
+    ctrl.onMounted(slot);
+    // Lines 2–3: a selection ending at the start of line 4 leaves that line out.
+    view.dispatch({ selection: { anchor: 4, head: 14 } });
+    // jsdom has no layout: the right-click lands inside the selection.
+    vi.spyOn(view, "posAtCoords").mockReturnValue(null);
+    ctrl.onContextMenu(slot, new MouseEvent("contextmenu"));
+    const items = useContextMenuStore.getState().menu?.items ?? [];
+    const git = items.find((i) => "label" in i && i.label === "Git");
+    expect(git && "submenu" in git ? git.submenu : []).toContainEqual(
+      expect.objectContaining({
+        action: "vcs.showHistoryForSelection",
+        arg: { path: "/p/a.ts", startLine: 2, endLine: 3 },
+      }),
+    );
+    hideContextMenu();
+    slot.unmount();
+    host.remove();
   });
 });

@@ -1,7 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Branch, BranchInfo } from "@/bindings";
 import { isMacHost } from "@/platform/keymap";
+
+const branchesOf = vi.fn((_repo: string | null): Branch[] => []);
+const vcsRemote = vi.fn();
+const vcsDeleteBranch = vi.fn();
+const vcsCheckout = vi.fn();
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -11,10 +16,36 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
       ...real.commands,
       vcsLog: () => Promise.resolve({ status: "ok", data: [] }),
       vcsConfigGet: () => Promise.resolve({ status: "ok", data: null }),
+      vcsBranches: async (repo: string | null) => ({ status: "ok", data: branchesOf(repo) }),
+      vcsTags: async () => ({ status: "ok", data: [] }),
+      vcsRemotes: async () => ({ status: "ok", data: [] }),
+      vcsRemote: (repo: string | null, _request: number, op: unknown) => vcsRemote(repo, op),
+      vcsDeleteBranch: (repo: string | null, name: string) => vcsDeleteBranch(repo, name),
+      vcsCheckout: (repo: string | null, rev: string) => vcsCheckout(repo, rev),
+      vcsBranchInfo: async () => ({ status: "ok", data: { ...head, upstream: "origin/main" } }),
+      vcsStatus: async () => ({ status: "ok", data: [] }),
+      vcsRoots: async () => ({
+        status: "ok",
+        data: useVcs.getState().roots.map((root) => ({ root, operation: null, head: "main", headCommit: "1" })),
+      }),
     },
   };
 });
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  Channel: class {
+    onmessage: ((m: unknown) => void) | null = null;
+  },
+}));
 
+import { setContext } from "@/platform/context";
+import { useProject } from "@/platform/project";
+import { ContextMenuHost, hideContextMenu } from "@/ui/Menu";
+import { provideNotificationService } from "@/workbench/contributions";
+import { MessagesHost } from "@/workbench/messages";
+import { registerVcsActions } from "../actions";
+import { branchMenu, inRepo } from "../branchMenu";
+import { VcsDialogHost } from "../dialogs";
 import { BranchesPanel } from "../GitLog";
 import { emptyFilters, useGitLog } from "../logStore";
 import { useVcs } from "../store";
@@ -137,5 +168,107 @@ describe("Git Log branches pane", () => {
     fireEvent.keyDown(screen.getByLabelText("Filter branches and tags"), { key: "c", ...cmd() });
     await Promise.resolve();
     expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
+describe("Git Log branches pane with several repositories", () => {
+  const FRONT = "/p/front";
+  const BACK = "/p/back";
+  let off: () => void = () => {};
+
+  beforeEach(() => {
+    hideContextMenu();
+    off = registerVcsActions();
+    setContext("vcsAvailable", true);
+    provideNotificationService({ notify: () => {} });
+    useProject.setState({ settings: { vcs: { confirmation: { showUpdateOptions: false } } } });
+    branchesOf
+      .mockReset()
+      .mockImplementation(() => [
+        b("main", { current: true, upstream: "origin/main", commit: "1" }),
+        b("feature", { upstream: "origin/feature", commit: "2" }),
+      ]);
+    vcsRemote.mockReset().mockResolvedValue({ status: "ok", data: { summary: "ok" } });
+    vcsDeleteBranch.mockReset().mockImplementation(async (_repo: string, name: string) => ({
+      status: "ok",
+      data: { name, tip: "2", upstream: null, unmerged: false },
+    }));
+    vcsCheckout.mockReset().mockResolvedValue({ status: "ok", data: { kind: "done" } });
+    useVcs.setState({
+      available: true,
+      root: "/p",
+      roots: [FRONT, BACK],
+      repo: FRONT,
+      heads: { [FRONT]: { head: "main", headCommit: "1" }, [BACK]: { head: "main", headCommit: "1" } },
+      branches: branchesOf(FRONT),
+      branchesLoaded: true,
+      branch: { ...head, upstream: "origin/main" },
+      remoteBusy: null,
+    });
+  });
+
+  afterEach(() => off());
+
+  const renderPane = () =>
+    render(
+      <>
+        <BranchesPanel />
+        <ContextMenuHost />
+        <VcsDialogHost />
+        <MessagesHost />
+      </>,
+    );
+  /** `feature` in both repositories' Local groups. */
+  const selectBothFeatures = async () => {
+    await waitFor(() => expect(screen.getAllByText("feature")).toHaveLength(2));
+    const [front, back] = screen.getAllByText("feature");
+    fireEvent.mouseDown(front!);
+    fireEvent.mouseDown(back!, cmd());
+    return back!;
+  };
+
+  it("Update in a repository's branch menu pulls only that repository", async () => {
+    const update = inRepo(BACK, branchMenu(b("main", { current: true }), "main")).find(
+      (i) => "label" in i && i.label === "Update",
+    );
+    if (update && "run" in update) update.run?.();
+    await waitFor(() => expect(vcsRemote.mock.calls).toEqual([[BACK, { op: "pull", rebase: false }]]));
+  });
+
+  it("Delete in the menu of branches selected in two repositories asks once and deletes each in its repository", async () => {
+    renderPane();
+    const back = await selectBothFeatures();
+    fireEvent.contextMenu(back);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete Branches" });
+    expect(vcsDeleteBranch).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(vcsDeleteBranch.mock.calls).toEqual([
+        [FRONT, "feature"],
+        [BACK, "feature"],
+      ]),
+    );
+  });
+
+  it("Checkout in the menu of the same branch selected in two repositories checks it out in each", async () => {
+    renderPane();
+    const back = await selectBothFeatures();
+    fireEvent.contextMenu(back);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Checkout" }));
+    await waitFor(() =>
+      expect(vcsCheckout.mock.calls).toEqual([
+        [FRONT, "feature"],
+        [BACK, "feature"],
+      ]),
+    );
+  });
+
+  it("offers Manage Remotes… on the Remote group and in the toolbar", async () => {
+    renderPane();
+    fireEvent.contextMenu(await screen.findByText("Remote"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Manage Remotes…" }));
+    expect(await screen.findByRole("dialog", { name: "Git Remotes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage Remotes…" })).toBeInTheDocument();
   });
 });

@@ -1,6 +1,16 @@
 /** Diff viewer editor tab (side-by-side / unified) built on @codemirror/merge. */
 import { focusedDiffNavigator, setFocusedDiffNavigator, type DiffNavigator } from "./diffNavigator";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import clsx from "clsx";
 import { EditorView, keymap } from "@codemirror/view";
 import { Prec, Text, type Extension } from "@codemirror/state";
@@ -196,9 +206,11 @@ function isStrokeOf(e: KeyboardEvent, actionId: string): boolean {
   return !!stroke && bindingsFor(actionId).some((b) => normalizeBinding(b) === stroke);
 }
 
-export function DiffEditor({ input }: { input: EditorInput }) {
+export function DiffEditor({ input, headerContent }: { input: EditorInput; headerContent?: ReactNode }) {
   const data = input.data as DiffData;
   const { path, left, right } = data;
+  const leftFirstLine = left.type === "text" ? left.firstLine : undefined;
+  const rightFirstLine = right.type === "text" ? right.firstLine : undefined;
   const [attached, setAttached] = useState<Attached | null>(null);
   /** Text of the sides that are not live documents. */
   const [statics, setStatics] = useState<{ a: string | null; b: string | null } | null>(null);
@@ -348,7 +360,11 @@ export function DiffEditor({ input }: { input: EditorInput }) {
     const highlightChanges = opts.highlight === "words";
     const inclusion = includable ? inclusionGutter(path, textA) : [];
     const side = (att: DocumentAttachment | null, editable: boolean, notes?: "left" | "right"): Extension[] => [
-      viewerBase({ readOnly: !editable, findBar: true }),
+      viewerBase({
+        readOnly: !editable,
+        findBar: true,
+        firstLine: notes === "left" ? leftFirstLine : rightFirstLine,
+      }),
       // Esc closes the find bar before it collapses the selection (a found match); open popups go first.
       Prec.high(keymap.of([{ key: "Escape", run: () => findEscape.current() }])),
       lang,
@@ -500,6 +516,8 @@ export function DiffEditor({ input }: { input: EditorInput }) {
     data.annotations,
     includable,
     path,
+    leftFirstLine,
+    rightFirstLine,
   ]);
 
   useEffect(() => viewsRef.current?.panes?.setSync(opts.syncScroll), [opts.syncScroll]);
@@ -1005,30 +1023,31 @@ export function DiffEditor({ input }: { input: EditorInput }) {
           onClick={(e) => showSettings(e.currentTarget)}
         />
       </div>
-      {opts.mode === "split" ? (
-        <div className={styles.labels}>
-          <span className={styles.label} title={sideLabel(left)}>
-            {sideLabel(left)}
-            {editableA && (
-              <span className={styles.badge}>
-                <T>editable</T>
-              </span>
-            )}
-          </span>
-          <span className={styles.label} title={sideLabel(right)}>
-            {sideLabel(right)}
-            {editableB && (
-              <span className={styles.badge}>{left.type === "rev" ? tx("working copy") : tx("editable")}</span>
-            )}
-          </span>
-        </div>
-      ) : (
-        <div className={styles.labels}>
-          <span className={styles.label}>
-            {sideLabel(left)} → {sideLabel(right)}
-          </span>
-        </div>
-      )}
+      {headerContent ??
+        (opts.mode === "split" ? (
+          <div className={styles.labels}>
+            <span className={styles.label} title={sideLabel(left)}>
+              {sideLabel(left)}
+              {editableA && (
+                <span className={styles.badge}>
+                  <T>editable</T>
+                </span>
+              )}
+            </span>
+            <span className={styles.label} title={sideLabel(right)}>
+              {sideLabel(right)}
+              {editableB && (
+                <span className={styles.badge}>{left.type === "rev" ? tx("working copy") : tx("editable")}</span>
+              )}
+            </span>
+          </div>
+        ) : (
+          <div className={styles.labels}>
+            <span className={styles.label}>
+              {sideLabel(left)} → {sideLabel(right)}
+            </span>
+          </div>
+        ))}
       {find && ready && (
         <div
           className={clsx(

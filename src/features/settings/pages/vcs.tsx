@@ -35,6 +35,16 @@ function HistoryLimitRow() {
 
 function MappingsTable() {
   const project = useProject((s) => s.project);
+  const projectRoot = project?.root;
+  // Every Git root of the project (nested clones, submodules), as the vcs feature finds them.
+  const [roots, setRoots] = useState<string[]>([]);
+  useEffect(() => {
+    if (!isTauri() || !projectRoot) return;
+    void call(commands.vcsRoots()).then(
+      (found) => setRoots(found.map((r) => r.root)),
+      () => undefined,
+    );
+  }, [projectRoot]);
   return (
     <div className={styles.tableBox}>
       <table className={styles.table} aria-label={tx("Directory mappings")}>
@@ -55,6 +65,16 @@ function MappingsTable() {
                 <T>No project is open</T>
               </td>
             </tr>
+          ) : roots.length > 1 || (roots.length === 1 && roots[0] !== project.root) ? (
+            roots.map((r) => (
+              <tr key={r}>
+                <td title={r}>
+                  <Icon name="folder" size={16} className={styles.mappingIcon} />
+                  {r === project.root ? `${tx("<Project>")} ${r}` : r}
+                </td>
+                <td>Git</td>
+              </tr>
+            ))
           ) : (
             <tr>
               <td title={project.root}>

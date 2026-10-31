@@ -19,6 +19,9 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
         .args(["-c", "init.defaultBranch=main", "-c", "core.quotepath=off"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        // Git 2.45.1+ refuses a local clone of a repository whose own config sets
+        // `core.hooksPath` (as `configure` does): the blobless clone test needs it allowed.
+        .env("GIT_CLONE_PROTECTION_ACTIVE", "false")
         .output()
         .expect("git runs");
     assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
@@ -189,6 +192,9 @@ fn status_matrix() {
     // A committed file the IDE ignores keeps its history but drops out of the change list.
     fx.write("tracked.pyc", "a\n");
     fx.git(&["add", "-f", "tracked.pyc"]);
+    // A committed file that matches an ignore rule stays a tracked file.
+    fx.write("tracked.log", "a\n");
+    fx.git(&["add", "-f", "tracked.log"]);
     fx.commit_all("base");
 
     fx.write("modified.txt", "b\n");
@@ -210,6 +216,7 @@ fn status_matrix() {
     fx.write("dir/.DS_Store", "junk");
     fx.write("pkg/__pycache__/m.pyc", "junk");
     fx.write("tracked.pyc", "b\n");
+    fx.write("tracked.log", "b\n");
     // Contents differ from `staged_del.txt` so rename detection cannot pair them.
     fx.write("staged_ignored.pyc", "cached\nbytecode\n");
     fx.git(&["add", "-f", "staged_ignored.pyc"]);
@@ -232,6 +239,7 @@ fn status_matrix() {
     check("untracked.txt", None, Some(Untracked));
     check("dir/nested/untracked2.txt", None, Some(Untracked));
     check("renamed.txt", Some(Renamed), None);
+    check("tracked.log", None, Some(Modified));
     assert_eq!(status_of(&st, "renamed.txt").renamed_from.as_deref(), Some("rename_me.txt"));
     assert!(!st.iter().any(|s| s.rel_path == "rename_me.txt"), "rename source listed: {st:#?}");
     assert!(!st.iter().any(|s| s.rel_path.contains("debug.log") || s.rel_path.contains("build")));
@@ -245,6 +253,25 @@ fn status_matrix() {
     let mut sorted = paths.clone();
     sorted.sort();
     assert_eq!(paths, sorted);
+    assert!(!st.iter().any(|s| s.unstaged == Some(Ignored)), "status never lists ignored files: {st:#?}");
+
+    // Show Ignored Files: git-ignored files and collapsed ignored folders, the rest unchanged.
+    let with = repo.status_with_ignored(true).unwrap();
+    let ignored = |rel: &str| {
+        let s = status_of(&with, rel);
+        assert_eq!((s.staged, s.unstaged), (None, Some(Ignored)), "{rel}");
+    };
+    ignored("debug.log");
+    ignored("build/");
+    assert!(!with.iter().any(|s| s.rel_path.starts_with("build/") && s.rel_path != "build/"), "{with:#?}");
+    // A tracked change wins over an ignore rule; the IDE's ignored names stay hidden.
+    assert_eq!(status_of(&with, "tracked.log").unstaged, Some(Modified));
+    assert!(!with.iter().any(|s| s.rel_path.contains(".DS_Store") || s.rel_path.contains("pkg")), "{with:#?}");
+    assert_eq!(
+        with.iter().filter(|s| s.unstaged != Some(Ignored)).map(|s| s.rel_path.clone()).collect::<Vec<_>>(),
+        paths,
+        "the other entries are those of the plain status"
+    );
 }
 
 #[test]
