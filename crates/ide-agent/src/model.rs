@@ -370,6 +370,9 @@ pub struct AgentProbe {
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NewAgentTask {
+    /// Instructions prepended to the first wire prompt, outside the displayed conversation.
+    #[serde(default)]
+    pub instructions: Option<String>,
     /// Validated by the host; defaults to the window project root.
     #[serde(default)]
     pub project_root: Option<IpcPath>,
