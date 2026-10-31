@@ -8,6 +8,28 @@ use std::sync::{Arc, RwLock};
 /// with other flags (and then call [`host_env`] themselves). Prefer [`prepare`] otherwise.
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Windows flags applied by [`prepare`]. Containment adds to this shared mask:
+/// `CommandExt::creation_flags` replaces the mask rather than adding flags.
+pub const PREPARE_CREATION_FLAGS: u32 = CREATE_NO_WINDOW;
+
+#[cfg(all(windows, test))]
+thread_local! {
+    static LAST_CREATION_FLAGS: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(all(windows, test))]
+pub(crate) fn take_creation_flags_for_test() -> Option<u32> {
+    LAST_CREATION_FLAGS.with(|flags| flags.take())
+}
+
+#[cfg(windows)]
+pub(crate) fn set_creation_flags(command: &mut Command, flags: u32) {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(flags);
+    #[cfg(test)]
+    LAST_CREATION_FLAGS.with(|applied| applied.set(Some(flags)));
+}
+
 /// Readies `cmd` for spawning any child (java, node, curl, git, a language server, ...).
 /// For a `tokio::process::Command`, pass `cmd.as_std_mut()`.
 ///
@@ -19,8 +41,7 @@ pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub fn prepare(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        set_creation_flags(cmd, PREPARE_CREATION_FLAGS);
     }
     host_env(cmd)
 }

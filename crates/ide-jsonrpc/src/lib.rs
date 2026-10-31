@@ -487,7 +487,12 @@ impl Peer {
                     inner.reader_done.cancelled().await;
                 };
                 let _ = tokio::time::timeout(OUTPUT_DRAIN, drained).await;
-                kill_process_tree(tree.take()).await;
+                if status.is_some() {
+                    kill_exited_process_tree(tree.take()).await;
+                } else {
+                    // A failed wait does not establish that the leader has exited.
+                    kill_process_tree(tree.take()).await;
+                }
             }
             inner.mark_closed(status.and_then(|s| s.code()));
         });
@@ -758,6 +763,15 @@ impl Peer {
 async fn kill_process_tree(tree: Option<ide_core::process_tree::ProcessTree>) {
     if let Some(tree) = tree
         && let Err(error) = tokio::task::spawn_blocking(move || tree.kill()).await
+    {
+        tracing::warn!(%error, "agent process-tree teardown task failed");
+    }
+}
+
+/// An exited leader cannot be used for fallback discovery; the job still owns descendants.
+async fn kill_exited_process_tree(tree: Option<ide_core::process_tree::ProcessTree>) {
+    if let Some(tree) = tree
+        && let Err(error) = tokio::task::spawn_blocking(move || tree.kill_after_exit()).await
     {
         tracing::warn!(%error, "agent process-tree teardown task failed");
     }
