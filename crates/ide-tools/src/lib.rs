@@ -155,6 +155,7 @@ fn managed_bin_dir(root: &Path, spec: &ToolSpec, platform: Platform) -> Option<P
 /// tools found there run in turn. Call once at startup, before other threads start
 /// (it mutates the process environment).
 pub fn extend_process_path(app_data: &Path) {
+    ide_core::tool_path::register_managed_dirs(tools_bin_dirs(app_data));
     let current = std::env::var_os("PATH").unwrap_or_default();
     let extended = path_with_tools(app_data, &ide_core::process::with_user_path(&current));
     if extended != current {

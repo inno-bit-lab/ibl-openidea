@@ -7,8 +7,18 @@ use crate::version_managers;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-/// Where executables are looked up: this process's `PATH` (the login shell's in the
+static MANAGED_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+
+/// Registers the application's managed-tool candidates once at startup, without changing PATH.
+pub fn register_managed_dirs(mut candidates: Vec<PathBuf>) {
+    let mut seen = HashSet::new();
+    candidates.retain(|dir| seen.insert(dir.clone()));
+    let _ = MANAGED_DIRS.set(candidates);
+}
+
+/// Where executables are looked up: existing managed tools, this process's `PATH` (the login shell's in the
 /// app), the login shell's `PATH` as last read, then per-user directories and mise's,
 /// asdf's and pyenv's shims, for when the shell's setup didn't reach the app. Language server
 /// launchers, their settings hooks and tool detection all look here, so a settings
@@ -27,7 +37,16 @@ pub fn search_path() -> OsString {
         home.as_deref(),
         &shims,
     );
-    std::env::join_paths(dirs).unwrap_or_default()
+    // Re-read existence at lookup time so a newly installed tool needs no app restart.
+    let mut managed: Vec<PathBuf> = MANAGED_DIRS
+        .get()
+        .into_iter()
+        .flatten()
+        .filter(|dir| dir.is_absolute() && dir.is_dir() && std::env::join_paths([dir]).is_ok() && !dirs.contains(dir))
+        .cloned()
+        .collect();
+    managed.extend(dirs);
+    std::env::join_paths(managed).unwrap_or_default()
 }
 
 /// Resolves a command on the shared path, or an explicit path relative to `root`.
