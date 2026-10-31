@@ -2,6 +2,7 @@
 //! server through a shared filesystem interface.
 
 use crate::mapping::{Excludes, Mappings, posix};
+use ide_core::remote_settings::DeploymentServer;
 use ide_core::{CancellationToken, IdeError, IdeResult};
 use ide_ssh::RemoteFs;
 use ide_ssh::sftp::mtime_of;
@@ -26,19 +27,94 @@ pub fn coverage(settings: &ide_core::settings::Settings, root: &Path, paths: &[P
         .servers
         .iter()
         .map(|server| {
-            let map = Mappings::new(server, root, "/");
-            let exclude = Excludes::new(&settings.deployment, server, "/");
+            let selection = Selection::new(settings, server, root);
             let mut result = DeploymentCoverage { server: server.id.clone(), paths: Vec::new(), skipped: Vec::new() };
             for path in paths {
-                let name = ide_core::ipc_path::to_ipc(path);
-                match mapped_path(&map, &exclude, path) {
-                    Ok(_) => result.paths.push(name),
-                    Err(message) => result.skipped.push(TransferError { path: name, message: message.into() }),
+                match selection.deployable(path) {
+                    Ok(found) => {
+                        for p in found {
+                            let name = ide_core::ipc_path::to_ipc(&p);
+                            if !result.paths.contains(&name) {
+                                result.paths.push(name);
+                            }
+                        }
+                    }
+                    Err(message) => result
+                        .skipped
+                        .push(TransferError { path: ide_core::ipc_path::to_ipc(path), message: message.into() }),
                 }
             }
             result
         })
         .collect()
+}
+
+/// `paths` with every selected folder outside all mappings replaced by the mapped folders inside
+/// it, as [`coverage`] reports them. Other paths stay, so the transfer still reports them.
+pub(crate) fn expand_selection(
+    settings: &ide_core::settings::Settings,
+    server: &DeploymentServer,
+    root: &Path,
+    paths: &[PathBuf],
+) -> Vec<PathBuf> {
+    let selection = Selection::new(settings, server, root);
+    let mut out: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        for p in selection.deployable(path).unwrap_or_else(|_| vec![path.clone()]) {
+            if !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Eligibility of selected paths on one server, checked locally.
+struct Selection {
+    map: Mappings,
+    exclude: Excludes,
+    /// Local folders of the server's mappings, resolved as [`Mappings::new`] does. Only
+    /// candidates: [`Selection::deployable`] keeps those the mappings accept.
+    folders: Vec<PathBuf>,
+}
+
+impl Selection {
+    fn new(settings: &ide_core::settings::Settings, server: &DeploymentServer, root: &Path) -> Self {
+        let folders = server
+            .mappings
+            .iter()
+            .map(|m| {
+                let local = m.local.trim().trim_matches('/');
+                if local.is_empty() { root.to_path_buf() } else { root.join(local) }
+            })
+            .collect();
+        Self {
+            map: Mappings::new(server, root, "/"),
+            exclude: Excludes::new(&settings.deployment, server, "/"),
+            folders,
+        }
+    }
+
+    /// What `path` deploys as: itself when a mapping covers it, or for a folder outside every
+    /// mapping the mapped folders inside it. Otherwise why nothing under it deploys.
+    fn deployable(&self, path: &Path) -> Result<Vec<PathBuf>, &'static str> {
+        let reason = match mapped_path(&self.map, &self.exclude, path) {
+            Ok(_) => return Ok(vec![path.to_path_buf()]),
+            Err(reason) => reason,
+        };
+        // Covered but excluded: what is under it stays excluded.
+        if self.map.remote(path).is_some() {
+            return Err(reason);
+        }
+        let inner: Vec<PathBuf> = self
+            .folders
+            .iter()
+            .filter(|f| f.starts_with(path) && f.as_path() != path)
+            .filter(|f| mapped_path(&self.map, &self.exclude, f).is_ok())
+            .cloned()
+            .collect();
+        if inner.is_empty() { Err(reason) } else { Ok(inner) }
+    }
 }
 
 fn mapped_path(map: &Mappings, exclude: &Excludes, local: &Path) -> Result<String, &'static str> {

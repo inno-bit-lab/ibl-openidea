@@ -289,3 +289,45 @@ async fn delete_parent_preserves_excluded_descendants() {
         git_config.exists()
     );
 }
+
+#[tokio::test]
+async fn parent_selection_retains_deployable_descendants() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let target = tmp.path().join("target");
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/a.txt"), "deploy me").unwrap();
+    let service = service(tmp.path());
+    let mut settings = settings(&target);
+    settings.deployment.servers[0].mappings[0].local = "src".into();
+    let eligibility = ide_remote::coverage(&settings, &root, std::slice::from_ref(&root));
+    let report = service
+        .upload(&settings, &root, None, std::slice::from_ref(&root), CancellationToken::new(), &mut |_, _, _| {})
+        .await
+        .unwrap();
+    assert_eq!(report.files, 1, "backend should deploy the mapped descendant: {report:?}");
+    assert_eq!(std::fs::read_to_string(target.join("app/a.txt")).unwrap(), "deploy me");
+    assert!(
+        !eligibility[0].paths.is_empty(),
+        "coverage rejects the selected project root although upload transfers src/a.txt: {eligibility:?}"
+    );
+}
+
+#[tokio::test]
+async fn parent_selection_downloads_mapped_descendants() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let target = tmp.path().join("target");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(target.join("app")).unwrap();
+    std::fs::write(target.join("app/a.txt"), "from the server").unwrap();
+    let service = service(tmp.path());
+    let mut settings = settings(&target);
+    settings.deployment.servers[0].mappings[0].local = "src".into();
+    let report = service
+        .download(&settings, &root, None, std::slice::from_ref(&root), CancellationToken::new(), &mut |_, _, _| {})
+        .await
+        .unwrap();
+    assert_eq!((report.files, report.errors.len()), (1, 0), "{report:?}");
+    assert_eq!(std::fs::read_to_string(root.join("src/a.txt")).unwrap(), "from the server");
+}

@@ -145,7 +145,10 @@ impl RemoteService {
         progress: Progress<'_>,
     ) -> IdeResult<TransferReport> {
         let server = server(settings, server_id)?;
-        self.with_deployment(settings, root, &server, cancel, async |d| d.download(paths, progress).await).await
+        // A selected folder outside every mapping downloads the mapped folders inside it, as
+        // `coverage` offers it.
+        let paths = crate::deploy::expand_selection(settings, &server, root, paths);
+        self.with_deployment(settings, root, &server, cancel, async |d| d.download(&paths, progress).await).await
     }
 
     pub async fn delete_remote(
