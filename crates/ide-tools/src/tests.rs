@@ -76,7 +76,10 @@ fn managed_prefix_is_idempotent() {
 fn tools_child_path_holds_only_existing_candidates() {
     let env = Env::new();
     let candidates = bin_dirs_in(&env.root, Platform::current());
-    assert_eq!(std::env::split_paths(&env.tools().child_path).collect::<Vec<_>>(), [env.sys.clone()]);
+    assert_eq!(
+        std::env::split_paths(&env.tools().child_path).collect::<Vec<_>>().as_slice(),
+        std::slice::from_ref(&env.sys)
+    );
     fs::create_dir_all(&candidates[0]).unwrap();
     let tools = env.tools();
     assert_eq!(std::env::split_paths(&tools.child_path).collect::<Vec<_>>(), [candidates[0].clone(), env.sys.clone()]);
