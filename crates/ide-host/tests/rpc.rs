@@ -152,6 +152,8 @@ fn init_git_repo_with_ignored() -> (tempfile::TempDir, std::path::PathBuf) {
     run_git(&["init"]);
     run_git(&["config", "user.email", "test@example.com"]);
     run_git(&["config", "user.name", "Test"]);
+    run_git(&["config", "commit.gpgsign", "false"]);
+    run_git(&["config", "core.autocrlf", "false"]);
     std::fs::write(repo.join(".gitignore"), "ignored.log\n").unwrap();
     std::fs::write(repo.join("tracked.txt"), "v1\n").unwrap();
     run_git(&["add", ".gitignore", "tracked.txt"]);
@@ -192,10 +194,14 @@ async fn vcs_status_leaves_out_ignored_files() {
 
     let status = invoke(&peer, "vcs_status", json!({})).await.unwrap();
     let entries = status.as_array().unwrap();
-    let paths: Vec<&str> = entries.iter().filter_map(|e| e["path"].as_str()).collect();
-    assert!(paths.iter().any(|p| p.ends_with("tracked.txt")), "{entries:?}");
-    assert!(paths.iter().any(|p| p.ends_with("untracked.txt")), "{entries:?}");
-    assert!(!paths.iter().any(|p| p.ends_with("ignored.log")), "{entries:?}");
+    let names: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| e["path"].as_str())
+        .filter_map(|p| std::path::Path::new(p).file_name()?.to_str())
+        .collect();
+    assert!(names.contains(&"tracked.txt"), "{entries:?}");
+    assert!(names.contains(&"untracked.txt"), "{entries:?}");
+    assert!(!names.contains(&"ignored.log"), "{entries:?}");
     assert!(!entries.iter().any(|e| e["unstaged"] == "ignored"), "{entries:?}");
 }
 

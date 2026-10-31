@@ -4,13 +4,16 @@ use super::*;
 use std::sync::OnceLock;
 use tokio::io::duplex;
 
+/// The modes a [`FakeAgent`] reports: `None` keeps its default `ask`/`code`; an empty list reports none.
+type FakeModes = Option<(String, Vec<(&'static str, &'static str)>)>;
+
 /// Says "Hi", edits a file, asks to run a command and reports what it was allowed.
 #[derive(Default)]
 struct FakeAgent {
     peer: OnceLock<Peer>,
     calls: Mutex<Vec<String>>,
     prompts: Mutex<Vec<String>>,
-    modes: Mutex<Option<(String, Vec<(&'static str, &'static str)>)>>,
+    modes: Mutex<FakeModes>,
     fail_set_mode: AtomicBool,
     cwds: Mutex<Vec<PathBuf>>,
 }

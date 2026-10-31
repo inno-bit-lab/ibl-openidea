@@ -303,6 +303,7 @@ function ChangesPanel() {
   const showIgnored = useCommit((s) => s.showIgnored);
   const [ignoredFiles, setIgnoredFiles] = useState<FileStatus[]>([]);
   useEffect(() => {
+    // While the option is off the list is not shown (`treeStatus`), so it is not cleared here.
     if (!showIgnored) return;
     let alive = true;
     void call(commands.vcsIgnored()).then(
