@@ -264,7 +264,6 @@ pub(crate) fn parse_patch(patch: &str) -> Vec<PatchFile> {
                 .map(|(_, b)| git_path(&format!("\"{b}")))
                 .or_else(|| rest.rsplit_once(" b/").map(|(_, b)| b.to_string()))
                 .unwrap_or_else(|| rest.to_string());
-            let path = path.strip_prefix("b/").unwrap_or(&path).to_string();
             cur = Some(new_file(path));
             fresh_header = true;
         } else if let Some(rest) = line.strip_prefix("--- ") {
