@@ -28,7 +28,7 @@ Revert alone, as a button, is "Ripristina"; "Revert Change" is "Annulla modifica
 
 ## 2. Other terms kept in English
 
-Debug, Debugger, Build (as a name), Plugin, Server, Language server, Editor, Thread, Test, Directory, Chat, Log ("Log Git"), Classpath, JDK, JRE, Proxy, code lens and LightEdit. Product names, language names, file names, paths, commands, options, environment variables and shortcuts never change.
+Debug, Debugger, Build (as a name), Plugin, Server, Language server, Editor, Thread, Test, Directory, Chat, Log ("Log Git"), Classpath, JDK, JRE, Proxy, code lens, LightEdit, prompt and preset ("Gestisci preset…", "Nuovo preset"). Product names, language names, file names, paths, commands, options, environment variables and shortcuts never change.
 
 ## 3. Translated terms
 
@@ -36,6 +36,9 @@ Debug, Debugger, Build (as a name), Plugin, Server, Language server, Editor, Thr
 | ------------------------------ | ------------------------------------------- | -------------------------------------------------------- |
 | diff                           | differenze                                  | "Mostra differenze", "Nessuna differenza"                |
 | agent                          | agente                                      | "Attività dell'agente"                                   |
+| arguments                      | argomenti                                   | "Argomenti dell'agente"                                  |
+| effort, thinking, reasoning    | intensità, elaborazione, ragionamento       | "Intensità di elaborazione"                              |
+| enable, disabled               | Abilita, disabilitato                       | "Questo agente è disabilitato"                           |
 | ACP Registry                   | registro ACP                                | "Impossibile caricare il registro ACP: {error}"          |
 | run                            | Esegui, esecuzione                          | "Azioni di esecuzione"                                   |
 | build (action)                 | Compila, compilazione                       | "Arresta compilazione"                                   |
@@ -96,7 +99,7 @@ The UI speaks to the user with "tu" ("Le tue modifiche", "modifica direttamente 
 
 ## 5. Punctuation, placeholders and plurals
 
-An ellipsis `…` (U+2026) in the source stays `…` in Italian: 376 of 376 fork entries, 53 of 53 new ones. The 4 source strings written with three dots (for example "Search agents...") keep the three dots.
+An ellipsis `…` (U+2026) in the source stays `…` in Italian: 376 of 376 fork entries, 57 of 57 new ones after the MT-2 strings. The fork had 4 source strings written with three dots (for example "Search agents..."), which kept the three dots. The current source has none: upstream writes "Search agents…".
 
 Placeholders such as `{name}` keep their names and their count, and ICU `plural` and `select` messages keep their structure; only the text inside the branches is translated. The `catalogs` tests in `src/platform/i18n.test.ts` enforce this.
 
@@ -125,6 +128,8 @@ Normalization: lower-case the English and the Italian and drop trailing `…`, `
 After "feat(i18n): complete the Italian source-text catalog" the check found 79 groups. 25 involved strings new in the v0.3.0 sync and were fixed in "fix(i18n): give the new Italian strings one rendering each", which also fixed `menu.vcs.compareWithBranch` (still "Confronta con branch…" after its English became "Compare with Branch or Revision…"). The others were fork menu labels translated apart from the text catalog, aligned in "fix(i18n): align the Italian menu labels with the text catalog". After it the check reports only the 14 groups of section 6.
 
 The MT-3 tranche 1 strings ("feat(i18n): translate the MT-3 strings into Italian", 29 added, 2 removed) added no group: the check still reports the same 14.
+
+The MT-2 strings ("feat(i18n): translate the MT-2 strings into Italian", 49 added to the text catalog, no keyed change) added no group either. 38 values come from the fork. 10 strings the fork never had are new. "Reasoning effort (thinking level) used when generating commit message suggestions." is reworded to "Intensità di ragionamento (livello di elaborazione)…", because the fork's "Livello di ragionamento (intensità di elaborazione)" swapped the terms of "Effort" and "Thinking".
 
 To run it, save this as `glossary-check.mjs` outside the repository and run `node glossary-check.mjs <repository root>`:
 
