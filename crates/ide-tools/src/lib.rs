@@ -6,8 +6,9 @@
 //! `<app-data>/tools/<name>/` (npm packages to `<app-data>/tools/node_modules`),
 //! except toolchain-managed components (`rustup component`, `pip --user`).
 //!
-//! Language servers find managed tools once [`extend_process_path`] has put
-//! [`tools_bin_dirs`] on the process `PATH` at startup.
+//! At startup [`extend_process_path`] puts the [`tools_bin_dirs`] that exist on
+//! the process `PATH` and registers the full candidate list, so
+//! `ide_core::tool_path::search_path()` also finds tools installed later.
 
 pub mod archive;
 pub mod jdk;

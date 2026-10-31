@@ -204,7 +204,8 @@ const inlay = (id: string) => document.querySelector<HTMLElement>(`[data-thread-
 describe("review threads in a pull request diff", () => {
   it("shows threads as compact inlays under their lines, filtered by Show Review Threads", async () => {
     view();
-    await waitFor(() => expect(inlay("T1")).not.toBeNull());
+    // The first render of the merge view can exceed 1 s on slow machines.
+    await waitFor(() => expect(inlay("T1")).not.toBeNull(), { timeout: 5000 });
     const t1 = inlay("T1")!;
     // More than 3 comments: the first, "… 2 more replies", the last.
     expect(t1.textContent).toContain("first");
@@ -216,7 +217,8 @@ describe("review threads in a pull request diff", () => {
     expect(right.contains(t1)).toBe(true);
     expect(t1.closest(".cm-lineInlay")!.previousElementSibling?.textContent).toBe("line three");
     expect(right.querySelectorAll(".cm-reviewControl-toggle")).toHaveLength(2);
-    expect(inlay("T2")).not.toBeNull();
+    // Each inlay renders in its own React root, so T2 can commit a tick after T1.
+    await waitFor(() => expect(inlay("T2")).not.toBeNull());
 
     act(() => setReviewDiffSettings({ threadsView: "unresolved" }));
     await waitFor(() => expect(inlay("T2")).toBeNull());
