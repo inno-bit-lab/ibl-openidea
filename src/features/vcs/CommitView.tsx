@@ -1,4 +1,5 @@
 /** Commit tool window: change list with inclusion checkboxes, message, stashes. */
+import type { FileStatus } from "@/bindings";
 import { useWorkflowSettings } from "@/platform/workflowSettings";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import { tx } from "@/platform/i18n";
@@ -300,6 +301,30 @@ function ChangesPanel() {
   const groupByRepo = useCommit((s) => s.groupByRepo);
   const groupByModule = useCommit((s) => s.groupByModule);
   const showIgnored = useCommit((s) => s.showIgnored);
+  const [ignoredFiles, setIgnoredFiles] = useState<FileStatus[]>([]);
+  useEffect(() => {
+    if (!showIgnored) {
+      setIgnoredFiles([]);
+      return;
+    }
+    let alive = true;
+    void call(commands.vcsIgnored()).then(
+      (files) => {
+        if (alive) setIgnoredFiles(files);
+      },
+      () => {
+        if (alive) setIgnoredFiles([]);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [showIgnored, status, root]);
+  const treeStatus = useMemo(() => {
+    if (!showIgnored || !ignoredFiles.length) return status;
+    const seen = new Set(status.map((f) => f.path));
+    return [...status, ...ignoredFiles.filter((f) => !seen.has(f.path))];
+  }, [status, showIgnored, ignoredFiles]);
   const userChecks = useCommit((s) => s.checks);
   const lists = useChangelists((s) => s.state);
   const checks = useMemo(() => withListDefaults(status, root, lists, userChecks), [status, root, lists, userChecks]);
@@ -325,7 +350,7 @@ function ChangesPanel() {
   );
   const roots = useMemo(
     () =>
-      buildChangeTree(status, root, groupByDir, lists, repos, {
+      buildChangeTree(treeStatus, root, groupByDir, lists, repos, {
         groupByDir,
         groupByRepo: effectiveGroupByRepo,
         groupByModule,
@@ -333,7 +358,7 @@ function ChangesPanel() {
         modules,
         repoHeads,
       }),
-    [status, root, groupByDir, effectiveGroupByRepo, groupByModule, showIgnored, lists, repos, modules, repoHeads],
+    [treeStatus, root, groupByDir, effectiveGroupByRepo, groupByModule, showIgnored, lists, repos, modules, repoHeads],
   );
   const [byKey, parents] = useMemo(() => {
     const m = new Map<string, ChangeNode>();

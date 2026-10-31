@@ -141,6 +141,81 @@ async fn serves_projects_files_documents_search_and_runs() {
     );
 }
 
+fn init_git_repo_with_ignored() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let run_git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repo)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    };
+    run_git(&["init"]);
+    run_git(&["config", "user.email", "test@example.com"]);
+    run_git(&["config", "user.name", "Test"]);
+    std::fs::write(repo.join(".gitignore"), "ignored.log\n").unwrap();
+    std::fs::write(repo.join("tracked.txt"), "v1\n").unwrap();
+    run_git(&["add", ".gitignore", "tracked.txt"]);
+    run_git(&["commit", "-m", "initial"]);
+    std::fs::write(repo.join("tracked.txt"), "v2\n").unwrap();
+    std::fs::write(repo.join("untracked.txt"), "new\n").unwrap();
+    std::fs::write(repo.join("ignored.log"), "secret\n").unwrap();
+    (dir, repo)
+}
+
+fn connect_standard(base: &std::path::Path) -> (Peer, Arc<Client>) {
+    let peer_slot = Arc::new(OnceLock::new());
+    let sink_peer = peer_slot.clone();
+    let host = Arc::new(Host::new(HostConfig {
+        config_dir: base.join("config"),
+        data_dir: base.join("data"),
+        managed_agents_dir: None,
+        languages: Arc::new(ide_language::LanguageRegistry::load(None).unwrap()),
+        syntax: Arc::default(),
+        sink_for: Box::new(move |w| rpc::event_sink(sink_peer.clone(), Some(w.to_owned()))),
+        owner: |w| w,
+        runtime: tokio::runtime::Handle::current(),
+    }));
+    let (client_io, server_io) = tokio::io::duplex(1 << 20);
+    let (sr, sw) = tokio::io::split(server_io);
+    tokio::spawn(rpc::serve(host, Dispatcher::standard(), peer_slot, sr, sw));
+    let (cr, cw) = tokio::io::split(client_io);
+    let client = Arc::new(Client::default());
+    let peer = Peer::connect(cr, cw, client.clone());
+    (peer, client)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vcs_status_leaves_out_ignored_files() {
+    let (dir, repo) = init_git_repo_with_ignored();
+    let (peer, _client) = connect_standard(&dir.path().join("server"));
+    invoke(&peer, "open_project", json!({ "path": repo })).await.unwrap();
+
+    let status = invoke(&peer, "vcs_status", json!({})).await.unwrap();
+    let entries = status.as_array().unwrap();
+    let paths: Vec<&str> = entries.iter().filter_map(|e| e["path"].as_str()).collect();
+    assert!(paths.iter().any(|p| p.ends_with("tracked.txt")), "{entries:?}");
+    assert!(paths.iter().any(|p| p.ends_with("untracked.txt")), "{entries:?}");
+    assert!(!paths.iter().any(|p| p.ends_with("ignored.log")), "{entries:?}");
+    assert!(!entries.iter().any(|e| e["unstaged"] == "ignored"), "{entries:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vcs_ignored_lists_only_ignored_files() {
+    let (dir, repo) = init_git_repo_with_ignored();
+    let (peer, _client) = connect_standard(&dir.path().join("server"));
+    invoke(&peer, "open_project", json!({ "path": repo })).await.unwrap();
+
+    let ignored = invoke(&peer, "vcs_ignored", json!({})).await.unwrap();
+    let entries = ignored.as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert!(entries[0]["path"].as_str().unwrap().ends_with("ignored.log"), "{entries:?}");
+    assert_eq!(entries[0]["unstaged"], "ignored");
+}
+
 trait EventType {
     fn event_type(&self) -> String;
 }

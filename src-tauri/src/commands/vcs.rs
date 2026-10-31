@@ -15,6 +15,12 @@ use tauri::{State, Window};
 pub async fn vcs_status(window: Window, state: State<'_, AppState>) -> IdeResult<Vec<FileStatus>> {
     ide_host::ops::vcs::status(&state.host, window.label()).await
 }
+/// Ignored files of every repository of the project.
+#[tauri::command]
+#[specta::specta]
+pub async fn vcs_ignored(window: Window, state: State<'_, AppState>) -> IdeResult<Vec<FileStatus>> {
+    ide_host::ops::vcs::ignored(&state.host, window.label()).await
+}
 /// The project's repositories, the primary one first.
 #[tauri::command]
 #[specta::specta]
