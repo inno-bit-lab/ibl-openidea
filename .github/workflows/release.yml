@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.release.outputs.id }}
+      already_published: ${{ steps.release.outputs.already_published }}
     steps:
       - uses: actions/checkout@v4
         with: { ref: "${{ env.TAG }}" }
@@ -44,18 +45,23 @@ jobs:
             const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo });
             const existing = releases.find((r) => r.tag_name === tag);
             if (existing) {
-              if (!existing.draft) core.setFailed(`release ${tag} is already published`);
+              if (!existing.draft) {
+                core.info(`release ${tag} is already published; skipping CI build`);
+                core.setOutput("already_published", "true");
+                return;
+              }
               core.setOutput("id", existing.id);
               return;
             }
             const { data } = await github.rest.repos.createRelease({
-              owner, repo, tag_name: tag, name: `OpenIDEA ${tag}`,
+              owner, repo, tag_name: tag, name: `IBLOpenIdea ${tag}`,
               draft: true, prerelease: tag.includes("-"), generate_release_notes: true,
             });
             core.setOutput("id", data.id);
 
   build:
     needs: create-release
+    if: needs.create-release.outputs.already_published != 'true'
     name: Build (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -116,9 +122,11 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: ${{ env.TAG }}
-          args: --target ${{ matrix.target }}
+          # RPM rejects '-' in Version and Tauri has no RPM version override, so a
+          # pre-release tag (vX.Y.Z-N) builds the Linux deb and AppImage only.
+          args: --target ${{ matrix.target }}${{ matrix.os == 'ubuntu-22.04' && contains(env.TAG, '-') && ' --bundles deb,appimage' || '' }}
           # The parallel builds would race on one latest.json; `updater-manifest` writes it once.
-          uploadUpdaterJson: false
+          includeUpdaterJson: false
       # tauri-action notarizes the .app but not the DMG around it; notarize and
       # staple the DMG too, then replace the uploaded asset.
       - name: Notarize DMG
@@ -138,6 +146,7 @@ jobs:
   # Linux builds are static (musl), so they run whatever the host's glibc.
   server:
     needs: create-release
+    if: needs.create-release.outputs.already_published != 'true'
     name: Server (${{ matrix.os }}-${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -178,6 +187,7 @@ jobs:
   # Fails when a platform is missing, so a release never ships a manifest without it.
   updater-manifest:
     needs: [create-release, build]
+    if: needs.create-release.outputs.already_published != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7
@@ -198,7 +208,8 @@ jobs:
             const kinds = [
               [/_amd64\.AppImage$/, ["linux-x86_64", "linux-x86_64-appimage"]],
               [/_amd64\.deb$/, ["linux-x86_64-deb"]],
-              [/\.x86_64\.rpm$/, ["linux-x86_64-rpm"]],
+              // Pre-release tags build no rpm (see the build job).
+              ...(tag.includes("-") ? [] : [[/\.x86_64\.rpm$/, ["linux-x86_64-rpm"]]]),
               [/_aarch64\.app\.tar\.gz$/, ["darwin-aarch64", "darwin-aarch64-app"]],
               [/_x64\.app\.tar\.gz$/, ["darwin-x86_64", "darwin-x86_64-app"]],
               [/_x64_en-US\.msi$/, ["windows-x86_64", "windows-x86_64-msi"]],
@@ -233,6 +244,7 @@ jobs:
 
   publish:
     needs: [create-release, build, server, updater-manifest]
+    if: needs.create-release.outputs.already_published != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/github-script@v7

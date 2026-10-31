@@ -7,7 +7,7 @@ use ide_core::CancellationToken;
 use ide_core::{IdeError, IdeResult};
 use std::path::{Path, PathBuf};
 
-const RELEASES: &str = "https://github.com/l0ng-ai/openidea/releases/download";
+const RELEASES: &str = "https://github.com/inno-bit-lab/ibl-openidea/releases/download";
 
 /// Host platforms with a published server (Rust's `OS`-`ARCH` names).
 pub const PLATFORMS: &[(&str, &str)] =
@@ -94,6 +94,7 @@ mod tests {
         assert_eq!(asset_name("linux", "x86_64"), "openidea-server-linux-x86_64.gz");
         let p = cached_path(Path::new("/data"), "1.2.3", "linux", "aarch64");
         assert_eq!(p, Path::new("/data/server/1.2.3/linux-aarch64/openidea-server"));
+        assert_eq!(RELEASES, "https://github.com/inno-bit-lab/ibl-openidea/releases/download");
     }
 
     #[test]

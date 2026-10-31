@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenIDEA",
+  "productName": "IBLOpenIdea",
   "version": "0.1.29",
-  "identifier": "ai.l0ng.openidea",
+  "identifier": "it.innobitlab.iblopenidea",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
       {
         "label": "main",
         "create": false,
-        "title": "OpenIDEA",
+        "title": "IBLOpenIdea",
         "width": 1440,
         "height": 900,
         "minWidth": 800,
@@ -39,20 +39,21 @@
     "createUpdaterArtifacts": true,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "category": "DeveloperTool",
-    "copyright": "Copyright © 2026 OpenIDEA contributors",
+    "copyright": "Copyright © 2026 InnoBitLab S.r.l. & OpenIDEA contributors",
     "license": "Apache-2.0",
-    "shortDescription": "An open-source IDE inspired by IntelliJ IDEA",
-    "longDescription": "OpenIDEA is an open-source IDE inspired by IntelliJ IDEA. Not affiliated with JetBrains.",
+    "shortDescription": "IBLOpenIdea — InnoBitLab IDE based on OpenIDEA",
+    "longDescription": "IBLOpenIdea is the InnoBitLab fork of OpenIDEA, an open-source IDE inspired by IntelliJ IDEA. Not affiliated with JetBrains.",
     "macOS": {
       "entitlements": "./Entitlements.plist",
       "minimumSystemVersion": "11.0"
-    }
+    },
+    "publisher": "InnoBitLab S.r.l."
   },
   "mainBinaryName": "openidea",
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFCOUU0MUFFOUY4NzZCNkQKUldSdGE0ZWZya0dlRzNnRFJUR2loUVdNZ1BmamxkNzFoaWNPUTBsRmI0cjhxZFRqQURybkMwakEK",
-      "endpoints": ["https://github.com/l0ng-ai/openidea/releases/latest/download/latest.json"]
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZGNDg4QjA2Nzk5MEEzQkUKUldTK281QjVCb3RJYjdWelJRaUFqZGFyc3RYZ3pXSStPVXE3Q0ZtaWU5aE5uNkE1eW5iUWZ1ZmoK",
+      "endpoints": ["https://github.com/inno-bit-lab/ibl-openidea/releases/latest/download/latest.json"]
     }
   }
 }
