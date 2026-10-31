@@ -56,9 +56,11 @@ async fn run(base: PathBuf) -> i32 {
     };
     let peer = Arc::new(OnceLock::new());
     let sink_peer = peer.clone();
+    let managed_agents_dir = Some(data_dir.join("acp-agents"));
     let host = Arc::new(Host::new(HostConfig {
         config_dir,
         data_dir,
+        managed_agents_dir,
         languages,
         syntax: Arc::default(),
         sink_for: Box::new(move |window| rpc::event_sink(sink_peer.clone(), Some(window.to_owned()))),

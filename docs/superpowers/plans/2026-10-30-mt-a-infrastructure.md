@@ -136,7 +136,7 @@ gh pr checks --watch
 - All six tasks committed on `fix/rh-mt-a`, pushed, PR open into `fix/release-hardening`.
 - Every `ci.yml` job green on the PR, or the remaining failures are only in MT-B-owned files and are listed.
 - Task 1 delivered early and announced.
-- Delivery `res` to the coordinator via the bridge: frozen SHA, PR URL, CI run URL, outputs of section 6, measured build time and memory, and a list of anything NOT_VERIFIED.
+- Delivery `res` to the coordinator via the bridge: frozen SHA, PR URL, CI run URL, outputs of section 6, and a list of anything NOT_VERIFIED. (The measured local NSIS build was waived by the owner on 2026-10-31: release builds run only in CI.)
 
 ## 8. Acceptance criteria
 
@@ -144,7 +144,7 @@ gh pr checks --watch
 |---|---|
 | Slots serialize and survive a killed holder | `cargo-slot.tests.ps1` |
 | Two worktrees run the app at once with separate ports and profiles | Task 2 run, spec A5 |
-| Local installer builds without a signing key | Task 3 |
+| Local installer builds without a signing key | Task 3 script review; the measured run was waived (release builds only in CI) |
 | `latest.json` is written once and fails on a missing platform | Task 4 diff; first release candidate (spec A1) |
 | Broken bindings export fails CI | Task 5 |
 | CI green | PR checks |

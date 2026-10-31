@@ -270,7 +270,7 @@ function MessageSuggestion() {
     <>
       <Row
         label="Agent"
-        hint="Writes the message from the changes about to be committed, in a one-off session that cannot change files. Agents are those of the Agents tool window."
+        hint="The agent runs read-only in an empty temporary folder. Only agents with a read-only or default permission mode can be used."
       >
         <Select
           value={agent}

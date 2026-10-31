@@ -77,6 +77,7 @@ impl AppState {
         let host = Arc::new(Host::new(ide_host::HostConfig {
             config_dir: config_dir.clone(),
             data_dir: data_dir.clone(),
+            managed_agents_dir: app.path().app_local_data_dir().ok().map(|d| d.join("acp-agents")),
             languages: languages.clone(),
             syntax,
             sink_for: Box::new(move |window| {

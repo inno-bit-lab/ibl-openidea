@@ -2,7 +2,7 @@
   "name": "openidea",
   "private": true,
   "description": "An open-source IDE inspired by IntelliJ IDEA",
-  "version": "0.2.1",
+  "version": "0.2.2-1",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -19,6 +19,10 @@
     "gen:theme-docs": "node scripts/theme/gen-docs.ts",
     "theme:import-intellij": "node scripts/theme/import-intellij-theme.ts",
     "dev:app": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "dev:local": "pwsh -NoProfile -File scripts/local/dev.ps1",
+    "build:local": "pwsh -NoProfile -File scripts/local/build.ps1",
+    "test:rust": "pwsh -NoProfile -File scripts/local/test-rust.ps1",
+    "test:full": "pwsh -NoProfile -File scripts/local/test-full.ps1",
     "e2e": "playwright test",
     "perf": "node perf/run.ts",
     "perf:rust": "node perf/rust.ts"

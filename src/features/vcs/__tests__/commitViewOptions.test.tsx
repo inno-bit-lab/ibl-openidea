@@ -1,6 +1,20 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { FileStatus } from "@/bindings";
+
+const vcsIgnored = vi.fn<() => Promise<{ status: "ok"; data: FileStatus[] }>>();
+
+vi.mock("@/platform/ipc", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/platform/ipc")>();
+  return {
+    ...real,
+    commands: {
+      ...real.commands,
+      vcsIgnored: () => vcsIgnored(),
+    },
+  };
+});
+
 import { ContextMenuHost, hideContextMenu } from "@/ui/Menu";
 import { useProject } from "@/platform/project";
 import { useProjectRoots } from "@/platform/projectRoots";
@@ -8,7 +22,7 @@ import { CommitToolWindow } from "../CommitView";
 import { setGroupByDir, setGroupByModule, setGroupByRepo, setShowIgnored, useCommit } from "../commitStore";
 import { useVcs } from "../store";
 
-const status: FileStatus[] = [
+const nonIgnoredStatus: FileStatus[] = [
   {
     path: "/ws/chb/src/Main.java",
     relPath: "src/Main.java",
@@ -30,6 +44,9 @@ const status: FileStatus[] = [
     unstaged: "untracked",
     renamedFrom: null,
   },
+];
+
+const ignoredOnlyStatus: FileStatus[] = [
   {
     // Matches backend IpcPath serialization: `path` has no trailing slash while `relPath` ends with `/`.
     path: "/ws/chb/target",
@@ -47,8 +64,12 @@ const status: FileStatus[] = [
   },
 ];
 
+const status: FileStatus[] = [...nonIgnoredStatus, ...ignoredOnlyStatus];
+
 describe("CommitView View Options & Group By / Show Ignored Files", () => {
   beforeEach(() => {
+    vcsIgnored.mockReset();
+    vcsIgnored.mockResolvedValue({ status: "ok", data: ignoredOnlyStatus });
     hideContextMenu();
     setGroupByDir(false);
     setGroupByRepo(true);
@@ -151,5 +172,43 @@ describe("CommitView View Options & Group By / Show Ignored Files", () => {
     fireEvent.keyDown(tree, { key: "µ", code: "KeyM", metaKey: true, altKey: true });
     expect(useCommit.getState().groupByModule).toBe(true);
     expect(within(tree).getByText("api")).toBeTruthy();
+  });
+
+  it("does not call vcsIgnored while Show Ignored is off", () => {
+    useVcs.setState({ status: nonIgnoredStatus });
+    render(
+      <>
+        <CommitToolWindow />
+        <ContextMenuHost />
+      </>,
+    );
+
+    const tree = screen.getByRole("tree", { name: "Changes" });
+    expect(within(tree).queryByText("Ignored Files")).toBeNull();
+    expect(vcsIgnored).not.toHaveBeenCalled();
+  });
+
+  it("shows the files returned by vcsIgnored while Show Ignored is on", async () => {
+    useVcs.setState({ status: nonIgnoredStatus });
+    render(
+      <>
+        <CommitToolWindow />
+        <ContextMenuHost />
+      </>,
+    );
+
+    expect(vcsIgnored).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "View Options" }));
+    fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitemcheckbox", { name: /Ignored Files/ }));
+
+    expect(vcsIgnored).toHaveBeenCalledTimes(1);
+    const tree = screen.getByRole("tree", { name: "Changes" });
+    const ignoredLabel = await within(tree).findByText("Ignored Files");
+    const ignoredRow = ignoredLabel.closest("[role='treeitem']") as HTMLElement;
+    expect(within(ignoredRow).getByText("1 directory and 1 file")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand All" }));
+    expect(within(tree).getByText("target")).toBeTruthy();
+    expect(within(tree).getByText("debug.log")).toBeTruthy();
   });
 });

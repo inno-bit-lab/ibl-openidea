@@ -9,6 +9,7 @@ if (-not (Test-Path -LiteralPath $slotScript -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'scripts/local/env.ps1') -PathType Leaf)) {
     throw 'The local environment script is missing: scripts/local/env.ps1'
 }
+. (Join-Path $repoRoot 'scripts/local/env.ps1')
 
 $pwshPath = (Get-Process -Id $PID).Path
 $runId = [Guid]::NewGuid().ToString('N')
@@ -181,9 +182,10 @@ try {
     $holder.Process.Kill($true)
     Assert-True ($holder.Process.WaitForExit(5000)) 'The killed holder did not exit.'
     $remainingMilliseconds = [Math]::Max(1, 5000 - [int]$recoveryWatch.ElapsedMilliseconds)
-    $null = Wait-Marker $waiterStart $waiter $remainingMilliseconds
+    Wait-OutputBarrier $waiter '\[cargo-slot\] Acquired' $remainingMilliseconds
     $recoveryMilliseconds = $recoveryWatch.ElapsedMilliseconds
     Assert-True ($recoveryMilliseconds -lt 5000) "The waiter took $recoveryMilliseconds ms to acquire an abandoned slot."
+    $null = Wait-Marker $waiterStart $waiter
     Assert-True (-not (Test-Path -LiteralPath $holderEnd)) 'The holder completed normally instead of being killed.'
     Save-ProcessOutput $holder
     Wait-Child $waiter

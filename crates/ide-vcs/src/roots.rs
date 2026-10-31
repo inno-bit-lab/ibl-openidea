@@ -165,10 +165,8 @@ impl Repos {
                 }
             };
             out.extend(status.into_iter().filter(|f| {
-                let nested_root = matches!(
-                    f.unstaged,
-                    Some(crate::ChangeKind::Untracked | crate::ChangeKind::Ignored)
-                ) && nested.iter().any(|n| f.path.0 == *n);
+                let nested_root = matches!(f.unstaged, Some(crate::ChangeKind::Untracked | crate::ChangeKind::Ignored))
+                    && nested.iter().any(|n| f.path.0 == *n);
                 !nested_root
             }));
         }

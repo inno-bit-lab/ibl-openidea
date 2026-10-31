@@ -26,6 +26,7 @@ pub type SinkFactory = Box<dyn Fn(&str) -> SharedSink + Send + Sync>;
 pub struct HostConfig {
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
+    pub managed_agents_dir: Option<PathBuf>,
     pub languages: Arc<LanguageRegistry>,
     /// Grammars, possibly still being built on another thread.
     pub syntax: Arc<OnceLock<Arc<Syntax>>>,
@@ -38,6 +39,7 @@ pub struct HostConfig {
 pub struct Host {
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
+    pub managed_agents_dir: Option<PathBuf>,
     pub languages: Arc<LanguageRegistry>,
     syntax: Arc<OnceLock<Arc<Syntax>>>,
     pub global_settings: SettingsStore,
@@ -59,7 +61,8 @@ pub struct Host {
 
 impl Host {
     pub fn new(config: HostConfig) -> Self {
-        let HostConfig { config_dir, data_dir, languages, syntax, sink_for, owner, runtime } = config;
+        let HostConfig { config_dir, data_dir, managed_agents_dir, languages, syntax, sink_for, owner, runtime } =
+            config;
         let global_settings = SettingsStore::load(&config_dir, None);
         let ssh = Arc::new(ide_ssh::SshManager::new(data_dir.join("ssh-passwords.json")));
         ssh.set_configs(global_settings.effective().ssh.configs);
@@ -75,6 +78,7 @@ impl Host {
             syntax,
             config_dir,
             data_dir,
+            managed_agents_dir,
             sink_for,
             owner,
             runtime,

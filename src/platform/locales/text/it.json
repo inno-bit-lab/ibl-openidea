@@ -4472,7 +4472,7 @@
   "Choose an agent to suggest commit messages in the Commit settings.": "Scegli un agente per suggerire i messaggi di commit nelle impostazioni di Commit.",
   "Open Settings": "Apri impostazioni",
   "Agent that suggests commit messages": "Agente che suggerisce i messaggi di commit",
-  "Writes the message from the changes about to be committed, in a one-off session that cannot change files. Agents are those of the Agents tool window.": "Scrive il messaggio a partire dalle modifiche che stanno per essere sottoposte a commit, in una sessione singola che non può modificare i file. Gli agenti sono quelli della finestra degli strumenti Agenti.",
+  "The agent runs read-only in an empty temporary folder. Only agents with a read-only or default permission mode can be used.": "L'agente viene eseguito in sola lettura in una cartella temporanea vuota. Possono essere utilizzati solo agenti con una modalità di permessi di sola lettura o predefinita.",
   "Rules": "Regole",
   "Sent to the agent as they are, with the changes: naming convention, wording to avoid, language. Leave empty for a short subject in the imperative mood.": "Inviate così come sono all'agente insieme alle modifiche: convenzioni di denominazione, espressioni da evitare, lingua. Lascia vuoto per un oggetto breve all'imperativo.",
   "Subject: <type>(<scope>): <summary>\nTake the ticket id from the branch name.\nNever mention tools or assistants.": "Oggetto: <type>(<scope>): <summary>\nPrendi l'ID del ticket dal nome del branch.\nNon menzionare mai strumenti o assistenti.",
@@ -4579,5 +4579,8 @@
   "{dirs} directories": "{dirs} directory",
   "…and {more} more repository": "…e altro {more} repository",
   "…and {more} more repositories": "…e altri {more} repository",
-  "View in Console": "Visualizza nella console"
+  "View in Console": "Visualizza nella console",
+  "Delete Branches": "Elimina branch",
+  "Delete the following branches?\n{list}": "Eliminare i seguenti branch?\n{list}",
+  "{name} (remote)": "{name} (remoto)"
 }

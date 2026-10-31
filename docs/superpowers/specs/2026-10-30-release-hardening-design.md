@@ -75,8 +75,8 @@ Fix:
 ### 4.5 Release procedure
 
 1. Bump the version in `Cargo.toml` (workspace), `package.json` and `tauri.conf.json`, update `Cargo.lock`, and merge into `main`.
-2. Tag `vX.Y.Z-rc.1` and push the tag. The chain runs `create-release` (draft), `build` ×4, `server` ×4, `updater-manifest` and `publish`. The existing step already checks that the tag matches `tauri.conf.json`.
-3. Run the acceptance tests on the candidate. If they fail, fix and tag `rc.2`.
+2. Tag `vX.Y.Z-1` and push the tag. The pre-release part is numeric (`0.2.2-1`, not `0.2.2-rc.1`) because the MSI target rejects a non-numeric pre-release; if the tag push does not start `release.yml`, dispatch it with `gh workflow run release.yml -f tag=vX.Y.Z-1`. The chain runs `create-release` (draft), `build` ×4, `server` ×4, `updater-manifest` and `publish`. The existing step already checks that the tag matches `tauri.conf.json`.
+3. Run the acceptance tests on the candidate. If they fail, fix and tag `vX.Y.Z-2`.
 4. Bump to the final version, tag it, and publish curated release notes.
 
 A failed job leaves the release as a draft: fix it and re-run with `workflow_dispatch` on the same tag. A published release that turns out broken is not deleted; ship the next patch version instead, because the updater only moves forward.
@@ -258,7 +258,7 @@ Scripts live in `scripts/local/` (PowerShell) and are exposed as `pnpm` commands
 5. **Machine-wide build slots.** `cargo-slot.ps1` holds one of K named mutexes (`Local\ibl-openidea-cargo-0` to `-<K-1>`, default K = 2; mutexes rather than a semaphore, because Windows releases a mutex as abandoned when its owner dies and never releases a semaphore) around cargo builds, tests and clippy and around the full vitest run, and sets `CARGO_BUILD_JOBS` to cores / K. Callers beyond K wait instead of exhausting memory. Targeted vitest runs do not take a slot.
 6. **Commands in `package.json`**:
    - `dev:local`: per-worktree dev run.
-   - `build:local`: local NSIS installer inside a slot, using `--bundles nsis` and an overlay with `createUpdaterArtifacts: false`, so no signing key is needed. It uses a lighter release profile through `CARGO_PROFILE_RELEASE_LTO=thin` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`, and prints the installer path and size.
+   - `build:local`: local NSIS installer inside a slot, using `--bundles nsis` and an overlay with `createUpdaterArtifacts: false`, so no signing key is needed. It uses a lighter release profile through `CARGO_PROFILE_RELEASE_LTO=thin` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`, and prints the installer path and size. Owner decision (2026-10-31): release builds run only in CI. On the development laptop (4 cores) a cold local release build took more than two hours under load, so `build:local` is an occasional tool and is not part of any gate. Acceptance tests use installers from CI releases and candidates.
    - `test:rust`: targeted `cargo test` inside a slot.
    - `test:full`: the full vitest suite inside a slot.
 7. **Clean-profile testing.** `scripts/local/acceptance.ps1` generates a Windows Sandbox `.wsb` file that maps the installers folder read-only, using an absolute path. Windows Sandbox runs one instance at a time, so clean-profile acceptance tests are serial and run by the integrator.

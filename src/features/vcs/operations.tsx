@@ -14,7 +14,7 @@ import { openDialog, promptText } from "./dialogs";
 import { RepoSelect, useDialogRepo } from "./gitMenuDialogs";
 import { KIND_COLOR, baseName, dirName } from "./model";
 import { runGitOperation, runOp } from "./ops";
-import { reloadLog, useGitLog } from "./logStore";
+import { reloadLog, useGitLog, type LogCommit } from "./logStore";
 import { conflictedFiles, currentRepo, currentRepoRoot, focusRepo, refreshNow, repoOf, useVcs } from "./store";
 import styles from "./common.module.css";
 import { tx } from "@/platform/i18n";
@@ -216,10 +216,10 @@ const short = (id: string) => id.slice(0, 8);
  * Commits newest first in the log's topological order (author dates lie after
  * rebases and cherry-picks); commits not loaded in the log fall back to their date.
  */
-export function newestFirst(
-  commits: readonly Commit[],
+export function newestFirst<T extends Commit>(
+  commits: readonly T[],
   log: readonly Commit[] = useGitLog.getState().commits,
-): Commit[] {
+): T[] {
   const pos = new Map(log.map((c, i) => [c.id, i]));
   return [...commits].sort((a, b) => {
     const pa = pos.get(a.id);
@@ -229,21 +229,31 @@ export function newestFirst(
   });
 }
 
-export async function cherryPick(commits: Commit[]) {
+export async function cherryPick(commits: LogCommit[]) {
   if (!commits.length) return;
-  // Oldest first, as IDEA applies them.
-  const ordered = newestFirst(commits).reverse();
-  const label =
-    ordered.length === 1 ? `${short(ordered[0]!.id)} “${ordered[0]!.summary}”` : `${ordered.length} commits`;
-  await runGitOperation(
-    { op: "cherryPick", commits: ordered.map((c) => c.id) },
-    {
-      progress: "Cherry-picking",
-      success: `Cherry-picked ${label}`,
-      failure: "Cherry-pick failed",
-      onError: conflictsInstead,
-    },
-  );
+  // Oldest first, as IDEA applies them, one repository at a time.
+  const byRepo = new Map<string | undefined, LogCommit[]>();
+  for (const c of commits) {
+    const list = byRepo.get(c.repo);
+    if (list) list.push(c);
+    else byRepo.set(c.repo, [c]);
+  }
+  for (const [repo, group] of byRepo) {
+    const ordered = newestFirst(group).reverse();
+    const label =
+      ordered.length === 1 ? `${short(ordered[0]!.id)} “${ordered[0]!.summary}”` : `${ordered.length} commits`;
+    const ok = await runGitOperation(
+      { op: "cherryPick", commits: ordered.map((c) => c.id) },
+      {
+        repo,
+        progress: "Cherry-picking",
+        success: `Cherry-picked ${label}`,
+        failure: "Cherry-pick failed",
+        onError: conflictsInstead,
+      },
+    );
+    if (!ok) return;
+  }
 }
 
 export async function revertCommits(commits: Commit[]) {

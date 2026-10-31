@@ -32,8 +32,8 @@ pub(crate) fn status_with_ignored(r: &Repo, include_ignored: bool) -> IdeResult<
         .index_worktree_submodules(gix::status::Submodule::AsConfigured { check_dirty: true })
         .tree_index_track_renames(gix::status::tree_index::TrackRenames::Given(gix::diff::Rewrites::default()));
     if include_ignored {
-        platform = platform
-            .dirwalk_options(|opts| opts.emit_ignored(Some(gix::dir::walk::EmissionMode::CollapseDirectory)));
+        platform =
+            platform.dirwalk_options(|opts| opts.emit_ignored(Some(gix::dir::walk::EmissionMode::CollapseDirectory)));
     }
     let mut iter = platform.into_iter(Vec::<gix::bstr::BString>::new()).map_err(gx)?;
     for item in iter.by_ref() {
