@@ -33,13 +33,29 @@ fn unicode_character(text: &str) -> Option<(char, usize)> {
         let low = unicode_escape(&text[6..]).filter(|low| (0xDC00..=0xDFFF).contains(low))?;
         char::from_u32(0x10000 + ((unit as u32 - 0xD800) << 10) + low as u32 - 0xDC00).map(|c| (c, 12))
     } else {
-        // A decoded line terminator would save as a real line break and split the property.
-        char::from_u32(unit as u32).filter(|c| !matches!(c, '\n' | '\r')).map(|c| (c, 6))
+        // Decoded, these would save bare after any edit: a line terminator splits the
+        // property, and separators, comment markers, whitespace and the escape character
+        // change keys, values or comments. They keep their escaped spelling.
+        char::from_u32(unit as u32)
+            .filter(|c| !matches!(c, '\n' | '\r' | '\\' | '=' | ':' | '#' | '!' | ' ' | '\t' | '\x0C'))
+            .map(|c| (c, 6))
     }
 }
 
+/// Whether a backslash shown before `after` saves as `\u005C` again (see
+/// [`encode_properties_ascii`]), so a `\u005C` there can be shown decoded.
+fn backslash_saves_escaped(after: &str) -> bool {
+    let mut end = after.len().min(11);
+    while !after.is_char_boundary(end) {
+        end -= 1;
+    }
+    let next = unicode_character(after).map(|(c, _)| c).or_else(|| after.chars().next());
+    unicode_character(&format!("\\{}", &after[..end])).is_some() || next.is_some_and(|c| !c.is_ascii())
+}
+
 /// Decodes eligible Java properties Unicode escapes once. Backslash pairs,
-/// malformed escapes and unpaired surrogates retain their literal spelling.
+/// malformed escapes, unpaired surrogates and escapes of characters that carry
+/// properties syntax retain their literal spelling.
 pub fn decode_properties_escapes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -47,6 +63,11 @@ pub fn decode_properties_escapes(text: &str) -> String {
         if rest.starts_with("\\\\") {
             out.push_str("\\\\");
             rest = &rest[2..];
+            continue;
+        }
+        if unicode_escape(rest) == Some(0x5C) && backslash_saves_escaped(&rest[6..]) {
+            out.push('\\');
+            rest = &rest[6..];
             continue;
         }
         if let Some((c, len)) = unicode_character(rest) {
@@ -400,6 +421,35 @@ mod tests {
         let displayed = decode_properties_escapes(source);
         assert_eq!(displayed, source);
         assert_eq!(encode_properties_ascii(&displayed.replace("three", "3")), r"key=one\u000Atwo\u000D3");
+    }
+
+    #[test]
+    fn properties_syntax_escapes_keep_their_meaning() {
+        // Shown decoded, each of these would change a key, a value or a comment once saved.
+        for source in [
+            r"k\u003Dv=1",
+            r"k\u003Av=1",
+            r"\u0023c=1",
+            r"\u0021c=1",
+            r"a\u0020b=1",
+            r"k=\u0020lead",
+            r"k\u0009=1",
+            r"k\u000C=1",
+            r"v=\u005Cn",
+            r"v=\u005C",
+            r"v=\u005Cu003D",
+            r"v=\u005C\u005C",
+            r"v=\u005C\\",
+        ] {
+            let displayed = decode_properties_escapes(source);
+            assert_eq!(displayed, source);
+            assert_eq!(encode_properties_ascii(&format!("{displayed}\nedited=1")), format!("{source}\nedited=1"));
+        }
+        // A backslash that saves as \u005C again can still be shown decoded.
+        for (source, displayed) in [(r"v=\u005C\u4E2D", r"v=\中"), (r"v=\u005c\u4e2d", r"v=\中")] {
+            assert_eq!(decode_properties_escapes(source), displayed, "{source}");
+            assert_eq!(decode_properties_escapes(&encode_properties_ascii(displayed)), displayed);
+        }
     }
 
     #[test]
