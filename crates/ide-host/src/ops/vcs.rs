@@ -20,5 +20,27 @@ pub async fn status(host: &Host, window: &str) -> IdeResult<Vec<FileStatus>> {
     .await
 }
 
+/// Files git ignores in every repository of the project (Commit view › Show Ignored Files).
+pub async fn ignored(host: &Host, window: &str) -> IdeResult<Vec<FileStatus>> {
+    let project = host.project(window)?;
+    host.blocking(move || {
+        let settings = project.settings.effective();
+        apply_git_executable(&settings);
+        let repos = project.repos();
+        if repos.is_empty() {
+            return Err(ide_core::IdeError::unavailable("project is not a git repository"));
+        }
+        for r in repos.all() {
+            r.set_ignored_names(settings.ignored_names());
+        }
+        Ok(repos
+            .status_with_ignored(true)?
+            .into_iter()
+            .filter(|f| f.unstaged == Some(ide_vcs::ChangeKind::Ignored))
+            .collect())
+    })
+    .await
+}
+
 mod commands;
 pub use commands::*;

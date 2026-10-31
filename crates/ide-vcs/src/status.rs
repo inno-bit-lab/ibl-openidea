@@ -15,6 +15,12 @@ struct Entry {
 }
 
 pub(crate) fn status(r: &Repo) -> IdeResult<Vec<FileStatus>> {
+    status_with(r, false)
+}
+
+/// Working tree status; with `include_ignored`, also the files git ignores (an ignored
+/// directory collapsed to one `dir/` entry) as `unstaged: Ignored`, never over a tracked change.
+pub(crate) fn status_with(r: &Repo, include_ignored: bool) -> IdeResult<Vec<FileStatus>> {
     let repo = r.gix()?;
     let mut map: BTreeMap<String, Entry> = BTreeMap::new();
     let mut conflicts: HashSet<String> = HashSet::new();
@@ -26,13 +32,17 @@ pub(crate) fn status(r: &Repo) -> IdeResult<Vec<FileStatus>> {
     // one stat refresh, which is safe.
     let index_path = repo.index_path();
     let opened = crate::index_writes::stamp(&index_path);
-    let platform = repo
+    let mut platform = repo
         .status(gix::progress::Discard)
         .map_err(gx)?
         .untracked_files(gix::status::UntrackedFiles::Files)
         .index_worktree_rewrites(None)
         .index_worktree_submodules(gix::status::Submodule::AsConfigured { check_dirty: true })
         .tree_index_track_renames(gix::status::tree_index::TrackRenames::Given(gix::diff::Rewrites::default()));
+    if include_ignored {
+        platform =
+            platform.dirwalk_options(|opts| opts.emit_ignored(Some(gix::dir::walk::EmissionMode::CollapseDirectory)));
+    }
     let mut iter = platform.into_iter(Vec::<gix::bstr::BString>::new()).map_err(gx)?;
     for item in iter.by_ref() {
         let item = item.map_err(gx)?;
@@ -53,9 +63,11 @@ pub(crate) fn status(r: &Repo) -> IdeResult<Vec<FileStatus>> {
                     map.entry(path).or_default().unstaged = Some(kind);
                 }
                 WtItem::DirectoryContents { entry, .. } => {
-                    if entry.status != gix::dir::entry::Status::Untracked {
-                        continue;
-                    }
+                    let kind = match entry.status {
+                        gix::dir::entry::Status::Untracked => ChangeKind::Untracked,
+                        gix::dir::entry::Status::Ignored(_) if include_ignored => ChangeKind::Ignored,
+                        _ => continue,
+                    };
                     let mut path = to_string(entry.rela_path.as_ref());
                     if ignored.is_ignored_path(&path) {
                         continue;
@@ -63,7 +75,11 @@ pub(crate) fn status(r: &Repo) -> IdeResult<Vec<FileStatus>> {
                     if entry.disk_kind.is_some_and(|k| k.is_dir()) && !path.ends_with('/') {
                         path.push('/');
                     }
-                    map.entry(path).or_default().unstaged = Some(ChangeKind::Untracked);
+                    let e = map.entry(path).or_default();
+                    // A tracked file can match an ignore rule: its change wins.
+                    if kind != ChangeKind::Ignored || (e.staged.is_none() && e.unstaged.is_none()) {
+                        e.unstaged = Some(kind);
+                    }
                 }
                 WtItem::Rewrite { dirwalk_entry, .. } => {
                     // Rewrites are disabled for index↔worktree, but stay correct if git config enables them.
@@ -184,6 +200,16 @@ mod tests {
     /// finished must not write its stale snapshot back over the new index.
     #[test]
     fn an_external_index_write_during_status_is_not_overwritten() {
+        external_index_write_survives(false);
+    }
+
+    /// The same guard holds for the status that also lists ignored files (Show Ignored Files).
+    #[test]
+    fn an_external_index_write_during_ignored_status_is_not_overwritten() {
+        external_index_write_survives(true);
+    }
+
+    fn external_index_write_survives(include_ignored: bool) {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         git(dir, &["init", "-q"]);
@@ -191,7 +217,10 @@ mod tests {
         git(dir, &["config", "user.email", "test@example.com"]);
         git(dir, &["config", "commit.gpgsign", "false"]);
         std::fs::write(dir.join("base.txt"), "base\n").unwrap();
+        std::fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
         commit_all(dir, "base");
+        // Something for the ignored-files walk to report.
+        std::fs::write(dir.join("build.log"), "log\n").unwrap();
         // A branch that differs by a file and a deletion, so a switch rewrites the index.
         git(dir, &["checkout", "-q", "-b", "other"]);
         std::fs::write(dir.join("other.txt"), "other\n").unwrap();
@@ -215,8 +244,11 @@ mod tests {
         // The status result itself describes the tree as it was when it read the index
         // (base.txt still modified there); what matters is that it does not write that
         // snapshot back over the index `git switch` produced.
-        repo.status().expect("status runs");
+        let listed = status_with(&repo, include_ignored).expect("status runs");
         assert!(hook_ran.load(std::sync::atomic::Ordering::SeqCst), "the external write landed mid-status");
+        let ignored: Vec<&str> =
+            listed.iter().filter(|f| f.unstaged == Some(ChangeKind::Ignored)).map(|f| f.rel_path.as_str()).collect();
+        assert_eq!(ignored, if include_ignored { vec!["build.log"] } else { vec![] });
 
         // The index on disk is the one `git switch` wrote: its entries match the new branch.
         let listed = Command::new("git").current_dir(dir).args(["ls-files"]).output().unwrap();
