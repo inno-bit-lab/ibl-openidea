@@ -342,6 +342,15 @@ impl Default for AppearanceSettings {
     }
 }
 
+/// Imported editor colour scheme on top of a built-in base.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomColorScheme {
+    pub name: String,
+    pub parent: String,
+    pub attributes: BTreeMap<String, TextAttributesOverride>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Type)]
 #[serde(default, rename_all = "camelCase")]
 pub struct EditorSettings {
@@ -357,6 +366,8 @@ pub struct EditorSettings {
     pub format_on_save: bool,
     /// Editor colour scheme id; `theme-default` follows the IDE theme.
     pub color_scheme: String,
+    /// Imported editor schemes, stored in user settings.
+    pub custom_schemes: BTreeMap<String, CustomColorScheme>,
     /// Color Scheme edits: scheme id → attribute id → override.
     pub color_overrides: BTreeMap<String, BTreeMap<String, TextAttributesOverride>>,
     /// Color Scheme › Language Defaults › Semantic highlighting: local variables and
@@ -404,6 +415,7 @@ impl Default for EditorSettings {
             format_on_save: false,
             color_scheme: "theme-default".into(),
             color_overrides: BTreeMap::new(),
+            custom_schemes: BTreeMap::new(),
             semantic_highlighting: false,
             rainbow_brackets: false,
             ligatures: false,
@@ -434,6 +446,8 @@ impl Default for EditorSettings {
 pub struct FileSettings {
     /// Save on focus loss / tab switch, like IDEA.
     pub auto_save: bool,
+    /// Re-check open files against disk when the IDE window gains focus.
+    pub sync_on_focus: bool,
     pub exclude: Vec<String>,
     /// Ignored Files and Folders: name patterns hidden everywhere; see [`crate::ignored`].
     pub ignored_names: Vec<String>,
@@ -465,6 +479,7 @@ impl Default for FileSettings {
     fn default() -> Self {
         Self {
             auto_save: true,
+            sync_on_focus: true,
             exclude: vec!["**/.git".into(), "**/node_modules".into(), "**/target".into()],
             ignored_names: crate::ignored::DEFAULT_IGNORED_NAMES.iter().map(|s| (*s).into()).collect(),
             trim_trailing_whitespace: true,

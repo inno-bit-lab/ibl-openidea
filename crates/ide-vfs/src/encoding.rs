@@ -22,6 +22,108 @@ pub(crate) fn encoding_label(enc: &'static Encoding) -> String {
     enc.name().to_ascii_lowercase()
 }
 
+fn unicode_escape(text: &str) -> Option<u16> {
+    let digits = text.strip_prefix("\\u")?.as_bytes().get(..4)?;
+    digits.iter().try_fold(0u16, |n, b| Some(n * 16 + (*b as char).to_digit(16)? as u16))
+}
+
+fn unicode_character(text: &str) -> Option<(char, usize)> {
+    let unit = unicode_escape(text)?;
+    if (0xD800..=0xDBFF).contains(&unit) {
+        let low = unicode_escape(&text[6..]).filter(|low| (0xDC00..=0xDFFF).contains(low))?;
+        char::from_u32(0x10000 + ((unit as u32 - 0xD800) << 10) + low as u32 - 0xDC00).map(|c| (c, 12))
+    } else {
+        // Decoded, these would save bare after any edit: a line terminator splits the
+        // property, and separators, comment markers, whitespace and the escape character
+        // change keys, values or comments. They keep their escaped spelling.
+        char::from_u32(unit as u32)
+            .filter(|c| !matches!(c, '\n' | '\r' | '\\' | '=' | ':' | '#' | '!' | ' ' | '\t' | '\x0C'))
+            .map(|c| (c, 6))
+    }
+}
+
+/// Whether a backslash shown before `after` saves as `\u005C` again (see
+/// [`encode_properties_ascii`]), so a `\u005C` there can be shown decoded.
+fn backslash_saves_escaped(after: &str) -> bool {
+    let mut end = after.len().min(11);
+    while !after.is_char_boundary(end) {
+        end -= 1;
+    }
+    let next = unicode_character(after).map(|(c, _)| c).or_else(|| after.chars().next());
+    unicode_character(&format!("\\{}", &after[..end])).is_some() || next.is_some_and(|c| !c.is_ascii())
+}
+
+/// Decodes eligible Java properties Unicode escapes once. Backslash pairs,
+/// malformed escapes, unpaired surrogates and escapes of characters that carry
+/// properties syntax retain their literal spelling.
+pub fn decode_properties_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while !rest.is_empty() {
+        if rest.starts_with("\\\\") {
+            out.push_str("\\\\");
+            rest = &rest[2..];
+            continue;
+        }
+        if unicode_escape(rest) == Some(0x5C) && backslash_saves_escaped(&rest[6..]) {
+            out.push('\\');
+            rest = &rest[6..];
+            continue;
+        }
+        if let Some((c, len)) = unicode_character(rest) {
+            out.push(c);
+            rest = &rest[len..];
+            continue;
+        }
+        let c = rest.chars().next().expect("nonempty");
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+/// Serializes displayed properties text as ASCII, using uppercase UTF-16 units.
+pub fn encode_properties_ascii(text: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        let current = rest;
+        rest = &rest[c.len_utf8()..];
+        if c == '\\' {
+            if rest.starts_with('\\') {
+                out.push_str("\\\\");
+                rest = &rest[1..];
+            } else if unicode_character(current).is_some() || rest.chars().next().is_some_and(|next| !next.is_ascii()) {
+                // Keep a literal backslash from swallowing a generated escape,
+                // or becoming a Unicode escape on the next load.
+                out.push_str("\\u005C");
+            } else {
+                out.push(c);
+            }
+        } else if c.is_ascii() && c != '\0' {
+            out.push(c);
+        } else {
+            for unit in c.encode_utf16(&mut [0; 2]) {
+                write!(out, "\\u{unit:04X}").expect("write to string");
+            }
+        }
+    }
+    out
+}
+
+/// Preserve an ASCII file's exact escape spelling when edits were undone or
+/// replaced with identical displayed text. Otherwise serialize the new buffer.
+pub fn save_properties_text(path: &Path, text: &str) -> IdeResult<f64> {
+    if let Ok(bytes) = fs::read(path)
+        && bytes.is_ascii()
+        && decode_properties_escapes(std::str::from_utf8(&bytes).expect("ASCII")) == text
+    {
+        return Ok(mtime_ms(&fs::metadata(path)?));
+    }
+    write_atomic(path, encode_properties_ascii(text).as_bytes())
+}
+
 /// Detects BOM-less UTF-16 from the distribution of NUL bytes in mostly-ASCII text.
 fn sniff_utf16(sample: &[u8]) -> Option<&'static Encoding> {
     if sample.len() < 4 {
@@ -284,6 +386,71 @@ fn write_atomic_impl(path: &Path, bytes: &[u8], allow_in_place: bool) -> IdeResu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn properties_unicode_escapes() {
+        for (source, displayed) in [
+            (r"test.key1=Hello", "test.key1=Hello"),
+            (r"test.key2=\u4F60\u597D", "test.key2=你好"),
+            (r"test.key3=\u4f60\u597d", "test.key3=你好"),
+            (r"\u0041\uD83D\uDE00!", "A😀!"),
+            (r"\\u0041", r"\\u0041"),
+            (r"\\\u0041", r"\\A"),
+            (r"\\\\u0041", r"\\\\u0041"),
+            (r"\u005Cu0041", r"\u0041"),
+            (r"\u123 \u12xz \uu0041 \uD800 \uDC00", r"\u123 \u12xz \uu0041 \uD800 \uDC00"),
+            (r"\uD800\u0041", r"\uD800A"),
+            (r"\uD800\uD83D\uDE00", "\\uD800😀"),
+        ] {
+            assert_eq!(decode_properties_escapes(source), displayed, "{source}");
+        }
+        assert_eq!(encode_properties_ascii("你好😀"), r"\u4F60\u597D\uD83D\uDE00");
+        for text in ["plain=ASCII\r\n", r"escaped=\\u0041", r"bad=\u12xz", r"bad=\uD800"] {
+            assert_eq!(encode_properties_ascii(text), text);
+        }
+        for text in ["你好😀", "\0", "\\中", "\\\\中", "\\\\\\😀", r"\u0041", r"\\u0041", r"\uD83D\uDE00"] {
+            let ascii = encode_properties_ascii(text);
+            assert!(ascii.is_ascii());
+            assert_eq!(decode_properties_escapes(&ascii), text, "{ascii}");
+        }
+    }
+
+    #[test]
+    fn properties_line_terminator_escapes_survive_an_edit() {
+        let source = r"key=one\u000Atwo\u000Dthree";
+        let displayed = decode_properties_escapes(source);
+        assert_eq!(displayed, source);
+        assert_eq!(encode_properties_ascii(&displayed.replace("three", "3")), r"key=one\u000Atwo\u000D3");
+    }
+
+    #[test]
+    fn properties_syntax_escapes_keep_their_meaning() {
+        // Shown decoded, each of these would change a key, a value or a comment once saved.
+        for source in [
+            r"k\u003Dv=1",
+            r"k\u003Av=1",
+            r"\u0023c=1",
+            r"\u0021c=1",
+            r"a\u0020b=1",
+            r"k=\u0020lead",
+            r"k\u0009=1",
+            r"k\u000C=1",
+            r"v=\u005Cn",
+            r"v=\u005C",
+            r"v=\u005Cu003D",
+            r"v=\u005C\u005C",
+            r"v=\u005C\\",
+        ] {
+            let displayed = decode_properties_escapes(source);
+            assert_eq!(displayed, source);
+            assert_eq!(encode_properties_ascii(&format!("{displayed}\nedited=1")), format!("{source}\nedited=1"));
+        }
+        // A backslash that saves as \u005C again can still be shown decoded.
+        for (source, displayed) in [(r"v=\u005C\u4E2D", r"v=\中"), (r"v=\u005c\u4e2d", r"v=\中")] {
+            assert_eq!(decode_properties_escapes(source), displayed, "{source}");
+            assert_eq!(decode_properties_escapes(&encode_properties_ascii(displayed)), displayed);
+        }
+    }
 
     #[test]
     fn strict_write_replaces_complete_contents() {

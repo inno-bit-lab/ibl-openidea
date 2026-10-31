@@ -203,6 +203,7 @@ export const commands = {
 	docEdit: (doc: DocId, baseVersion: number, changes: ChangeSet) => typedError<number, IdeError>(__TAURI_INVOKE("doc_edit", { doc, baseVersion, changes })),
 	docSave: (doc: DocId) => typedError<null, IdeError>(__TAURI_INVOKE("doc_save", { doc })),
 	docSaveAll: () => typedError<null, IdeError>(__TAURI_INVOKE("doc_save_all")),
+	docSyncFromDisk: () => typedError<null, IdeError>(__TAURI_INVOKE("doc_sync_from_disk")),
 	docSnapshot: (doc: DocId) => typedError<DocumentInfo, IdeError>(__TAURI_INVOKE("doc_snapshot", { doc })),
 	/**
 	 *  The CodeMirror mode `path` gets when opened (`DocumentInfo::ui_mode`),
@@ -523,10 +524,12 @@ export const commands = {
 	 *  Unshelve: applies the shelved patch (3-way merging; conflicts are left for the
 	 *  merge UI); with `remove`, deletes it from the shelf.
 	 */
-	vcsUnshelve: (id: string, remove: boolean) => typedError<ApplyOutcome, IdeError>(__TAURI_INVOKE("vcs_unshelve", { id, remove })),
-	vcsShelfDelete: (id: string) => typedError<null, IdeError>(__TAURI_INVOKE("vcs_shelf_delete", { id })),
+	vcsUnshelve: (id: string, remove: boolean, path: string | null) => typedError<ApplyOutcome, IdeError>(__TAURI_INVOKE("vcs_unshelve", { id, remove, path })),
+	vcsShelfDelete: (id: string, path: string | null) => typedError<null, IdeError>(__TAURI_INVOKE("vcs_shelf_delete", { id, path })),
 	vcsShelfRename: (id: string, name: string) => typedError<null, IdeError>(__TAURI_INVOKE("vcs_shelf_rename", { id, name })),
-	vcsShelfPatch: (id: string) => typedError<string, IdeError>(__TAURI_INVOKE("vcs_shelf_patch", { id })),
+	vcsShelfPatch: (id: string, path: string | null) => typedError<string, IdeError>(__TAURI_INVOKE("vcs_shelf_patch", { id, path })),
+	vcsShelfDiff: (id: string) => typedError<ShelfDiffFile[], IdeError>(__TAURI_INVOKE("vcs_shelf_diff", { id })),
+	vcsShelfImport: (name: string, patch: string) => typedError<null, IdeError>(__TAURI_INVOKE("vcs_shelf_import", { name, patch })),
 	vcsChangelistsLoad: () => typedError<ChangelistState, IdeError>(__TAURI_INVOKE("vcs_changelists_load")),
 	vcsChangelistsSave: (changelists: ChangelistState) => typedError<null, IdeError>(__TAURI_INVOKE("vcs_changelists_save", { changelists })),
 	/**  Create Patch › Save to file. */
@@ -1998,6 +2001,23 @@ export type CreatePullRequest = {
 	push: boolean,
 };
 
+/**  Imported editor colour scheme on top of a built-in base. */
+export type CustomColorScheme = CustomColorScheme_Serialize | CustomColorScheme_Deserialize;
+
+/**  Imported editor colour scheme on top of a built-in base. */
+export type CustomColorScheme_Deserialize = {
+	name: string,
+	parent: string,
+	attributes: { [key in string]: TextAttributesOverride_Deserialize },
+};
+
+/**  Imported editor colour scheme on top of a built-in base. */
+export type CustomColorScheme_Serialize = {
+	name: string,
+	parent: string,
+	attributes: { [key in string]: TextAttributesOverride_Serialize },
+};
+
 /**  A named profile made with Copy. */
 export type CustomInspectionProfile = {
 	name?: string,
@@ -2757,6 +2777,8 @@ export type EditorSettings_Deserialize = {
 	formatOnSave?: boolean,
 	/**  Editor colour scheme id; `theme-default` follows the IDE theme. */
 	colorScheme?: string,
+	/**  Imported editor schemes, stored in user settings. */
+	customSchemes?: { [key in string]: CustomColorScheme_Deserialize },
 	/**  Color Scheme edits: scheme id → attribute id → override. */
 	colorOverrides?: { [key in string]: { [key in string]: TextAttributesOverride_Deserialize } },
 	/**
@@ -2804,6 +2826,8 @@ export type EditorSettings_Serialize = {
 	formatOnSave: boolean,
 	/**  Editor colour scheme id; `theme-default` follows the IDE theme. */
 	colorScheme: string,
+	/**  Imported editor schemes, stored in user settings. */
+	customSchemes: { [key in string]: CustomColorScheme_Serialize },
 	/**  Color Scheme edits: scheme id → attribute id → override. */
 	colorOverrides: { [key in string]: { [key in string]: TextAttributesOverride_Serialize } },
 	/**
@@ -2873,6 +2897,8 @@ export type EncodingSettings = {
 	project?: string,
 	/**  Fallback for `.properties` files. */
 	properties?: string,
+	/**  Display properties Unicode escapes as characters and save non-ASCII as escapes. */
+	nativeToAscii?: boolean,
 	/**  Create UTF-8 files: `never` (no BOM) | `always` (with BOM) | `windows` (with BOM on Windows). */
 	utf8Bom?: string,
 };
@@ -3037,6 +3063,8 @@ export type FileRenameEdits = {
 export type FileSettings = {
 	/**  Save on focus loss / tab switch, like IDEA. */
 	autoSave?: boolean,
+	/**  Re-check open files against disk when the IDE window gains focus. */
+	syncOnFocus?: boolean,
 	exclude?: string[],
 	/**  Ignored Files and Folders: name patterns hidden everywhere; see [`crate::ignored`]. */
 	ignoredNames?: string[],
@@ -5552,6 +5580,13 @@ export type Settings_Serialize = {
 };
 
 export type Severity = "error" | "warning" | "info" | "hint";
+
+export type ShelfDiffFile = {
+	path: string,
+	patch: string,
+	before: string | null,
+	after: string | null,
+};
 
 /**  Version Control › Shelf. */
 export type ShelfSettings = {

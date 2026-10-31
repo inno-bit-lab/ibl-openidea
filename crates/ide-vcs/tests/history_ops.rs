@@ -567,3 +567,127 @@ fn update_branch_fast_forwards_a_branch_not_checked_out() {
     // The checked-out branch and branches without upstream are refused.
     assert!(repo.update_branch("work", &cancel, &out).is_err());
 }
+
+/// `"` and tabs are illegal in Windows file names, and only they make Git quote a path.
+const QUOTED: &str = if cfg!(windows) { "quote '.txt" } else { "quote\"\t.txt" };
+
+#[test]
+fn shelf_diff_and_scoped_operations_preserve_siblings() {
+    let fx = Fixture::new();
+    for path in ["a.txt", "b.txt", QUOTED, "gone.txt"] {
+        fx.write(path, "base\n");
+    }
+    fx.commit_all("base");
+    for path in ["a.txt", "b.txt", QUOTED] {
+        fx.write(path, "shelved\n");
+    }
+    std::fs::remove_file(fx.path("gone.txt")).unwrap();
+    fx.write("new.txt", "new\n");
+    std::fs::write(fx.path("binary.dat"), [0, 1, 255]).unwrap();
+    let repo = fx.repo();
+    let shelf = fx._tmp.path().join("shelf");
+    let paths = ["a.txt", "b.txt", QUOTED, "gone.txt", "new.txt", "binary.dat"].map(|p| fx.path(p));
+    let entry = repo.shelve(&shelf, "work", &paths).unwrap();
+    fx.write("a.txt", "new head\n");
+    fx.commit_all("advance head");
+    fx.write("a.txt", "local edits\n");
+    let status = fx.git(&["status", "--porcelain"]);
+    let index = fx.git(&["ls-files", "--stage"]);
+    let diffs = shelf::diff_files(&repo, &shelf, &entry.id).unwrap();
+    for path in ["a.txt", "b.txt", QUOTED] {
+        let f = diffs.iter().find(|f| f.path == path).unwrap();
+        assert_eq!(f.before.as_deref(), Some("base\n"), "{path}");
+        assert_eq!(f.after.as_deref(), Some("shelved\n"), "{path}");
+    }
+    assert_eq!(diffs.iter().find(|f| f.path == "new.txt").unwrap().before.as_deref(), Some(""));
+    assert_eq!(diffs.iter().find(|f| f.path == "gone.txt").unwrap().after.as_deref(), Some(""));
+    assert!(diffs.iter().find(|f| f.path == "binary.dat").unwrap().before.is_none());
+    assert_eq!(fx.git(&["status", "--porcelain"]), status);
+    assert_eq!(fx.git(&["ls-files", "--stage"]), index);
+    assert_eq!(fx.read("a.txt"), "local edits\n");
+    let patch = shelf::selected_patch(&shelf, &entry.id, Some("b.txt")).unwrap();
+    assert!(patch.contains("b/b.txt"));
+    assert!(!patch.contains("b/a.txt"));
+    assert!(shelf::selected_patch(&shelf, &entry.id, Some("missing")).is_err());
+    shelf::unshelve_path(&repo, &shelf, &entry.id, true, Some("b.txt")).unwrap();
+    assert_eq!(fx.read("b.txt"), "shelved\n");
+    assert!(!shelf::list(&shelf).unwrap()[0].files.iter().any(|f| f.path == "b.txt"));
+    shelf::delete_path(&shelf, &entry.id, Some(QUOTED)).unwrap();
+    assert!(shelf::selected_patch(&shelf, &entry.id, Some("a.txt")).is_ok());
+    shelf::import_patch(&shelf, "imported", &patch).unwrap();
+    assert_eq!(shelf::list(&shelf).unwrap().len(), 2);
+    assert_eq!(fx.read("a.txt"), "local edits\n");
+}
+
+#[test]
+fn shelf_imported_rename_diff_and_last_file_delete() {
+    let fx = Fixture::new();
+    fx.write("old.txt", "same\n");
+    fx.commit_all("base");
+    fx.git(&["mv", "old.txt", "new.txt"]);
+    let patch = fx.git(&["diff", "--cached", "--binary", "--full-index", "-M"]) + "\n";
+    fx.git(&["reset", "--hard", "HEAD"]);
+    let repo = fx.repo();
+    let shelf = fx._tmp.path().join("shelf");
+    shelf::import_patch(&shelf, "rename", &patch).unwrap();
+    let id = &shelf::list(&shelf).unwrap()[0].id;
+    let diffs = shelf::diff_files(&repo, &shelf, id).unwrap();
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(diffs[0].path, "new.txt");
+    // A rename-only imported patch has no embedded blob ids: do not guess from HEAD.
+    assert!(diffs[0].before.is_none());
+    assert!(diffs[0].patch.contains("rename from old.txt"));
+    shelf::delete_path(&shelf, id, Some("new.txt")).unwrap();
+    assert!(shelf::list(&shelf).unwrap().is_empty());
+}
+
+#[test]
+fn shelf_new_renames_keep_self_contained_sides_and_plain_imports_keep_scope() {
+    let fx = Fixture::new();
+    fx.write("old.txt", "renamed content\n");
+    fx.commit_all("base");
+    fx.git(&["mv", "old.txt", "new.txt"]);
+    let repo = fx.repo();
+    let shelf = fx._tmp.path().join("shelf");
+    let entry = repo.shelve(&shelf, "rename", &[fx.path("old.txt"), fx.path("new.txt")]).unwrap();
+    let diffs = shelf::diff_files(&repo, &shelf, &entry.id).unwrap();
+    assert_eq!(diffs.len(), 2);
+    assert_eq!(diffs.iter().find(|f| f.path == "old.txt").unwrap().before.as_deref(), Some("renamed content\n"));
+    assert_eq!(diffs.iter().find(|f| f.path == "new.txt").unwrap().after.as_deref(), Some("renamed content\n"));
+    let plain = "--- a/one.txt\n+++ b/one.txt\n@@ -1 +1 @@\n--- removed\n+++ added\n--- a/two.txt\n+++ b/two.txt\n@@ -1 +1 @@\n-old\n+new\n";
+    shelf::import_patch(&shelf, "plain", plain).unwrap();
+    let selected = shelf::selected_patch(&shelf, "plain", Some("one.txt")).unwrap();
+    assert!(selected.contains("--- removed\n+++ added"));
+    assert!(!selected.contains("two.txt"));
+    shelf::delete_path(&shelf, "plain", Some("one.txt")).unwrap();
+    assert_eq!(shelf::list(&shelf).unwrap().iter().find(|s| s.id == "plain").unwrap().files[0].path, "two.txt");
+}
+
+#[test]
+fn shelf_binary_sibling_in_a_b_directory_keeps_its_own_scope() {
+    let fx = Fixture::new();
+    std::fs::create_dir(fx.path("b")).unwrap();
+    std::fs::write(fx.path("file.bin"), b"old\0a").unwrap();
+    std::fs::write(fx.path("b/file.bin"), b"old\0b").unwrap();
+    fx.commit_all("base");
+    std::fs::write(fx.path("file.bin"), b"new\0a").unwrap();
+    std::fs::write(fx.path("b/file.bin"), b"new\0b").unwrap();
+    let repo = fx.repo();
+    let shelf = fx._tmp.path().join("shelf");
+    let entry = repo.shelve(&shelf, "two binaries", &[fx.path("file.bin"), fx.path("b/file.bin")]).unwrap();
+    let mut listed: Vec<String> = shelf::list(&shelf).unwrap()[0].files.iter().map(|f| f.path.clone()).collect();
+    listed.sort();
+    assert_eq!(listed, ["b/file.bin", "file.bin"]);
+    let selected = shelf::selected_patch(&shelf, &entry.id, Some("file.bin")).unwrap();
+    assert!(selected.contains("diff --git a/file.bin b/file.bin"));
+    assert!(!selected.contains("b/b/file.bin"));
+    // Deleting the root file must keep the shelved change of b/file.bin.
+    shelf::delete_path(&shelf, &entry.id, Some("file.bin")).unwrap();
+    let remaining = shelf::list(&shelf).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["b/file.bin"]);
+    shelf::unshelve_path(&repo, &shelf, &entry.id, true, Some("b/file.bin")).unwrap();
+    assert_eq!(std::fs::read(fx.path("b/file.bin")).unwrap(), b"new\0b");
+    assert_eq!(std::fs::read(fx.path("file.bin")).unwrap(), b"old\0a");
+    assert!(shelf::list(&shelf).unwrap().is_empty());
+}

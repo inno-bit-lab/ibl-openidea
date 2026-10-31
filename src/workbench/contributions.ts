@@ -17,7 +17,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { RunConfig } from "@/bindings";
+import type { FileMatches, SearchQuery, RunConfig } from "@/bindings";
 import type { MenuItem } from "@/ui/Menu";
 import type { TreeReorder } from "@/ui/Tree";
 import { create } from "zustand";
@@ -432,7 +432,9 @@ export async function resolveFileEditor(path: string): Promise<FileEditorResolut
 export interface TextEditorWrapperContribution {
   id: string;
   matches(path: string): boolean;
-  component: ComponentType<{ path: string; tabId: string; children: ReactNode }>;
+  component: ComponentType<{ path: string; tabId: string; children: ReactNode; actionsInTabs?: boolean }>;
+  /** Layout controls in the tab strip; the wrapper supplies a floating fallback when tabs are hidden. */
+  tabActions?: ComponentType<{ path: string; tabId: string }>;
 }
 
 export const useTextEditorWrappers = create<{ wrappers: Map<string, TextEditorWrapperContribution> }>(() => ({
@@ -621,6 +623,26 @@ export const notifications = (): NotificationService =>
 export const maybeEditorService = (): EditorService | undefined => services.editor;
 /** Creates terminal widgets; provided by the terminal feature. */
 export const embeddedTerminal = (): EmbeddedTerminalFactory | undefined => services.embeddedTerminal;
+
+/** Editor-backed results, recomputed on rerun without reading files from disk. */
+export interface FindResultsSource {
+  title: string;
+  query: SearchQuery;
+  read(): FileMatches;
+}
+
+let findResultsOpener: ((source: FindResultsSource) => void) | undefined;
+
+export function provideFindResults(opener: (source: FindResultsSource) => void): () => void {
+  findResultsOpener = opener;
+  return () => {
+    if (findResultsOpener === opener) findResultsOpener = undefined;
+  };
+}
+
+export function showFindResults(source: FindResultsSource) {
+  findResultsOpener?.(source);
+}
 
 // ---------------------------------------------------------------------------
 // File decorations: colour / badge / tooltip for a path, shown by the project
