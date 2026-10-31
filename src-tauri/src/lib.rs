@@ -120,14 +120,17 @@ pub fn run() {
                 && migrate::webview_notice_pending(&config, &app.config().identifier)
             {
                 use tauri_plugin_dialog::DialogExt;
+                let identifier = app.config().identifier.clone();
                 app.dialog()
                     .message(migrate::WEBVIEW_SKIPPED_MESSAGE)
                     .title(&app.package_info().name)
                     .parent(&main)
-                    .show(|_| {});
-                if let Err(e) = migrate::mark_notified(&config, &app.config().identifier) {
-                    tracing::warn!("could not record the migration notice: {e}");
-                }
+                    .show(move |_| {
+                        // Persist after dismissal so a crash before display cannot lose the notice.
+                        if let Err(e) = migrate::mark_notified(&config, &identifier) {
+                            tracing::warn!("could not record the migration notice: {e}");
+                        }
+                    });
             }
             Ok(())
         })

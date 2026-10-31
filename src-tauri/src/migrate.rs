@@ -290,6 +290,26 @@ impl Run<'_> {
             JournalState::Malformed => None,
             JournalState::Valid(journal) => Some(journal),
         };
+        // A journal is persisted input, not authority to mutate other profiles.
+        if let Some(journal) = &journal
+            && (journal.from != self.from
+                || journal.bases.iter().any(|base| !self.bases.contains(base))
+                || dedup(&journal.bases).len() != journal.bases.len())
+        {
+            return Ok(SeedOutcome::Failed("refused: journal does not belong to this migration".to_owned()));
+        }
+        // Check every destination before recovery renames, removes or writes anything,
+        // including the config target when it is not a participating source base.
+        for base in &self.bases {
+            if let Err(reason) = self.check_destinations(base) {
+                return Ok(SeedOutcome::Failed(reason));
+            }
+            if base.join(self.from).is_dir()
+                && let Err(reason) = self.check_alias(base)
+            {
+                return Ok(SeedOutcome::Failed(reason));
+            }
+        }
         match journal {
             Some(journal) if journal.phase == Phase::Renaming => {
                 self.restore_report(&journal);
@@ -549,6 +569,30 @@ impl Run<'_> {
         self.bases.iter().filter(|b| b.join(self.from).is_dir()).cloned().collect()
     }
 
+    /// Recovery must never publish a link or write a marker through one.
+    fn check_destinations(&self, base: &Path) -> Result<(), String> {
+        for path in [base.join(self.to), partial_path(base, self.to)] {
+            match fs::symlink_metadata(&path) {
+                Ok(meta) => {
+                    #[cfg(windows)]
+                    let is_link = {
+                        use std::os::windows::fs::MetadataExt;
+                        // Includes junctions, which need not be reported as symlinks.
+                        meta.file_attributes() & 0x400 != 0
+                    };
+                    #[cfg(not(windows))]
+                    let is_link = meta.file_type().is_symlink();
+                    if is_link || !meta.is_dir() {
+                        return Err(format!("refused: {} is not a plain directory", path.display()));
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
+        Ok(())
+    }
+
     /// Refuses a `<from>` that resolves into the target or the other way round.
     fn check_alias(&self, base: &Path) -> Result<(), String> {
         let src = fs::canonicalize(base.join(self.from)).map_err(|e| format!("{}: {e}", base.display()))?;
@@ -716,11 +760,13 @@ fn read_marker(path: &Path) -> Option<Marker> {
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
 
-/// Writes the marker, keeping `notified` from an earlier one.
+/// Keeps `notified` only when recovering the same migration, never from a copied marker.
 fn write_marker(config: &Path, to: &str, marker: &Marker) -> io::Result<()> {
     let path = marker_path(config, to);
     fs::create_dir_all(config.join(to))?;
-    let notified = read_marker(&path).is_some_and(|m| m.notified);
+    let notified = read_marker(&path).is_some_and(|m| {
+        m.notified && m.from == marker.from && m.started == marker.started && m.status == marker.status
+    });
     write_json_atomic(&path, &Marker { notified: marker.notified || notified, ..marker.clone() })
 }
 
@@ -730,7 +776,14 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
     let json = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
-    let mut file = File::create(&tmp)?;
+    // A stale or copied temporary file may be a link. Unlink that entry and
+    // exclusively create a new file rather than truncating its referent.
+    match fs::remove_file(&tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut file = File::create_new(&tmp)?;
     file.write_all(&json)?;
     file.sync_all()?;
     drop(file);
@@ -1357,6 +1410,113 @@ mod tests {
         write_marker(&f.roaming, TO, &Marker { notified: false, ..after }).unwrap();
         assert!(marker(&f.roaming).notified);
         assert!(mark_notified(&TempDir::new().0, TO).is_err());
+    }
+
+    #[test]
+    fn recovery_refuses_foreign_journal_bases() {
+        for phase in [Phase::Copying, Phase::Renaming, Phase::Failed] {
+            let f = Fixture::new();
+            let foreign = f.root().join("foreign");
+            write(&partial_path(&foreign, TO).join("valuable"), "keep");
+            write(&foreign.join(TO).join("existing"), "keep too");
+            let mut journal = Journal::new(FROM, "start".into(), vec![f.roaming.clone(), foreign]);
+            journal.phase = phase;
+            write_json_atomic(&journal_path(&f.roaming, TO), &journal).unwrap();
+            let before = snapshot(f.root());
+            assert!(matches!(seed(&f.bases()).outcome, SeedOutcome::Failed(_)));
+            let mut after = snapshot(f.root());
+            after.remove(&format!("roaming/{TO}.migration.lock"));
+            assert_eq!(after, before, "{phase:?}");
+        }
+    }
+
+    #[test]
+    fn recovery_refuses_a_different_source() {
+        for phase in [Phase::Copying, Phase::Renaming, Phase::Failed] {
+            let f = Fixture::new();
+            let mut journal = Journal::new("different.app", "start".into(), f.bases());
+            journal.phase = phase;
+            write_json_atomic(&journal_path(&f.roaming, TO), &journal).unwrap();
+            let before = snapshot(f.root());
+            assert!(matches!(seed(&f.bases()).outcome, SeedOutcome::Failed(_)));
+            let mut after = snapshot(f.root());
+            after.remove(&format!("roaming/{TO}.migration.lock"));
+            assert_eq!(after, before, "{phase:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recovery_refuses_a_target_link_to_the_source() {
+        for phase in [Phase::Copying, Phase::Renaming, Phase::Failed] {
+            for partial in [false, true] {
+                let f = Fixture::new();
+                let mut journal = Journal::new(FROM, "start".into(), f.bases());
+                journal.phase = phase;
+                write_json_atomic(&journal_path(&f.roaming, TO), &journal).unwrap();
+                let link = if partial { partial_path(&f.roaming, TO) } else { f.roaming.join(TO) };
+                std::os::unix::fs::symlink(f.roaming.join(FROM), &link).unwrap();
+                let before = snapshot(f.root());
+                assert!(matches!(seed(&f.bases()).outcome, SeedOutcome::Failed(_)));
+                let mut after = snapshot(f.root());
+                after.remove(&format!("roaming/{TO}.migration.lock"));
+                assert_eq!(after, before, "{phase:?}, partial={partial}");
+            }
+        }
+    }
+
+    #[test]
+    fn copied_marker_does_not_suppress_a_new_notice() {
+        let f = Fixture::new();
+        let mut journal = Journal::new(FROM, "new migration".into(), f.bases());
+        journal.webview_skipped = true;
+        journal.phase = Phase::Renaming;
+        write_json_atomic(&journal_path(&f.roaming, TO), &journal).unwrap();
+        let old = Marker {
+            status: "seeded".into(),
+            from: FROM.into(),
+            app_version: "0.2.1".into(),
+            started: "old migration".into(),
+            finished: "old migration".into(),
+            files_copied: 0,
+            bytes_copied: 0,
+            copied: vec![],
+            skipped: vec![],
+            error: None,
+            webview_skipped: true,
+            notified: true,
+        };
+        fs::create_dir_all(partial_path(&f.roaming, TO)).unwrap();
+        write_json_atomic(&partial_path(&f.roaming, TO).join(MARKER), &old).unwrap();
+        seed(&f.bases());
+        assert!(webview_notice_pending(&f.roaming, TO));
+    }
+
+    #[test]
+    fn atomic_write_does_not_overwrite_a_linked_temporary_file() {
+        let dir = TempDir::new();
+        let source = dir.0.join("source");
+        write(&source, "keep source bytes");
+        let target = dir.0.join("marker.json");
+        fs::hard_link(&source, dir.0.join("marker.json.tmp")).unwrap();
+        write_json_atomic(&target, &"new marker").unwrap();
+        assert_eq!(fs::read_to_string(&source).unwrap(), "keep source bytes");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "\"new marker\"");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copied_marker_temporary_link_does_not_modify_the_source() {
+        let f = Fixture::new();
+        std::os::unix::fs::symlink(
+            f.roaming.join(FROM).join("settings.toml"),
+            f.roaming.join(FROM).join(format!("{MARKER}.tmp")),
+        )
+        .unwrap();
+        let before = f.sources();
+        assert_eq!(seed(&f.bases()).outcome, SeedOutcome::Seeded);
+        assert_eq!(f.sources(), before);
+        assert_eq!(marker(&f.roaming).status, "seeded");
     }
 
     #[test]
