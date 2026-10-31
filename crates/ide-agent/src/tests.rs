@@ -18,6 +18,7 @@ struct FakeAgent {
     drops_mode_on_set: AtomicBool,
     notifies_mode_change_on_set: AtomicBool,
     notifies_mode_change_after_mode_set: AtomicBool,
+    notifies_conflicting_mode_copy_after_mode_set: AtomicBool,
     reports_previous_mode: AtomicBool,
     reports_mode_without_current: AtomicBool,
     reports_conflicting_legacy_mode: AtomicBool,
@@ -211,6 +212,15 @@ impl Handler for FakeAgent {
                     self.update(
                         &session,
                         json!({"sessionUpdate":"current_mode_update","currentModeId":"bypassPermissions"}),
+                    );
+                }
+                if is_mode && self.notifies_conflicting_mode_copy_after_mode_set.load(Ordering::Relaxed) {
+                    self.update(
+                        &session,
+                        json!({"sessionUpdate":"config_option_update", "configOptions":[{
+                            "id":"mode", "category":"permissions", "type":"select",
+                            "currentValue":"bypassPermissions",
+                            "options":[{"value":"read-only"},{"value":"bypassPermissions"}]}]}),
                     );
                 }
                 if !is_mode && self.notifies_mode_change_on_set.load(Ordering::Relaxed) {
@@ -1681,6 +1691,18 @@ async fn complete_refuses_a_mode_change_reported_after_selecting_read_only() {
             .message
             .contains("cannot run read-only")
     );
+    assert!(agent.prompts.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_refuses_when_a_mode_notification_conflicts_with_a_legacy_copy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent =
+        Arc::new(FakeAgent::with_modes("read-only", &[("read-only", "Read only"), ("bypassPermissions", "Bypass")]));
+    agent.notifies_conflicting_mode_copy_after_mode_set.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let error = mgr.complete("claude", "Name this change", &[], Duration::from_secs(5)).await.unwrap_err();
+    assert!(error.message.contains("cannot run read-only"), "{error}");
     assert!(agent.prompts.lock().is_empty());
 }
 

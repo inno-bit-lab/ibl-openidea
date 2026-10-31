@@ -1875,10 +1875,14 @@ async fn ask(
         return Err(read_only(format!("reported {reported} after selecting {mode}")));
     }
     collector.merge_config(&mut options).await;
-    // A setting response or notification can withdraw the mode; fail closed before prompting.
-    if !options.iter().any(|o| {
-        is_mode_option(o) && o.current.as_deref() == Some(mode.as_str()) && o.values.iter().any(|v| v.value == mode)
-    }) {
+    // Every reported mode must agree; a stale restrictive copy cannot mask a conflicting notification.
+    let modes_agree = {
+        let mut reported_modes = options.iter().filter(|o| is_mode_option(o)).peekable();
+        reported_modes.peek().is_some()
+            && reported_modes
+                .all(|o| o.current.as_deref() == Some(mode.as_str()) && o.values.iter().any(|v| v.value == mode))
+    };
+    if !modes_agree {
         return Err(read_only(restrictive_mode(&options).err().unwrap_or_else(|| "changed after selection".into())));
     }
     let reply: Value = peer
