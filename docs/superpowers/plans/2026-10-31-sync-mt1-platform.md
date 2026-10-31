@@ -90,7 +90,7 @@ Parameters `-FullDebug`, `-SeedFrom`, `-WhatIf`. Steps:
 
 - Release and build: `.github/workflows/release.yml`, `src-tauri/tauri.conf.json` (productName, window title, identifier, `bundle.publisher`, copyright, short and long description, updater pubkey and endpoint), `src-tauri/tauri.windows.conf.json` (title), `src-tauri/icons/**`, `README.md` (download link), `index.html`.
 - App crate: `src-tauri/src/lib.rs`, `src-tauri/src/migrate.rs` (new), `src-tauri/src/dev.rs`, `src-tauri/src/menu.rs` (brand strings only), `crates/ide-tools/src/server.rs` (`RELEASES` and its test).
-- Launcher and scripts: `scripts/dev-session.ts`, `scripts/dev-session.test.ts`, `scripts/local/**`, `src-tauri/tauri.local.conf.json`, `package.json` (scripts block only).
+- Launcher and scripts: `knip.ts` (`ignoreBinaries` only: add `pwsh` next to upstream's `rustfmt`, for the `pwsh -File` scripts in `package.json`), `scripts/dev-session.ts`, `scripts/dev-session.test.ts`, `scripts/local/**`, `src-tauri/tauri.local.conf.json`, `package.json` (scripts block only).
 - Brand test expectations only: `src/features/perf/__tests__/perf.test.ts` and `views.test.tsx` (the seven assertions that follow the `memory.ts` rebrand).
 - Brand UI: `src/features/welcome/ProjectsPage.tsx`, `WelcomeView.tsx`, `welcome.test.tsx`, `src/workbench/TitleBar.tsx`, `src/workbench/Welcome.tsx` (moved here from port map MT-3: it is brand only), `src/features/app/AboutDialog.tsx`, `src/features/app/__tests__/shell.test.tsx`, `src/features/app/__tests__/menuBridge.test.ts` (Quit label only), plus the new upstream literals you rebrand in Task 3.
 - Catalogs: brand keys in `src/platform/locales/en.json` and `zh.json`, brand entries in `text/zh.json`, `"IBLOpenIdea"` in `UNTRANSLATED` of `textCatalog.test.ts`.
