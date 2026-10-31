@@ -565,6 +565,7 @@
   "Default Tab name": "Nome predefinito della scheda",
   "Default directory": "Directory predefinita",
   "Default encoding": "Codifica predefinita",
+  "Transparent native-to-ascii conversion": "Conversione native-to-ascii trasparente",
   "Default encoding for properties files": "Codifica predefinita per i file properties",
   "Default value": "Valore predefinito",
   "Definition": "Definizione",
