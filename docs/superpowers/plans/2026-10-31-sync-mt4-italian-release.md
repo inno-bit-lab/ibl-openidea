@@ -14,9 +14,9 @@
 
 - Worktree `C:\projects\development\IBL\ibl-openidea\.ibl-crew-worktree\dev-claude` (bootstrapped in MT-3 Task 0; check that `git config --worktree core.autocrlf` prints `false` and that `core.hooksPath` is the per-worktree hooks dir). Branch `port/mt4-italian-release`; PR into `port/v0.3.0`.
 - Early start: while MT-3 waits for review, cut `port/mt4-italian-release` from the current `origin/port/v0.3.0` and translate there (JSON only, no cargo). Switch branches only with a clean tree, and go back to MT-3 when review needs it. Rebase onto `origin/port/v0.3.0` once MT-1 to MT-3 have merged; Tasks 4 to 8 start only then.
-- Fork sources, read-only: `origin/fix/release-hardening` `7ff9bc9` (fork `it.json` 392 keys, `text/it.json` 4584 entries) and `origin/fix/rh-mt-b` `7c87cd3`.
+- Fork sources, read-only: `origin/fix/release-hardening` at the tip given in the dispatch (at least `0d68ad7`, after the MT-A merge `4f9107f`) (fork `it.json` 392 keys, `text/it.json` 4584 entries) and `origin/fix/rh-mt-b` `7c87cd3`.
 - Cargo only as `pwsh -NoProfile -File scripts/local/cargo-slot.ps1 -- cargo ...`, foreground, `$env:CARGO_TARGET_DIR = 'C:\projects\development\IBL\ibl-openidea\.ibl-crew-worktree\dev-claude\target'`, `$env:CARGO_PROFILE_DEV_DEBUG = 'line-tables-only'`. No `--release`, no local release build, no workspace clippy (CI gates it).
-- Owner rules: never push tags, never push `main`, never force-push `port/v0.3.0`. The coordinator merges PRs, fast-forwards `main` and pushes `v0.3.0-rc.N` and `v0.3.0`.
+- Owner rules: never push tags, never push `main`, never force-push `port/v0.3.0`. The coordinator merges PRs, fast-forwards `main` and pushes `v0.3.0-N` and `v0.3.0`.
 - `src/bindings.ts` regenerated only; `Cargo.lock` only through `cargo update --workspace`, never a bare `cargo update`.
 - The pre-commit hook rewrites staged files. Conventional commits in English with `Co-Authored-By`.
 - Reviewers: a worktree with `core.autocrlf=true` gives false `format:check` failures. Run MT-1 plan section 3.1 in the reviewer worktree first, or rely on CI for formatting.
@@ -47,13 +47,13 @@ Translation start: `origin/port/v0.3.0` at dispatch time. Tasks 4 to 8: `origin/
 
 ## 4. Closed allowlist
 
-`src/platform/i18n.ts`, `src/platform/i18n.test.ts`, `src/features/settings/model/schema.ts`, `src/features/settings/pages/behavior.tsx`, `src/features/settings/runtime.ts`, `src/features/settings/__tests__/staging.test.ts`, `src/features/app/__tests__/menuBridge.test.ts` (Italian case only), `src/platform/locales/{it.json, text/it.json}` (new), `src/platform/locales/textCatalog.test.ts` (`UNTRANSLATED` only), `src/platform/locales/{en.json, zh.json, text/zh.json}` (only to fix gaps the earlier MTs left; list each one); `Cargo.toml`, `package.json`, `src-tauri/tauri.conf.json` (`version` only), `Cargo.lock`; `docs/superpowers/**`, `docs/intents/**`, `docs/development/**` (re-sync), `docs/releases/v0.3.0.md` (new); files flagged by the final repo-wide `pnpm format` (formatting only).
+`src/platform/i18n.ts`, `src/platform/i18n.test.ts`, `src/features/settings/model/schema.ts`, `src/features/settings/pages/behavior.tsx`, `src/features/settings/runtime.ts`, `src/features/settings/__tests__/staging.test.ts`, `src/features/app/__tests__/menuBridge.test.ts` (Italian case only), `src/platform/locales/{it.json, text/it.json}` (new), `src/platform/locales/textCatalog.test.ts` (`UNTRANSLATED` only), `src/platform/locales/{en.json, zh.json, text/zh.json}` (only to fix gaps the earlier MTs left; list each one); `Cargo.toml`, `package.json`, `src-tauri/tauri.conf.json` (`version` only), `Cargo.lock`; `docs/superpowers/**`, `docs/intents/**`, `docs/releases/v0.3.0.md` (new).
 
 ## 5. Ordered tasks
 
 ### Task 1: Locale plumbing and tests
 
-- [ ] Tests first. `i18n.test.ts`: extend upstream's `describe("catalogs")` to `it`: "have the same keys", "keep the placeholders of source-text templates", "use the same parameters across locales", and "translate source text into non-empty, different text (except approved Italian cognates)" with the fork's cognates list (`release-hardening` i18n.test.ts:22). Replace the fork's "resolves locale tags and display names" with a tags-only case (`it-IT` resolves to `it`). `staging.test.ts`: `validateSettings({ appearance: { locale: "it" } })` keeps `it`. `menuBridge.test.ts`: under `setLocale("it")` the menu labels come from `it.json` (`menu.file.save` is "Salva tutto").
+- [ ] Tests first. `i18n.test.ts`: extend upstream's `describe("catalogs")` to `it`: "have the same keys", "keep the placeholders of source-text templates", "use the same parameters across locales", and "translate source text into non-empty, different text (except approved Italian cognates)" with the fork's cognates list (`release-hardening` i18n.test.ts:22). Replace the fork's "resolves locale tags and display names" with a tags-only case (`it-IT` resolves to `it`). Keep the fork's Italian assertions from `release-hardening` `i18n.test.ts`: in `describe("formatMessage")` the plural `one`/`other` cases, and in `describe("t / locales")` `setLocale("it")`, `t("common.cancel")`, `app.keymap.count`, `tx`, `txTemplate` and the `tx` tag rebuild. `staging.test.ts`: `validateSettings({ appearance: { locale: "it" } })` keeps `it`. `menuBridge.test.ts`: under `setLocale("it")` the menu labels come from `it.json` (`menu.file.save` is "Salva tutto").
 - [ ] Implement 3 (locale plumbing) with stub catalogs copied from the fork. Commit (the catalog tests stay red until Task 3).
 
 ### Task 2: Keyed catalog `it.json`
@@ -77,7 +77,7 @@ Translation start: `origin/port/v0.3.0` at dispatch time. Tasks 4 to 8: `origin/
 
 ### Task 6: Final repo-wide gate
 
-- [ ] `pnpm format` across the repository (it should change nothing; commit anything it rewrites as `style:`), then `pnpm format:check`, `pnpm knip`, `pnpm typecheck`, `pnpm lint`, `pnpm test`.
+- [ ] `pnpm format` across the repository. It should change nothing: commit a rewrite as `style:` only for allowlisted files; if it rewrites anything outside the allowlist, revert it and report the paths to the coordinator. Then `pnpm format:check`, `pnpm knip`, `pnpm typecheck`, `pnpm lint`, `pnpm test`.
 - [ ] `cargo test -p openidea --test export_bindings` and `git diff --exit-code src/bindings.ts`; `cargo fmt --all --check`.
 - [ ] Push; `gh workflow run ci.yml --repo inno-bit-lab/ibl-openidea --ref port/mt4-italian-release`; green; open the PR. Ask `rev-codex` for review, then `rev-agy` for the final review (through the bridge).
 - [ ] After the coordinator merges it: `gh workflow run ci.yml --repo inno-bit-lab/ibl-openidea --ref port/v0.3.0`; every job green (C1).
@@ -98,14 +98,14 @@ git merge -s ours --no-ff origin/main -m "chore: merge main history into the v0.
 $tags = git tag -l 'v0.2.*'          # every v0.2.x tag, rc included: version sort would rank v0.2.3-rc.2 above v0.2.3
 foreach ($t in $tags) { git merge-base --is-ancestor $t HEAD; if ($LASTEXITCODE) { git merge -s ours --no-ff $t -m "chore: merge $t history into the v0.3.0 port" } }
 git diff --exit-code origin/port/v0.3.0 HEAD
-git merge-base --is-ancestor origin/main HEAD
+git merge-base --is-ancestor origin/main HEAD; if ($LASTEXITCODE) { throw "origin/main is not an ancestor" }
 foreach ($t in $tags) { git merge-base --is-ancestor $t HEAD; if ($LASTEXITCODE) { throw "$t is not an ancestor" } }
 git push origin port/release-v0.3.0
 gh workflow run ci.yml --repo inno-bit-lab/ibl-openidea --ref port/release-v0.3.0
 ```
 
 - [ ] Report the SHA, the ancestry checks and the CI run. The coordinator fast-forwards `main` with `git push origin port/release-v0.3.0:main` and handles the rc commit and tags.
-- [ ] When the coordinator announces `v0.3.0-rc.N`, check `gh release view v0.3.0-rc.N --repo inno-bit-lab/ibl-openidea --json assets` against spec 4.5: NSIS and MSI; two DMGs and two `.app.tar.gz`; AppImage, deb and rpm; a `.sig` per updater bundle; four `openidea-server-*.gz` with `.sha256`; `latest.json` with every platform key (C2).
+- [ ] When the coordinator announces `v0.3.0-N`, check `gh release view v0.3.0-N --repo inno-bit-lab/ibl-openidea --json assets` against spec 4.5: NSIS and MSI; two DMGs and two `.app.tar.gz`; AppImage, deb and rpm; a `.sig` per updater bundle; four `openidea-server-*.gz` with `.sha256`; `latest.json` with every platform key (C2).
 
 ## 6. Verification (exact commands)
 
@@ -133,7 +133,7 @@ gh run watch <run id> --repo inno-bit-lab/ibl-openidea --exit-status
 | Criterion | Verified by |
 |---|---|
 | C1: every `ci.yml` job green on the final `port/v0.3.0` | Task 6 dispatched run |
-| C2: `v0.3.0-rc.N` has every release asset | Task 8 asset check |
+| C2: `v0.3.0-N` has every release asset | Task 8 asset check |
 | C6: Italian UI complete | `textCatalog.test.ts` and `i18n.test.ts` for `it` |
 | Version 0.3.0 everywhere, lock churn minimal | Task 4 diff and grep |
 | History kept, no force-push, `v0.2.x` tags valid | Task 8 ancestry checks and tree diff |
@@ -144,5 +144,5 @@ gh run watch <run id> --repo inno-bit-lab/ibl-openidea --exit-status
 - Translation volume (about 900 new entries) is the long pole: start early on the side branch; rebase conflicts stay in the JSON files and resolve by regenerating the work list.
 - MT-1 to MT-3 may leave a `text/zh.json` gap that only shows when `it` is added; fix it here and list it.
 - C3 (updater from a CI-built v0.2.x to the rc on the owner's PC) and C4 and C5 manual runs belong to the coordinator and the owner; carry them as NOT_VERIFIED unless the delivery reports of MT-2 and MT-3 cover them.
-- The release workflow requires the tag to match `tauri.conf.json` (release.yml:31-35). The rc commit (`0.3.0-rc.N`) is the coordinator's; WiX may reject a non-numeric pre-release in the MSI version, which the coordinator should know before tagging `rc.1`.
+- The release workflow requires the tag to match `tauri.conf.json` (release.yml:31-35). Release candidates use a numeric pre-release version, `0.3.0-N` with tag `v0.3.0-N`, because WiX rejects a non-numeric pre-release such as `0.3.0-rc.1` in the MSI version. The rc commit is the coordinator's.
 - If `v0.2.2` or `v0.2.3` is tagged off `fix/release-hardening` rather than `main`, Task 8's second merge makes it an ancestor; check that `origin/main` then still fast-forwards.

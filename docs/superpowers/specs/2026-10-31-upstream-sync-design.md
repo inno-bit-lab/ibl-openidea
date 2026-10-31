@@ -48,7 +48,7 @@ Shared-file rules are in port map section 4: `src/bindings.ts` is always regener
 ## 5. Acceptance (v0.3.0)
 
 - C1. Every `ci.yml` job is green on the final `port/v0.3.0`.
-- C2. `v0.3.0-rc.N` built by CI has every release asset (spec 4.5 of sub-project 1).
+- C2. `v0.3.0-N` (numeric pre-release, because WiX rejects `rc.N`) built by CI has every release asset (spec 4.5 of sub-project 1).
 - C3. A v0.2.x install (CI-built) updates to the candidate through the updater with `OPENIDEA_UPDATE_ENDPOINT`. The profile is migrated or already present, the app starts, and there is one entry in installed apps. This runs on the owner's PC, as the owner accepted.
 - C4. Commit suggestion works with native Claude (mode `default`) and native Codex (mode `read-only`), and refuses agents without a restrictive mode.
 - C5. The Git tool window in a folder of repositories shows every repository; History for Selection, Show Ignored Files, two-pane Compare and the repo pickers work.
