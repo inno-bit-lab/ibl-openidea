@@ -22,7 +22,7 @@ impl ProcessTree {
 #[cfg(windows)]
 mod windows {
     use std::io;
-    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
     use std::time::Duration;
@@ -48,6 +48,9 @@ mod windows {
     #[derive(Debug)]
     pub struct ProcessTree {
         job: Option<OwnedHandle>,
+        // Tokio wait() releases its child handle. Reserve the PID through the
+        // output drain and fallback, even when no job could be assigned.
+        _process: OwnedHandle,
         pid: u32,
     }
 
@@ -64,7 +67,8 @@ mod windows {
         }
 
         /// Adopts a live child spawned with `contain`. Its handle stays borrowed
-        /// through assignment and resume, preventing PID reuse during either step.
+        /// through assignment and resume; an owned duplicate reserves its PID
+        /// until this tree is dropped, including after the caller reaps the child.
         pub fn adopt(child: &impl AsRawHandle) -> io::Result<Self> {
             Self::adopt_with(child, Faults::default())
         }
@@ -73,6 +77,14 @@ mod windows {
             let process = child.as_raw_handle();
             // SAFETY: the caller keeps the child handle live for this borrow.
             let pid = unsafe { GetProcessId(process) };
+            // SAFETY: the caller owns this live handle during the duplication.
+            let retained = match unsafe { BorrowedHandle::borrow_raw(process) }.try_clone_to_owned() {
+                Ok(retained) => retained,
+                Err(error) => {
+                    terminate_unresumed(process, pid);
+                    return Err(error);
+                }
+            };
             let job = match assign_job(process, faults.assignment) {
                 Ok(job) => Some(job),
                 Err(error) => {
@@ -83,13 +95,10 @@ mod windows {
             let resumed = resume_threads(pid, faults.zero_resumes);
             if !matches!(resumed, Ok(count) if count > 0) {
                 // The suspended process has never executed, so it has no children.
-                // SAFETY: live borrowed handle returned by the caller's spawn.
-                if unsafe { TerminateProcess(process, 1) } == 0 {
-                    tracing::warn!(pid, error = %io::Error::last_os_error(), "cannot terminate unresumed agent");
-                }
+                terminate_unresumed(process, pid);
                 return Err(io::Error::other(format!("agent {pid}: no threads resumed: {resumed:?}")));
             }
-            Ok(Self { job, pid })
+            Ok(Self { job, _process: retained, pid })
         }
 
         /// Blocking. Async callers must await `spawn_blocking` before killing the
@@ -114,6 +123,13 @@ mod windows {
             if !matches!(result, Ok(status) if status.success()) {
                 tracing::warn!(pid = self.pid, ?result, "agent taskkill fallback failed");
             }
+        }
+    }
+
+    fn terminate_unresumed(process: HANDLE, pid: u32) {
+        // SAFETY: live borrowed handle returned by the caller's suspended spawn.
+        if unsafe { TerminateProcess(process, 1) } == 0 {
+            tracing::warn!(pid, error = %io::Error::last_os_error(), "cannot terminate unresumed agent");
         }
     }
 
@@ -161,8 +177,10 @@ mod windows {
                     loop {
                         // SAFETY: this scope owns a live thread handle with resume rights.
                         match unsafe { ResumeThread(thread.as_raw_handle()) } {
-                            u32::MAX => break,
-                            0 | 1 => {
+                            // Zero means it was already running, so no thread
+                            // was resumed by this call.
+                            0 | u32::MAX => break,
+                            1 => {
                                 resumed += 1;
                                 break;
                             }
@@ -242,6 +260,8 @@ mod windows {
         const ROLE: &str = "IBL_CORE_PROCESS_TREE_ROLE";
         const FIXTURE: &str = "process_tree::windows::tests::fixture";
 
+        // Descendants are intentionally left for the containment/fallback under test.
+        #[allow(clippy::zombie_processes)]
         #[test]
         fn fixture() {
             let Some(role) = std::env::var_os(ROLE) else { return };

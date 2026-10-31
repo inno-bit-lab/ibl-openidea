@@ -756,10 +756,10 @@ impl Peer {
 /// Keep taskkill's synchronous wait off the runtime, and finish it while the
 /// leader handle is still owned by the supervising task.
 async fn kill_process_tree(tree: Option<ide_core::process_tree::ProcessTree>) {
-    if let Some(tree) = tree {
-        if let Err(error) = tokio::task::spawn_blocking(move || tree.kill()).await {
-            tracing::warn!(%error, "agent process-tree teardown task failed");
-        }
+    if let Some(tree) = tree
+        && let Err(error) = tokio::task::spawn_blocking(move || tree.kill()).await
+    {
+        tracing::warn!(%error, "agent process-tree teardown task failed");
     }
 }
 

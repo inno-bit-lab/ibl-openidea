@@ -174,6 +174,8 @@ mod tests {
     const TREE_ROLE: &str = "IBL_CLAUDE_TREE_ROLE";
 
     #[cfg(windows)]
+    // The descendant is intentionally left for the launcher's kill token.
+    #[allow(clippy::zombie_processes)]
     #[test]
     fn process_tree_fixture() {
         use std::io::Write;
@@ -219,10 +221,9 @@ mod tests {
                 for file in ["grandchild.pid", "leader.pid"] {
                     if let Some(pid) =
                         std::fs::read_to_string(self.0.path().join(file)).ok().and_then(|s| s.parse::<u32>().ok())
+                        && !self.1.contains(&pid)
                     {
-                        if !self.1.contains(&pid) {
-                            self.1.push(pid);
-                        }
+                        self.1.push(pid);
                     }
                 }
                 for pid in self.1.iter().rev() {

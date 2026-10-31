@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 
 const ROLE: &str = "IBL_JSONRPC_TREE_ROLE";
 
+// The natural-exit fixture must leave its descendant alive for the supervisor.
+#[allow(clippy::zombie_processes)]
 #[test]
 fn fixture() {
     let Some(role) = std::env::var_os(ROLE) else { return };
@@ -72,10 +74,10 @@ impl OwnedFixture {
             &[(ROLE.into(), role.into())],
             Arc::new(NoopHandler),
             Box::new(move |line| {
-                if let Some(pid) = line.strip_prefix("ready ").and_then(|v| v.parse::<u32>().ok()) {
-                    if let Some(send) = send.lock().unwrap().take() {
-                        let _ = send.send(pid);
-                    }
+                if let Some(pid) = line.strip_prefix("ready ").and_then(|v| v.parse::<u32>().ok())
+                    && let Some(send) = send.lock().unwrap().take()
+                {
+                    let _ = send.send(pid);
                 }
             }),
             Framing::Lines,
@@ -97,10 +99,9 @@ impl Drop for OwnedFixture {
         // The owned parent records this immediately after spawn, even if readiness fails.
         if let Some(pid) =
             std::fs::read_to_string(self.cwd.join("grandchild.pid")).ok().and_then(|s| s.parse::<u32>().ok())
+            && !self.pids.contains(&pid)
         {
-            if !self.pids.contains(&pid) {
-                self.pids.push(pid);
-            }
+            self.pids.push(pid);
         }
         for pid in self.pids.iter().rev() {
             let _ = terminate_pid(*pid);

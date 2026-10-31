@@ -1587,6 +1587,10 @@ async fn real_complete_is_read_only(provider: &str) {
     assert_eq!(cwds.lock().len(), 1);
     let completion_cwd = cwds.lock()[0].clone();
     let removed_on_return = !completion_cwd.exists();
+    eprintln!(
+        "COMPLETION_CWD provider={provider} path={} removed_on_return={removed_on_return}",
+        completion_cwd.display()
+    );
     assert!(result.unwrap().contains("READ_ONLY_OK"));
     let selected = mgr
         .shared
