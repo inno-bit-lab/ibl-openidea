@@ -20,7 +20,7 @@ export function applyRuntimeSettings(raw: unknown, root: HTMLElement = document.
 
   applyAppearanceOptions(s, root);
 
-  root.lang = s.appearance.locale === "zh" ? "zh-CN" : "en";
+  root.lang = s.appearance.locale === "zh" ? "zh-CN" : s.appearance.locale;
 }
 
 /** Subscribes to settings changes; returns the unsubscribe function. */

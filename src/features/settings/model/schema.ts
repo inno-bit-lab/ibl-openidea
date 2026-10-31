@@ -33,7 +33,7 @@ import {
 import { BUILTIN_THEME_IDS, type BuiltinThemeId } from "@/platform/themes";
 
 export type ThemeId = BuiltinThemeId | "system";
-export type LocaleId = "en" | "zh";
+export type LocaleId = "en" | "it" | "zh";
 
 /** A user keymap (Keymap › Duplicate…): its own overrides on top of a bundled preset. */
 export interface CustomKeymapSettings {
@@ -166,7 +166,7 @@ export const LIMITS = {
 } as const;
 
 const THEMES: readonly ThemeId[] = [...BUILTIN_THEME_IDS, "system"];
-const LOCALES: readonly LocaleId[] = ["en", "zh"];
+const LOCALES: readonly LocaleId[] = ["en", "it", "zh"];
 export const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 type Obj = Record<string, unknown>;

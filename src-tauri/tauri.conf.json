@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "IBLOpenIdea",
-  "version": "0.1.29",
+  "version": "0.3.0",
   "identifier": "it.innobitlab.iblopenidea",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -52,7 +52,7 @@
   "mainBinaryName": "openidea",
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZGNDg4QjA2Nzk5MEEzQkUKUldTK281QjVCb3RJYjdWelJRaUFqZGFyc3RYZ3pXSStPVXE3Q0ZtaWU5aE5uNkE1eW5iUWZ1ZmoK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEzMUEwRTQ3MUYyOEZFRUMKUldUcy9pZ2ZSdzRhby9Pd2M0OHlvcmppZWJhV2NwMUNGOTh5UTd6akt2ZjhzTDluSVUyQVhJdngK",
       "endpoints": ["https://github.com/inno-bit-lab/ibl-openidea/releases/latest/download/latest.json"]
     }
   }
