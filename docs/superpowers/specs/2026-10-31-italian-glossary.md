@@ -131,6 +131,8 @@ The MT-3 tranche 1 strings ("feat(i18n): translate the MT-3 strings into Italian
 
 The MT-2 strings ("feat(i18n): translate the MT-2 strings into Italian", 49 added to the text catalog, no keyed change) added no group either. 38 values come from the fork. 10 strings the fork never had are new. "Reasoning effort (thinking level) used when generating commit message suggestions." is reworded to "Intensità di ragionamento (livello di elaborazione)…", because the fork's "Livello di ragionamento (intensità di elaborazione)" swapped the terms of "Effort" and "Thinking".
 
+The MT-3 tranche 2 strings ("feat(i18n): translate the MT-3 tranche 2 strings into Italian": 4 source texts of the Suggest Commit Message button and the `menu.vcs.showHistoryForSelection` key) all come from the fork and add no group.
+
 To run it, save this as `glossary-check.mjs` outside the repository and run `node glossary-check.mjs <repository root>`:
 
 ```js
