@@ -306,9 +306,12 @@ impl LspManager {
         timeout: Duration,
         cancel: &CancellationToken,
     ) -> IdeResult<Value> {
+        let started = Instant::now();
         let (server, run) = self.jdtls(path, cancel).await?;
+        let ready_ms = started.elapsed().as_millis();
+        let phase = params.get("command").and_then(Value::as_str).unwrap_or(method).to_owned();
         let fut = run.peer.request::<Value, Value>(method, params, Some(cancel.clone()));
-        match tokio::time::timeout(timeout, fut).await {
+        let result = match tokio::time::timeout(timeout, fut).await {
             Ok(r) => r.map_err(|e| crate::rpc_err(&server.name, method, e)),
             Err(_) => Err(IdeError::new(
                 ErrorKind::Protocol,
@@ -317,7 +320,15 @@ impl LspManager {
                     timeout.as_secs()
                 ),
             )),
-        }
+        };
+        tracing::info!(
+            phase,
+            ready_ms,
+            request_ms = started.elapsed().as_millis() - ready_ms,
+            success = result.is_ok(),
+            "Java launch request"
+        );
+        result
     }
 
     /// `workspace/executeCommand` on the jdtls serving `path`.
