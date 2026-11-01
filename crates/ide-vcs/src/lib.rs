@@ -541,6 +541,7 @@ impl Repo {
     /// Like [`Repo::status`], with `include_ignored` also listing git-ignored files and
     /// collapsed ignored directories (`unstaged: Some(ChangeKind::Ignored)`).
     pub fn status_with_ignored(&self, include_ignored: bool) -> IdeResult<Vec<FileStatus>> {
+        let _scope = crate::ExecutionScope::enter(self.execution_allowed.load(std::sync::atomic::Ordering::Acquire));
         status::status_with(self, include_ignored)
     }
     pub fn branch_info(&self) -> IdeResult<BranchInfo> {
