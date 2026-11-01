@@ -21,7 +21,7 @@ mod worktree;
 pub use model::*;
 
 use conversation::{Conversation, SavedSubagent, Session};
-use ide_core::{IdeError, IdeResult, IpcPath};
+use ide_core::{CancellationToken, IdeError, IdeResult, IpcPath};
 use ide_jsonrpc::{Framing, Handler, Peer, RpcError, codes};
 use ide_vcs::Repo;
 use parking_lot::{Mutex, RwLock};
@@ -82,6 +82,7 @@ type Connector = Arc<
 >;
 
 struct Shared {
+    execution: Mutex<Execution>,
     paths: AgentPaths,
     runtime: tokio::runtime::Handle,
     connector: Connector,
@@ -91,6 +92,14 @@ struct Shared {
     /// Last probe of each provider.
     probes: Mutex<HashMap<String, AgentProbe>>,
 }
+
+/// Admission and cancellation change together, including for retained project handles.
+struct Execution {
+    allowed: bool,
+    epoch: CancellationToken,
+}
+
+const RESTRICTED_EXECUTION: &str = "Project is in Restricted Mode. Trust the project to enable execution.";
 
 /// What an agent offered in its last session, for the New Task page.
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -298,6 +307,17 @@ fn argument_store_error(error: std::io::Error) -> IdeError {
 }
 
 impl AgentManager {
+    /// Closes admission and cancels all completions of this epoch on revoke/close.
+    /// Only an explicit `true` reopens admission.
+    pub fn set_execution_allowed(&self, allowed: bool) {
+        let mut execution = self.shared.execution.lock();
+        execution.allowed = allowed;
+        if !allowed {
+            execution.epoch.cancel();
+            execution.epoch = CancellationToken::new();
+        }
+    }
+
     /// Loads the project's saved tasks. Spawned work runs on `runtime`.
     pub fn new(paths: AgentPaths, runtime: tokio::runtime::Handle) -> Self {
         let connector: Connector = Arc::new(|spec, cwd, client, on_stderr| match spec.driver {
@@ -318,6 +338,7 @@ impl AgentManager {
         }
         let providers = RwLock::new(provider::load(paths.custom_agents_dir.as_deref()));
         let shared = Arc::new(Shared {
+            execution: Mutex::new(Execution { allowed: true, epoch: CancellationToken::new() }),
             paths,
             runtime,
             connector,
@@ -452,6 +473,13 @@ impl AgentManager {
         if prompt.is_empty() {
             return Err(IdeError::invalid("nothing to ask"));
         }
+        let epoch = {
+            let execution = self.shared.execution.lock();
+            if !execution.allowed {
+                return Err(IdeError::unavailable(RESTRICTED_EXECUTION));
+            }
+            execution.epoch.clone()
+        };
         let mut spec = provider::load(self.shared.paths.custom_agents_dir.as_deref())
             .into_iter()
             .find(|p| p.id == provider)
@@ -482,6 +510,10 @@ impl AgentManager {
             self.shared.known.lock().get(&spec.id).map(|known| known.config.clone()).unwrap_or_default();
         let mut scope = CompletionScope { cwd, peer: None, finished: false };
         let dialect = acp::Dialect::wrap(collector.clone());
+        if epoch.is_cancelled() {
+            scope.finish().await;
+            return Err(IdeError::unavailable(RESTRICTED_EXECUTION));
+        }
         let peer = match (self.shared.connector)(&spec, &scope.cwd, dialect.clone(), on_stderr) {
             Ok(p) => p,
             Err(e) => {
@@ -490,33 +522,40 @@ impl AgentManager {
         };
         scope.peer = Some(peer.clone());
         let peer = acp::Conn::new(peer, dialect);
-        let outcome = match tokio::time::timeout(
-            timeout,
-            ask(&peer, &spec, &scope.cwd, prompt, config, &fallback_config, &collector),
-        )
-        .await
-        {
-            Ok(Ok((stop, options))) => {
-                if !options.is_empty() {
-                    self.shared.remember(&spec.id, Some(&options), None);
+        let session = async {
+            match tokio::time::timeout(
+                timeout,
+                ask(&peer, &spec, &scope.cwd, prompt, config, &fallback_config, &collector),
+            )
+            .await
+            {
+                Ok(Ok((stop, options))) => {
+                    if !options.is_empty() {
+                        self.shared.remember(&spec.id, Some(&options), None);
+                    }
+                    if stop == "refusal" {
+                        Err(format!("{} refused to answer.", spec.name))
+                    } else if stop == "cancelled" {
+                        Err(format!("{} stopped before answering.", spec.name))
+                    } else {
+                        // The last updates of a turn can trail its response.
+                        tokio::time::sleep(TURN_GRACE).await;
+                        Ok(collector.text.lock().trim().to_owned())
+                    }
                 }
-                if stop == "refusal" {
-                    Err(format!("{} refused to answer.", spec.name))
-                } else if stop == "cancelled" {
-                    Err(format!("{} stopped before answering.", spec.name))
-                } else {
-                    // The last updates of a turn can trail its response.
-                    tokio::time::sleep(TURN_GRACE).await;
-                    Ok(collector.text.lock().trim().to_owned())
+                Ok(Err(AskError::ReadOnly(message))) => Err(message),
+                // Signed out, or the account was refused (Claude Code: "API Error: 403").
+                Ok(Err(AskError::Rpc(RpcError::Server { message, .. }))) if message.to_lowercase().contains("auth") => {
+                    Err(format!("{} needs you to sign in. {}", spec.name, spec.login_hint))
                 }
+                Ok(Err(AskError::Rpc(e))) => Err(describe_error(e, &stderr.lock())),
+                Err(_) => Err(format!("{} didn't answer within {} seconds.", spec.name, timeout.as_secs())),
             }
-            Ok(Err(AskError::ReadOnly(message))) => Err(message),
-            // Signed out, or the account was refused (Claude Code: "API Error: 403").
-            Ok(Err(AskError::Rpc(RpcError::Server { message, .. }))) if message.to_lowercase().contains("auth") => {
-                Err(format!("{} needs you to sign in. {}", spec.name, spec.login_hint))
-            }
-            Ok(Err(AskError::Rpc(e))) => Err(describe_error(e, &stderr.lock())),
-            Err(_) => Err(format!("{} didn't answer within {} seconds.", spec.name, timeout.as_secs())),
+        };
+        let outcome = tokio::select! {
+            biased;
+            _ = epoch.cancelled() => Err(RESTRICTED_EXECUTION.to_owned()),
+            outcome = session => outcome,
         };
         scope.finish().await;
         match outcome {
@@ -1002,6 +1041,7 @@ impl AgentManager {
 
     /// Stops every agent (project closed).
     pub fn shutdown(&self) {
+        self.set_execution_allowed(false);
         for task in self.tasks.read().values() {
             task.kill();
             // What arrived after the last save (a subagent's late updates).

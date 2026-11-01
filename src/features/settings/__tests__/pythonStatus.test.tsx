@@ -40,7 +40,7 @@ beforeEach(() => {
   mocks.effective.mockResolvedValue(null);
   mocks.detect.mockResolvedValue([]);
   mocks.set.mockResolvedValue({ languages: { python: { interpreter: "/new/python" } } });
-  useProject.setState({ project: { root: "/project" } as ProjectInfo, settings: null });
+  useProject.setState({ project: { root: "/project", trusted: true } as ProjectInfo, settings: null });
   setContext("projectOpen", true);
   dispose = activatePythonStatus();
 });
@@ -114,7 +114,7 @@ describe("Python interpreter status", () => {
     mount();
     expect(await screen.findByText("Python 3.12 (.venv)")).toBeTruthy();
     mocks.files.mockResolvedValue([]);
-    act(() => useProject.setState({ project: { root: "/other" } as ProjectInfo }));
+    act(() => useProject.setState({ project: { root: "/other", trusted: true } as ProjectInfo }));
     expect(screen.queryByRole("button")).toBeNull();
   });
   it("writes the project setting through the same backend path as Settings", async () => {
@@ -140,7 +140,7 @@ describe("Python interpreter status", () => {
     mount();
     await waitFor(() => expect(mocks.detect).toHaveBeenCalled());
     mocks.files.mockResolvedValue([]);
-    act(() => useProject.setState({ project: { root: "/other" } as ProjectInfo }));
+    act(() => useProject.setState({ project: { root: "/other", trusted: true } as ProjectInfo }));
     await act(async () => finish([{ path: "/old/python", name: "Python 3.12" } as Sdk]));
     expect(screen.queryByRole("button")).toBeNull();
   });

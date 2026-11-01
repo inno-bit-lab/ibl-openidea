@@ -70,11 +70,24 @@ async fn serves_projects_files_documents_search_and_runs() {
     let client = Arc::new(Client::default());
     let peer = Peer::connect(cr, cw, client.clone());
 
-    let info: ServerInfo = peer.request("initialize", json!({ "version": 1 }), None).await.unwrap();
+    let info: ServerInfo = peer.request("initialize", json!({ "version": rpc::PROTOCOL_VERSION }), None).await.unwrap();
     assert_eq!(info.protocol, rpc::PROTOCOL_VERSION);
 
     let opened = invoke(&peer, "open_project", json!({ "path": project })).await.unwrap();
     assert_eq!(opened["name"], "demo");
+    assert_eq!(opened["trusted"], false);
+    invoke(&peer, "index_status", json!({})).await.unwrap();
+    assert_eq!(invoke(&peer, "lsp_servers", json!({})).await.unwrap(), json!([]));
+    invoke(&peer, "lsp_resend_diagnostics", json!({})).await.unwrap();
+    let files = invoke(&peer, "find_files", json!({"query": "main", "limit": 10})).await.unwrap();
+    assert!(files.is_array());
+    for command in ["build_sync", "run_start", "sdk_locate_tools", "notebook_execute", "debug_start"] {
+        let error = invoke(&peer, command, json!({})).await.unwrap_err();
+        assert!(error.message.contains("Restricted Mode"), "{command}: {error:?}");
+    }
+    let call = Invoke { window: "unknown".into(), cmd: "coverage_collect".into(), args: json!({}) };
+    assert!(peer.request::<_, Value>("invoke", call, None).await.is_err());
+    invoke(&peer, "project_trust_set", json!({"path": project, "trusted": true, "folder": false})).await.unwrap();
     let current = invoke(&peer, "project_current", json!({})).await.unwrap();
     assert_eq!(current["name"], "demo");
 
@@ -237,7 +250,7 @@ async fn open_host(base: &std::path::Path, project: &std::path::Path) -> Peer {
     tokio::spawn(rpc::serve(host, Dispatcher::standard(), peer_slot, sr, sw));
     let (cr, cw) = tokio::io::split(client_io);
     let peer = Peer::connect(cr, cw, Arc::new(Client::default()));
-    let _: ServerInfo = peer.request("initialize", json!({ "version": 1 }), None).await.unwrap();
+    let _: ServerInfo = peer.request("initialize", json!({ "version": rpc::PROTOCOL_VERSION }), None).await.unwrap();
     invoke(&peer, "open_project", json!({ "path": project })).await.unwrap();
     peer
 }
@@ -271,6 +284,7 @@ async fn vcs_ignored_lists_only_ignored_files() {
     let repo = git_repo_with_ignored(tmp.path());
     let peer = open_host(&tmp.path().join("server"), &repo).await;
 
+    invoke(&peer, "project_trust_set", json!({"path": repo, "trusted": true, "folder": false})).await.unwrap();
     let ignored = invoke(&peer, "vcs_ignored", json!({})).await.unwrap();
     let entries = ignored.as_array().unwrap();
     assert_eq!(file_names(entries), ["ignored.log"], "{entries:?}");
@@ -334,6 +348,7 @@ async fn local_deployment_runs_on_the_project_host() {
     tokio::spawn(rpc::serve(host, dispatcher, slot, sr, sw));
     let (cr, cw) = tokio::io::split(client_io);
     let peer = Peer::connect(cr, cw, Arc::new(Client::default()));
+    invoke(&peer, "project_trust_set", json!({"path": project, "trusted": true, "folder": false})).await.unwrap();
     invoke(&peer, "open_project", json!({"path": project})).await.unwrap();
     let deployment = json!({"servers": [{"id":"local", "kind":"local", "rootPath":target}], "defaultServer":"local"});
     invoke(&peer, "settings_set", json!({"scope":"project", "key":"deployment", "value":deployment.to_string()}))
@@ -412,6 +427,41 @@ async fn properties_conversion_through_remote_dispatch_without_a_remote_host() {
     let reloaded = invoke(&peer, "doc_snapshot", json!({"doc":doc})).await.unwrap();
     assert_eq!(reloaded["text"], "value=你好😀界");
     assert_eq!(reloaded["dirty"], false);
+    invoke(&peer, "close_project", json!({})).await.unwrap();
+    peer.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restricted_remote_project_keeps_fork_read_commands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo_with_ignored(tmp.path());
+    let base = tmp.path().join("server");
+    std::fs::create_dir_all(base.join("config/agents")).unwrap();
+    std::fs::write(
+        base.join("config/agents/remote-witness.toml"),
+        "name = 'Server profile witness'\ncommand = 'fixture-not-started'\n",
+    )
+    .unwrap();
+    let peer = open_host(&base, &repo).await;
+    invoke(&peer, "project_trust_set", json!({"path": repo, "trusted": false, "folder": false})).await.unwrap();
+    assert_eq!(invoke(&peer, "project_current", json!({})).await.unwrap()["trusted"], false);
+    let ignored = invoke(&peer, "vcs_ignored", json!({})).await.unwrap();
+    assert_eq!(file_names(ignored.as_array().unwrap()), ["ignored.log"]);
+    let error =
+        invoke(&peer, "agent_complete", json!({"provider": "remote-witness", "prompt": "Suggest", "config": []}))
+            .await
+            .unwrap_err();
+    assert_eq!(error.kind, ide_core::error::ErrorKind::Unavailable);
+    assert!(error.message.contains("Restricted Mode"));
+    let list = peer
+        .request::<_, Value>(
+            "invoke",
+            Invoke { window: "unknown".into(), cmd: "agent_providers".into(), args: json!({}) },
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(list.as_array().unwrap().iter().any(|p| p["id"] == "remote-witness"));
     invoke(&peer, "close_project", json!({})).await.unwrap();
     peer.kill();
 }

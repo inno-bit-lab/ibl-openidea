@@ -1925,4 +1925,45 @@ mod tests {
         assert_eq!(rfc3339(UNIX_EPOCH + Duration::from_secs(951_782_400)), "2000-02-29T00:00:00.000Z");
         assert_eq!(rfc3339(UNIX_EPOCH + Duration::from_millis(1_700_000_000_123)), "2023-11-14T22:13:20.123Z");
     }
+
+    #[test]
+    fn seeded_profile_keeps_trust_decisions() {
+        let f = Fixture::new();
+        let project = f.root().join("project-p");
+        fs::create_dir(&project).unwrap();
+        let config = f.roaming.join(FROM);
+        let data = f.local.join(FROM);
+        ide_workspace::RecentProjects::load(&config).touch(&project, None).unwrap();
+        let trust = ide_host::trust::TrustStore::load(&config, &data);
+        trust.decide(&project, false, false).unwrap();
+        let sources = f.sources();
+        let report = seed_profile_with_progress(&f.bases(), FROM, TO, &Progress::default());
+        assert_eq!(report.outcome, SeedOutcome::Seeded);
+        let target = ide_host::trust::TrustStore::load(&f.roaming.join(TO), &f.local.join(TO));
+        let status = target.status(&project).unwrap();
+        assert!(status.decided);
+        assert!(!status.trusted, "a copied explicit restriction overrides recent-project migration");
+        assert_eq!(f.sources(), sources);
+    }
+
+    #[test]
+    fn seeded_profile_without_trust_file_trusts_recent_projects() {
+        let f = Fixture::new();
+        let p = f.root().join("project-p");
+        let q = f.root().join("project-q");
+        fs::create_dir(&p).unwrap();
+        fs::create_dir(&q).unwrap();
+        ide_workspace::RecentProjects::load(&f.roaming.join(FROM)).touch(&p, None).unwrap();
+        assert!(!f.local.join(FROM).join("project-trust.json").exists());
+        let sources = f.sources();
+        let report = seed_profile_with_progress(&f.bases(), FROM, TO, &Progress::default());
+        assert_eq!(report.outcome, SeedOutcome::Seeded);
+        assert!(!f.local.join(TO).join("project-trust.json").exists());
+        let target = ide_host::trust::TrustStore::load(&f.roaming.join(TO), &f.local.join(TO));
+        assert!(target.status(&p).unwrap().trusted, "accepted one-time migration of recent projects");
+        let status = target.status(&q).unwrap();
+        assert!(!status.trusted);
+        assert!(!status.decided);
+        assert_eq!(f.sources(), sources);
+    }
 }

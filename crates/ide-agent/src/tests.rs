@@ -14,6 +14,7 @@ struct FakeAgent {
     calls: Mutex<Vec<String>>,
     prompts: Mutex<Vec<String>>,
     modes: Mutex<FakeModes>,
+    hold_prompts: AtomicBool,
     fail_set_mode: AtomicBool,
     drops_mode_on_set: AtomicBool,
     notifies_mode_change_on_set: AtomicBool,
@@ -259,7 +260,7 @@ impl Handler for FakeAgent {
                     self.say(&session, "ok");
                     return Ok(json!({"stopReason": "end_turn"}));
                 }
-                if text == "wait" {
+                if self.hold_prompts.load(Ordering::Relaxed) || text == "wait" {
                     // Works until cancelled.
                     while !self.latest().is_closed() && !self.calls.lock().iter().any(|c| c == "session/cancel") {
                         std::thread::sleep(Duration::from_millis(5));
@@ -1876,4 +1877,116 @@ async fn real_antigravity_registry_install() {
 #[ignore]
 async fn real_pi_registry_install() {
     real_registry_install_and_probe("pi-acp").await;
+}
+
+async fn completion_cleaned(agent: &FakeAgent) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while agent.servers.lock().iter().any(|p| !p.is_closed()) || agent.cwds.lock().iter().any(|p| p.exists()) {
+        assert!(std::time::Instant::now() < deadline, "completion peer/directory must be cleaned");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn completion_control(mgr: &AgentManager, agent: &FakeAgent) {
+    let answer = mgr.complete("claude", "control", &[], Duration::from_secs(5)).await.unwrap();
+    assert!(answer.contains("Hi"));
+    assert_eq!(agent.cwds.lock().len(), 1, "the positive control must reach this connector");
+    completion_cleaned(agent).await;
+    // Clear the positive-control call before the action under test, never after it.
+    agent.cwds.lock().clear();
+}
+
+async fn pending_completion(mgr: Arc<AgentManager>, agent: &FakeAgent) -> tokio::task::JoinHandle<IdeResult<String>> {
+    let running = tokio::spawn(async move { mgr.complete("claude", "hold", &[], Duration::from_secs(60)).await });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !agent.prompts.lock().iter().any(|p| p == "hold") {
+        if std::time::Instant::now() >= deadline {
+            running.abort();
+            let _ = running.await;
+            completion_cleaned(agent).await;
+            panic!("fixture must reach session/prompt before cancellation");
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    running
+}
+
+async fn cancelled_completion(mut running: tokio::task::JoinHandle<IdeResult<String>>, agent: &FakeAgent) {
+    let result = tokio::time::timeout(Duration::from_secs(2), &mut running).await;
+    if result.is_err() {
+        // A behavioral RED must still stop its own stalled fixture and remove its cwd.
+        running.abort();
+        let _ = running.await;
+        completion_cleaned(agent).await;
+        panic!("completion was not cancelled within 2 seconds");
+    }
+    let result = result.unwrap().unwrap();
+    completion_cleaned(agent).await;
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, ide_core::error::ErrorKind::Unavailable);
+    assert_eq!(error.message, "Project is in Restricted Mode. Trust the project to enable execution.");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_cancels_a_running_completion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default")]));
+    let mgr = Arc::new(manager(tmp.path(), agent.clone()));
+    completion_control(&mgr, &agent).await;
+    agent.hold_prompts.store(true, Ordering::Relaxed);
+    let running = pending_completion(mgr.clone(), &agent).await;
+    mgr.shutdown();
+    cancelled_completion(running, &agent).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_after_shutdown_never_reaches_the_connector() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    completion_control(&mgr, &agent).await;
+    mgr.shutdown();
+    let result = mgr.complete("claude", "after close", &[], Duration::from_secs(5)).await;
+    completion_cleaned(&agent).await;
+    assert!(agent.cwds.lock().is_empty(), "shutdown must close admission before any connector call");
+    assert_eq!(result.unwrap_err().message, "Project is in Restricted Mode. Trust the project to enable execution.");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_is_refused_when_execution_is_not_allowed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    completion_control(&mgr, &agent).await;
+    mgr.set_execution_allowed(false);
+    let result = mgr.complete("claude", "restricted", &[], Duration::from_secs(5)).await;
+    completion_cleaned(&agent).await;
+    assert!(agent.cwds.lock().is_empty(), "restricted admission must make zero connector calls");
+    assert_eq!(result.unwrap_err().message, "Project is in Restricted Mode. Trust the project to enable execution.");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revoking_execution_cancels_a_running_completion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default")]));
+    let mgr = Arc::new(manager(tmp.path(), agent.clone()));
+    completion_control(&mgr, &agent).await;
+    agent.hold_prompts.store(true, Ordering::Relaxed);
+    let running = pending_completion(mgr.clone(), &agent).await;
+    mgr.set_execution_allowed(false);
+    cancelled_completion(running, &agent).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completion_runs_again_after_execution_is_allowed_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default")]));
+    let mgr = manager(tmp.path(), agent.clone());
+    mgr.set_execution_allowed(false);
+    mgr.set_execution_allowed(true);
+    completion_control(&mgr, &agent).await;
+    mgr.shutdown();
+    mgr.set_execution_allowed(true);
+    completion_control(&mgr, &agent).await;
+    mgr.shutdown();
 }

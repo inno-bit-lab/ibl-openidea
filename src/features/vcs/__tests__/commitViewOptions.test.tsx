@@ -25,6 +25,7 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
 
 import { ContextMenuHost, hideContextMenu } from "@/ui/Menu";
 import { registerActions } from "@/platform/actions";
+import { setLocale, tx } from "@/platform/i18n";
 import { useProject } from "@/platform/project";
 import { useProjectRoots } from "@/platform/projectRoots";
 import { CommitToolWindow } from "../CommitView";
@@ -100,7 +101,9 @@ function setUpRepositories() {
     selection: [],
   });
   useProject.setState({
-    project: { root: "/ws", name: "ws", isGit: true } as ReturnType<typeof useProject.getState>["project"],
+    project: { root: "/ws", name: "ws", isGit: true, trusted: true } as ReturnType<
+      typeof useProject.getState
+    >["project"],
   });
   useProjectRoots.setState({
     root: "/ws",
@@ -389,5 +392,138 @@ describe("Suggest Commit Message", () => {
     expect(agentComplete).toHaveBeenCalledTimes(1);
     expect(agentComplete.mock.calls[0]![0]).toBe("codex");
     expect(useCommit.getState().message).toBe("keep this draft");
+  });
+
+  function setTrust(trusted: boolean) {
+    act(() => useProject.setState((s) => ({ project: s.project && { ...s.project, trusted } })));
+  }
+
+  const restrictedMessage = "Project is in Restricted Mode. Trust the project to enable execution.";
+
+  it("disables Suggest in Restricted Mode with its explanation", () => {
+    suggestSettings("codex");
+    setTrust(false);
+    renderView();
+    expect(screen.getByRole("button", { name: "Trust the project to suggest commit messages." })).toBeDisabled();
+    expect(agentComplete).not.toHaveBeenCalled();
+  });
+
+  it("retires a suggestion immediately on revoke and ignores its late rejection", async () => {
+    suggestSettings("codex");
+    let reject!: (reason: Error) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((_, no) => {
+          reject = no;
+        }),
+    );
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    setTrust(false);
+    expect(screen.getByRole("alert")).toHaveTextContent(restrictedMessage);
+    expect(screen.queryByRole("button", { name: "Suggesting a commit message…" })).toBeNull();
+    await act(async () => reject(new Error("late backend failure")));
+    expect(screen.getByRole("alert")).toHaveTextContent(restrictedMessage);
+    expect(screen.getByRole("alert")).not.toHaveTextContent("late backend failure");
+  });
+
+  it("keeps the unedited draft when a revoked suggestion succeeds late", async () => {
+    suggestSettings("codex");
+    const answer = deferAgent();
+    useCommit.setState({ message: "keep the draft" });
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    setTrust(false);
+    await answer("feat: revoked result");
+    expect(useCommit.getState().message).toBe("keep the draft");
+    expect(screen.getByRole("alert")).toHaveTextContent(restrictedMessage);
+  });
+
+  it("keeps a new request busy when the old request settles after re-trust", async () => {
+    suggestSettings("codex");
+    const replies: ((value: { status: "ok"; data: string }) => void)[] = [];
+    agentComplete.mockImplementation(() => new Promise((resolve) => replies.push(resolve)));
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    setTrust(false);
+    setTrust(true);
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
+    await act(async () => replies[0]!({ status: "ok", data: "feat: stale" }));
+    expect(screen.getByRole("button", { name: "Suggesting a commit message…" })).toBeDisabled();
+    expect(useCommit.getState().message).toBe("");
+    await act(async () => replies[1]!({ status: "ok", data: "feat: current" }));
+    expect(useCommit.getState().message).toBe("feat: current");
+    expect(screen.getByRole("button", { name: "Suggest Commit Message" })).toBeEnabled();
+  });
+
+  it("clears the busy state after included files retire a pending suggestion", async () => {
+    suggestSettings("codex");
+    const answer = deferAgent();
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    act(() => useCommit.setState({ checks: new Map([[status[0]!.path, "none"]]) }));
+    await answer("feat: stale included files");
+    expect(useCommit.getState().message).toBe("");
+    expect(screen.getByRole("button", { name: "Suggest Commit Message" })).toBeEnabled();
+  });
+
+  it("still loads ignored files in Restricted Mode", async () => {
+    vcsIgnored.mockResolvedValue({ status: "ok", data: ignored });
+    setTrust(false);
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "View Options" }));
+    fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitemcheckbox", { name: /Ignored Files/ }));
+    await screen.findByText("Ignored Files");
+    expect(vcsIgnored).toHaveBeenCalledTimes(1);
+  });
+
+  it("revoke clears busy state even after included files already retired the answer", async () => {
+    suggestSettings("codex");
+    const replies: ((value: { status: "ok"; data: string }) => void)[] = [];
+    agentComplete.mockImplementation(() => new Promise((resolve) => replies.push(resolve)));
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    act(() => useCommit.setState({ checks: new Map([[status[0]!.path, "none"]]) }));
+    setTrust(false);
+    expect(screen.getByRole("alert")).toHaveTextContent(restrictedMessage);
+    setTrust(true);
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
+    await act(async () => replies[0]!({ status: "ok", data: "feat: retired" }));
+    expect(screen.getByRole("button", { name: "Suggesting a commit message…" })).toBeDisabled();
+    await act(async () => replies[1]!({ status: "ok", data: "feat: current files" }));
+    expect(useCommit.getState().message).toBe("feat: current files");
+  });
+
+  it("translates a restricted refusal when the backend answers before the trust event", async () => {
+    suggestSettings("codex");
+    let reject!: (reason: Error) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((_, no) => {
+          reject = no;
+        }),
+    );
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    try {
+      await act(async () => {
+        await setLocale("it");
+      });
+      await act(async () => reject(new Error(restrictedMessage)));
+      setTrust(false);
+      expect(screen.getByRole("alert")).toHaveTextContent(tx(restrictedMessage));
+    } finally {
+      await act(async () => {
+        await setLocale("en");
+      });
+    }
   });
 });

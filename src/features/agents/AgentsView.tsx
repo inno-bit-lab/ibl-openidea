@@ -46,6 +46,7 @@ export function TaskStatusIcon({ status }: { status: Status }) {
 
 export function AgentsView() {
   const project = useProject((s) => s.project);
+  const restricted = project?.trusted === false;
   const tx = useTx();
   const loaded = useAgents((s) => s.loaded);
   const error = useAgents((s) => s.error);
@@ -127,7 +128,13 @@ export function AgentsView() {
     <div className={styles.view}>
       <div className={styles.topActions}>
         <div ref={splitRef} className={styles.splitGroup}>
-          <button type="button" className={styles.splitMain} onClick={() => openHome()}>
+          <button
+            type="button"
+            className={styles.splitMain}
+            disabled={restricted}
+            title={restricted ? tx("Trust the project to start agents.") : undefined}
+            onClick={() => openHome()}
+          >
             <Icon name={providerIcon(draft.provider)} size={14} />
             <T>New Session</T>
           </button>
