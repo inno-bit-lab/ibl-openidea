@@ -31,6 +31,7 @@ vi.mock("@tauri-apps/api/webview", () => ({
 }));
 
 import { registerActions } from "@/platform/actions";
+import { setLocale } from "@/platform/i18n";
 import { useProject } from "@/platform/project";
 import { ContextMenuHost } from "@/ui";
 import { registerSettingsPage } from "@/workbench/contributions";
@@ -159,6 +160,34 @@ describe("Welcome › navigation", () => {
     await act(async () => {});
     expect(settingsSet).toHaveBeenCalledWith("global", "appearance.accent", '"#955ae0"');
     expect(settingsSet).toHaveBeenCalledWith("global", "appearance.syncWithOs", "true");
+  });
+
+  it("shows the sidebar, the page names and the Manage menu in Italian", async () => {
+    const dispose = registerSettingsPage({ id: "plugins", title: "Plugins", component: () => <div>plugin page</div> });
+    const disposeActions = registerActions([{ id: "file.settings", title: "Settings…", run: () => {} }]);
+    try {
+      await act(async () => {
+        await setLocale("it");
+      });
+      await renderWelcome();
+      const nav = screen.getByRole("navigation", { name: "Benvenuto" });
+      expect(
+        within(nav)
+          .getAllByRole("button")
+          .map((b) => b.textContent),
+      ).toEqual(["Progetti", "Personalizza", "Plugin"]);
+      expect(screen.getByRole("region", { name: "Progetti" })).toBeTruthy();
+      fireEvent.click(within(nav).getByRole("button", { name: "Personalizza" }));
+      expect(screen.getByRole("region", { name: "Personalizza" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Gestisci" }));
+      expect(screen.getByRole("menu", { name: "Gestisci" })).toBeTruthy();
+    } finally {
+      disposeActions();
+      act(() => dispose());
+      await act(async () => {
+        await setLocale("en");
+      });
+    }
   });
 });
 

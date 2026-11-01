@@ -5429,5 +5429,8 @@
   "Choose an agent to suggest commit messages in the Commit settings.": "Scegli un agente per suggerire i messaggi di commit nelle impostazioni di Commit.",
   "Open Settings": "Apri impostazioni",
   "The agent returned an invalid commit suggestion. Your draft was kept.": "L'agente ha restituito un suggerimento di commit non valido. La bozza è stata mantenuta.",
-  "The agent could not suggest a commit message: {error}": "L'agente non è riuscito a suggerire un messaggio di commit: {error}"
+  "The agent could not suggest a commit message: {error}": "L'agente non è riuscito a suggerire un messaggio di commit: {error}",
+  "Type text to search the project": "Digita il testo da cercare nel progetto",
+  "Invalid pattern": "Modello non valido",
+  "Searching…": "Ricerca in corso…"
 }
