@@ -53,7 +53,7 @@ import {
   type FindTab,
 } from "./windowStore";
 import styles from "./FindToolWindow.module.css";
-import { tx } from "@/platform/i18n";
+import { t, tx } from "@/platform/i18n";
 
 type Node =
   | { kind: "dir"; key: string; label: string; count: number; children: Node[] }
@@ -322,9 +322,9 @@ function FindTabView({ tab }: { tab: FindTab }) {
       const p = await loadReplacePreview(tab.query, tab.replacement, !!tab.preserveCase, path, usages);
       await executeAction("diff.compareTexts", {
         path,
-        title: `Replace Preview`,
-        left: { text: p.before, label: "Original" },
-        right: { text: p.after, label: "After Replace" },
+        title: tx("Replace Preview"),
+        left: { text: p.before, label: tx("Original") },
+        right: { text: p.after, label: tx("After Replace") },
         line: usages[0]?.line,
       });
     } catch (e) {
@@ -376,8 +376,11 @@ function FindTabView({ tab }: { tab: FindTab }) {
             ? (st.error ?? tx("Search failed"))
             : progress
               ? tx`Replacing… ${progress.done}/${progress.total} files`
-              : tx`${`${st.matchCount}${st.summary?.limitHit ? "+" : ""}`} matches in ${st.files.length} files` +
-                (marks.excluded.size ? ` · ${tx`${marks.excluded.size} excluded`}` : "")}
+              : t("search.findToolWindow.summary", {
+                  count: st.matchCount,
+                  files: st.files.length,
+                  more: st.summary?.limitHit ? "+" : "",
+                }) + (marks.excluded.size ? ` · ${tx`${marks.excluded.size} excluded`}` : "")}
         </span>
         <span className={styles.spacer} />
         <Button size="small" variant="ghost" disabled={!selection.size} onClick={exclude} title="Exclude / include (⌫)">
@@ -486,7 +489,7 @@ function FindTabView({ tab }: { tab: FindTab }) {
             renderNode={(n, s) => <FindNode node={n} state={s} tab={tab} marks={marks} />}
             empty={
               <span className={styles.empty}>
-                {st.status === "searching" || st.status === "validating" ? "Searching…" : "No matches"}
+                {st.status === "searching" || st.status === "validating" ? tx("Searching…") : tx("No matches")}
               </span>
             }
           />

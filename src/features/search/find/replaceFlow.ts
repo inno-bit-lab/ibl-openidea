@@ -6,6 +6,7 @@
  */
 import { Channel } from "@tauri-apps/api/core";
 import { editorsFor, whenSynced } from "@/editor/api";
+import { t } from "@/platform/i18n";
 import {
   call,
   commands,
@@ -78,9 +79,7 @@ export function countUsages(usages: readonly Usage[]): ReplaceCounts {
 
 /** "Replace 3 occurrences in 2 files" for the confirmation dialog. */
 export function confirmText(c: ReplaceCounts, pattern: string, replacement: string): string {
-  const occ = `${c.usages} occurrence${c.usages === 1 ? "" : "s"}`;
-  const files = `${c.files} file${c.files === 1 ? "" : "s"}`;
-  return `Replace ${occ} of '${pattern}' with '${replacement}' in ${files}?`;
+  return t("search.replace.confirm", { count: c.usages, files: c.files, pattern, replacement });
 }
 
 /** Toggles exclusion of every usage in `groups` (all excluded → include them again). */
@@ -222,9 +221,8 @@ export function loadReplacePreview(
 }
 
 export function summaryText(s: ReplaceSummary): string {
-  const occ = `${s.replacements} occurrence${s.replacements === 1 ? "" : "s"}`;
-  const files = `${s.files} file${s.files === 1 ? "" : "s"}`;
-  return `${s.cancelled ? "Stopped after replacing" : "Replaced"} ${occ} in ${files}${s.failed ? ` (${s.failed} failed)` : ""}`;
+  const params = { count: s.replacements, files: s.files, failed: s.failed };
+  return t(s.cancelled ? "search.replace.stoppedSummary" : "search.replace.summary", params);
 }
 
 export interface PreviewLine {
