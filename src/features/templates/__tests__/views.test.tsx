@@ -58,7 +58,7 @@ describe("settings pages", () => {
   });
 
   it("keeps a project scheme seeded from Default", () => {
-    useProject.setState({ project: { root: "/proj", name: "proj" } as unknown as ProjectInfo });
+    useProject.setState({ project: { root: "/proj", name: "proj", trusted: true } as unknown as ProjectInfo });
     reloadFileTemplates();
     saveInclude({ name: "File Header", body: "// default" });
     setTemplateScheme("project");

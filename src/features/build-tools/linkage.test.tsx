@@ -74,7 +74,7 @@ beforeEach(async () => {
   mocks.model.mockResolvedValue(model);
   mocks.configs.mockResolvedValue([]);
   mocks.confirm.mockResolvedValue(true);
-  useProject.setState({ project: { root: "/p" } as ProjectInfo });
+  useProject.setState({ project: { root: "/p", trusted: true } as ProjectInfo });
   setContext("projectOpen", true);
   await act(async () => {
     dispose = activate();

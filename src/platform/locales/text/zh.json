@@ -1,4 +1,6 @@
 {
+  "Trust the project to suggest commit messages.": "信任项目后可建议提交消息。",
+  "Trust the project to start agents.": "信任项目后可启动智能体。",
   "Project opening cancelled": "已取消打开项目",
   "Project is in Restricted Mode": "项目处于受限模式",
   "Project is in Restricted Mode. Trust the project to enable execution.": "项目处于受限模式。信任项目后可启用执行功能。",

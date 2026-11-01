@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { tx } from "@/platform/i18n";
 import clsx from "clsx";
 import { executeAction } from "@/platform/actions";
-import { dirname } from "@/platform/project";
+import { dirname, useProject } from "@/platform/project";
 import {
   Button,
   Checkbox,
@@ -771,6 +771,7 @@ export function useCommitRunner(included: number, onCommitted?: () => void): Com
 
 /** Amend, message history and the message field with its inspections and failed checks. */
 export function CommitMessageField({ included, runner }: { included: number; runner: CommitRunner }) {
+  const restricted = useProject((s) => s.project?.trusted === false);
   const message = useCommit((s) => s.message);
   const amend = useCommit((s) => s.amend);
   const focusTick = useCommit((s) => s.focusTick);
@@ -788,7 +789,18 @@ export function CommitMessageField({ included, runner }: { included: number; run
   const [suggestError, setSuggestError] = useState<string | null>(null);
   /** The Suggest request whose answer may still fill the message. */
   const pendingSuggest = useRef<object | null>(null);
+  /** A retired request may finish, but cannot clear a newer request's busy state. */
+  const latestSuggest = useRef<object | null>(null);
   const { emptyError } = runner;
+
+  useEffect(() => {
+    if (restricted && latestSuggest.current) {
+      pendingSuggest.current = null;
+      latestSuggest.current = null;
+      setSuggesting(false);
+      setSuggestError(tx("Project is in Restricted Mode. Trust the project to enable execution."));
+    }
+  }, [restricted]);
 
   // Closing the field, or another set of included files, Amend state or selected repository,
   // retires the pending request: its answer describes a commit that is no longer the one shown.
@@ -824,13 +836,14 @@ export function CommitMessageField({ included, runner }: { included: number; run
 
   /** Asks the agent chosen in Settings › Version Control › Commit for a message for the included changes. */
   const suggest = async () => {
-    if (suggesting) return;
+    if (suggesting || restricted) return;
     if (!cfg.suggestAgent) {
       setSuggestError(tx("Choose an agent to suggest commit messages in the Commit settings."));
       return;
     }
     const request = {};
     pendingSuggest.current = request;
+    latestSuggest.current = request;
     const draft = useCommit.getState().message;
     setSuggesting(true);
     setSuggestError(null);
@@ -853,7 +866,10 @@ export function CommitMessageField({ included, runner }: { included: number; run
       if (pendingSuggest.current === request) setSuggestError(e instanceof Error ? e.message : String(e));
     } finally {
       if (pendingSuggest.current === request) pendingSuggest.current = null;
-      setSuggesting(false);
+      if (latestSuggest.current === request) {
+        latestSuggest.current = null;
+        setSuggesting(false);
+      }
     }
   };
 
@@ -888,9 +904,15 @@ export function CommitMessageField({ included, runner }: { included: number; run
         />
         <IconButton
           icon="toolwindow-agents"
-          title={suggesting ? "Suggesting a commit message…" : "Suggest Commit Message"}
+          title={
+            restricted
+              ? "Trust the project to suggest commit messages."
+              : suggesting
+                ? "Suggesting a commit message…"
+                : "Suggest Commit Message"
+          }
           size="small"
-          disabled={!included || suggesting}
+          disabled={restricted || !included || suggesting}
           onClick={() => void suggest()}
         />
         <span className={styles.grow} />

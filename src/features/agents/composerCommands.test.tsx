@@ -6,11 +6,19 @@ import type { AgentCommand, AgentProvider } from "@/bindings";
 
 const agentCommands = vi.fn();
 const agentCreate = vi.fn();
+const agentProbe = vi.fn();
 const agentSetArgs = vi.fn();
 const agentProviders = vi.fn();
 const openInput = vi.fn();
 const vcsBranches = vi.fn();
 const vcsBranchInfo = vi.fn();
+
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  Channel: class {
+    onmessage?: unknown;
+  },
+}));
 
 vi.mock("@/platform/ipc", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/platform/ipc")>();
@@ -21,6 +29,8 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
       ...real.commands,
       agentCommands: (provider: string, task: string | null) => agentCommands(provider, task),
       agentCreate: (request: unknown) => agentCreate(request),
+      agentProbe: (provider: string, refresh: boolean) => agentProbe(provider, refresh),
+      agentSubscribe: () => Promise.resolve({ status: "ok", data: [] }),
       agentSetArgs: (provider: string, args: string[]) => agentSetArgs(provider, args),
       agentProviders: () => agentProviders(),
       vcsBranchInfo: (root: string | null) => vcsBranchInfo(root),
@@ -42,8 +52,18 @@ import { executeAction } from "@/platform/actions";
 import { activate } from "./index";
 import { CATALOG_KEY, CATALOG_KIND } from "./model";
 import { HomeEditor } from "./HomeEditor";
+import { AgentsView } from "./AgentsView";
 import { AcpArgumentsDialog, AgentsCatalogEditor, ManagePresetsDialog } from "./AgentsCatalogEditor";
-import { HOME, closeCatalogOverlay, openCatalog, refreshProviders, updateComposer, useAgents } from "./store";
+import {
+  HOME,
+  closeCatalogOverlay,
+  openCatalog,
+  refreshProviders,
+  updateComposer,
+  useAgents,
+  connect,
+  disconnect,
+} from "./store";
 import { emptyDraft } from "./composerModel";
 
 const command = (name: string, description: string): AgentCommand => ({ name, description, hint: null });
@@ -80,6 +100,7 @@ beforeEach(() => {
       Promise.resolve({ status: "ok", data: { head: root === "/project-b" ? "b-main" : "a-main" } }),
     );
   agentCommands.mockReset();
+  agentProbe.mockReset().mockResolvedValue({ status: "ok", data: { provider: "claude", protocol: "ACP" } });
   agentCreate.mockReset().mockResolvedValue({ status: "error", error: { kind: "invalid", message: "stop here" } });
   useAgents.setState({
     providers: [claude],
@@ -215,7 +236,7 @@ describe("agent preferences and presets", () => {
 
   it("opens the slimmed Agents tab from the picker and keeps the registry link", async () => {
     vi.mocked(isTauri).mockReturnValue(false);
-    useProject.setState({ project: { root: "/project", name: "Project", isGit: false } as ProjectInfo });
+    useProject.setState({ project: { root: "/project", name: "Project", isGit: false, trusted: true } as ProjectInfo });
     agentCommands.mockResolvedValue({ status: "ok", data: [] });
     const home = render(<HomeEditor />);
     fireEvent.click(screen.getByRole("button", { name: "Agent" }));
@@ -310,7 +331,7 @@ describe("agent preferences and presets", () => {
 
   it("reopens Manage Presets only for a new catalog request", async () => {
     vi.mocked(isTauri).mockReturnValue(false);
-    useProject.setState({ project: { root: "/project", name: "Project", isGit: false } as ProjectInfo });
+    useProject.setState({ project: { root: "/project", name: "Project", isGit: false, trusted: true } as ProjectInfo });
     useAgents.setState({ presets: [italianPreset] });
     openCatalog(true);
     render(<AgentsCatalogEditor input={openInput.mock.calls[0]![0]} />);
@@ -383,7 +404,7 @@ describe("agent catalog from Welcome", () => {
 describe("review regressions: transient presets and provider loading", () => {
   it("consumes the live preset intent once and does not replay it from a restored catalog tab", async () => {
     vi.mocked(isTauri).mockReturnValue(false);
-    useProject.setState({ project: { root: "/project", name: "Project", isGit: false } as ProjectInfo });
+    useProject.setState({ project: { root: "/project", name: "Project", isGit: false, trusted: true } as ProjectInfo });
     openCatalog(true);
     const input = openInput.mock.calls[0]![0];
     const view = render(
@@ -436,4 +457,49 @@ describe("review regressions: transient presets and provider loading", () => {
       else expect(screen.queryByText("Not installed")).toBeNull();
     },
   );
+});
+
+describe("MT-6 restricted agents", () => {
+  function setTrust(trusted: boolean) {
+    act(() => useProject.setState((s) => ({ project: s.project && { ...s.project, trusted } })));
+  }
+
+  beforeEach(() => {
+    useProject.setState({
+      project: { root: "/project", name: "Project", isGit: false, trusted: false } as ProjectInfo,
+    });
+    useAgents.setState({ loaded: true, error: null, tasks: new Map(), unread: new Set() });
+    agentCommands.mockResolvedValue({ status: "ok", data: [] });
+  });
+
+  it("loads the provider catalog in the restricted store", async () => {
+    await connect();
+    expect(agentProviders).toHaveBeenCalledTimes(1);
+    expect(useAgents.getState().providers.map((p) => p.id)).toEqual(["claude"]);
+    disconnect();
+  });
+
+  it("does not probe or start in Restricted Mode and enables both after trust", async () => {
+    updateComposer(HOME, { text: "A task", files: [], images: [] });
+    render(<HomeEditor />);
+    await waitFor(() => expect(agentCommands).toHaveBeenCalled());
+    expect(agentProbe).not.toHaveBeenCalled();
+    const start = screen.getByRole("button", { name: "Start" });
+    expect(start).toBeDisabled();
+    expect(start).toHaveAttribute("title", "Trust the project to start agents.");
+    setTrust(true);
+    await waitFor(() => expect(agentProbe).toHaveBeenCalledTimes(1));
+    expect(start).toBeEnabled();
+  });
+
+  it("disables New Session while restricted and enables it after trust", () => {
+    render(<AgentsView />);
+    const button = screen.getByRole("button", { name: "New Session" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "Trust the project to start agents.");
+    setTrust(true);
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(openInput).toHaveBeenCalled();
+  });
 });

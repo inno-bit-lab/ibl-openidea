@@ -37,6 +37,7 @@ export function HomeEditor() {
   const history = useAgents((s) => s.history);
   const composer = useAgents((s) => s.composers.get(HOME)) ?? emptyDraft();
   const project = useProject((s) => s.project);
+  const restricted = project?.trusted === false;
   const [selected, setSelected] = useState(() =>
     defaultTaskProject(project, maybeEditorService()?.activePath() ?? null, draft.projectRoot),
   );
@@ -77,7 +78,7 @@ export function HomeEditor() {
   }, [root, project?.workspace]);
 
   const provider = providers.find((p) => p.id === draft.provider);
-  const probe = useProbe(provider?.installed ? provider.id : null);
+  const probe = useProbe(!restricted && provider?.installed ? provider.id : null);
   const agentCommands = useAgentCommands(provider?.id, null, provider?.commands ?? NO_COMMANDS);
   const agents = agentOptions(
     providers.filter(
@@ -123,6 +124,7 @@ export function HomeEditor() {
   const isolation = isGit ? draft.isolation : "local";
   const base = draft.base ?? current;
   const canStart =
+    !restricted &&
     canSend(composer) &&
     !!provider?.installed &&
     !providerDisabled &&
@@ -175,7 +177,13 @@ export function HomeEditor() {
             </>
           }
           actions={
-            <Button variant="primary" size="small" disabled={!canStart} onClick={start}>
+            <Button
+              variant="primary"
+              size="small"
+              disabled={!canStart}
+              title={restricted ? "Trust the project to start agents." : undefined}
+              onClick={start}
+            >
               {starting ? "Starting…" : "Start"}
             </Button>
           }
