@@ -282,6 +282,13 @@ pub fn restricted_command_allowed(cmd: &str) -> bool {
             | "vcs_shelf_patch"
             | "vcs_changelists_load"
     ) || cmd.starts_with("plugin:")
+        || fork_restricted_command_allowed(cmd)
+}
+
+// Fork command classification: 2026-10-31-sync-v0.3.1-mt6-trust.md, section 3.2.
+// agent_providers deliberately overrides upstream: it reads the user's profile only.
+fn fork_restricted_command_allowed(cmd: &str) -> bool {
+    matches!(cmd, "agent_providers" | "agent_set_args" | "vcs_ignored")
 }
 
 impl crate::Host {

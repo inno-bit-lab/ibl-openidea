@@ -20,7 +20,6 @@ pub fn subscribe(host: &Host, window: &str, on_event: Emit<AgentEvent>) -> IdeRe
 }
 
 pub fn providers(host: &Host, window: &str) -> IdeResult<Vec<AgentProvider>> {
-    host.require_trust(window)?;
     let mut providers = match host.project(window) {
         Ok(project) => project.agents.providers(),
         Err(_) => ide_agent::providers_from(&host.config_dir.join("agents"), &host.data_dir.join("agents/models.json")),
@@ -52,6 +51,7 @@ pub async fn complete(
     prompt: String,
     config: Vec<AgentConfigChoice>,
 ) -> IdeResult<String> {
+    host.require_trust(window)?;
     host.project(window)?.agents.complete(&provider, &prompt, &config, COMPLETE_TIMEOUT).await
 }
 
