@@ -1767,6 +1767,67 @@ async fn real_codex_complete_is_read_only() {
     real_complete_is_read_only("codex").await;
 }
 
+/// D3 real-agent canary: the production Suggest prompt, written to `D3_SUGGEST_PROMPT_FILE` by
+/// `commitSuggest.test.ts`, three times through `complete` with the provider's default model.
+/// Every raw reply (or error) goes to the new file `D3_SUGGEST_REPLIES_FILE`, for the production
+/// parser to judge in the same test file.
+async fn real_suggest_contract(provider: &str) {
+    assert_eq!(
+        std::env::var("OPENIDEA_AGENT_E2E").as_deref(),
+        Ok("1"),
+        "set OPENIDEA_AGENT_E2E=1 to run the real CLI test"
+    );
+    let prompt_file = std::env::var_os("D3_SUGGEST_PROMPT_FILE").expect("D3_SUGGEST_PROMPT_FILE");
+    let prompt = std::fs::read_to_string(prompt_file).unwrap();
+    let replies_file = std::env::var_os("D3_SUGGEST_REPLIES_FILE").expect("D3_SUGGEST_REPLIES_FILE");
+    // `create_new`: the replies of an earlier run are never reused.
+    let replies = std::fs::OpenOptions::new().write(true).create_new(true).open(replies_file).expect("a new file");
+    let tmp = tempfile::tempdir().unwrap();
+    let mgr = AgentManager::new(
+        AgentPaths {
+            project_root: tmp.path().into(),
+            store_dir: tmp.path().join("store"),
+            worktrees_dir: tmp.path().join("worktrees"),
+            models_file: tmp.path().join("models.json"),
+            custom_agents_dir: None,
+            home_dir: None,
+        },
+        tokio::runtime::Handle::current(),
+    );
+    let mut attempts = Vec::new();
+    for attempt in 1..=3 {
+        let started = std::time::Instant::now();
+        let result = mgr.complete(provider, &prompt, &[], Duration::from_secs(120)).await;
+        let ms = started.elapsed().as_millis() as u64;
+        eprintln!("{provider} suggest attempt {attempt} ({ms} ms): {result:?}");
+        let mut record = json!({ "provider": provider, "attempt": attempt, "ms": ms });
+        match result {
+            Ok(reply) => record["reply"] = json!(reply),
+            Err(error) => record["error"] = json!(error.message),
+        }
+        attempts.push(record);
+    }
+    let settings: Vec<_> = mgr.shared.known.lock().get(provider).map(|known| known.config.clone()).unwrap_or_default();
+    for option in &settings {
+        eprintln!("{provider} setting {} ({:?}) = {:?}", option.id, option.category, option.current);
+    }
+    serde_json::to_writer_pretty(replies, &attempts).unwrap();
+    assert!(mgr.tasks.read().is_empty());
+    mgr.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_claude_suggest_contract() {
+    real_suggest_contract("claude").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_codex_suggest_contract() {
+    real_suggest_contract("codex").await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn complete_sets_the_restrictive_mode_after_a_setting_changes_it() {
     let tmp = tempfile::tempdir().unwrap();

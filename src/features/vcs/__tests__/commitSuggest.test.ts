@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { delimiter } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSuggestPrompt, parseSuggestResponse, type SuggestInput } from "../commitSuggest";
 
@@ -224,6 +226,53 @@ describe("parseSuggestResponse", () => {
   it("refuses NUL in the message or the failure detail", () => {
     expect(() => parseSuggestResponse(success("fix: a\u0000b"))).toThrow(INVALID);
     expect(() => parseSuggestResponse(failure("broken\u0000"))).toThrow(INVALID);
+  });
+});
+
+/** The fixed synthetic change of the D3 real-agent canaries (`real_*_suggest_contract` in ide-agent). */
+const CANARY_INPUT: SuggestInput = {
+  rules: "",
+  branch: "main",
+  recent: ["fix: keep the selection when the list reloads", "docs: explain the cache settings"],
+  files: [
+    {
+      path: "src/list.ts",
+      kind: "modified",
+      diff:
+        "@@ -1,3 +1,6 @@\n export function first<T>(items: readonly T[]): T | undefined {\n" +
+        "+  if (items.length === 0) {\n+    return undefined;\n+  }\n   return items[0];\n }",
+    },
+  ],
+  subjectLimit: 72,
+};
+
+/** Opt-in: run by the D3 real-agent canary procedure only, never by an ordinary test run. */
+describe("Suggest real-agent canary", () => {
+  const promptFile = process.env.D3_SUGGEST_PROMPT_FILE;
+  const repliesFiles = process.env.D3_SUGGEST_REPLIES_FILE;
+
+  it.skipIf(!promptFile)("writes the production prompt for the canary change", () => {
+    writeFileSync(promptFile!, buildSuggestPrompt(CANARY_INPUT), { flag: "wx" });
+  });
+
+  it.skipIf(!repliesFiles)("judges every captured reply with the production parser", () => {
+    type Attempt = { provider: string; attempt: number; ms: number; reply?: string; error?: string };
+    const attempts = repliesFiles!
+      .split(delimiter)
+      .flatMap((file) => JSON.parse(readFileSync(file, "utf8")) as Attempt[]);
+    const outcomes = attempts.map((a) => {
+      if (a.reply === undefined) return { ...a, outcome: "transport failure" };
+      try {
+        return { ...a, outcome: "success", message: parseSuggestResponse(a.reply) };
+      } catch (e) {
+        const detail = (e as Error).message;
+        return { ...a, outcome: detail.startsWith(FAILED) ? "structured failure" : "invalid", detail };
+      }
+    });
+    console.log(JSON.stringify(outcomes, null, 2));
+    expect(outcomes.map((o) => `${o.provider} ${o.attempt}: ${o.outcome}`)).toEqual(
+      attempts.map((a) => `${a.provider} ${a.attempt}: success`),
+    );
   });
 });
 
