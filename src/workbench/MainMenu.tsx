@@ -88,6 +88,10 @@ function MainMenuBar({ merged, onExpandedChange }: MainMenuProps & { merged: boo
   const measure = useRef<HTMLDivElement>(null);
   const hamburger = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  // Focus is on the titles or a menu opened from them (portals included: React focus events bubble through them).
+  const focusInside = useRef(false);
+  // The titles collapsed while they held focus; it is moved once the hamburger is shown.
+  const strandedFocus = useRef(false);
   const [fits, setFits] = useState(false);
   const pressedTitle = useRef(false);
   const persistent = merged && fits;
@@ -124,6 +128,7 @@ function MainMenuBar({ merged, onExpandedChange }: MainMenuProps & { merged: boo
     if (!merged || !slot.current || !measure.current) return;
     const update = () => {
       const next = menus.length > 0 && slot.current!.clientWidth >= measure.current!.scrollWidth;
+      strandedFocus.current = !next && focusInside.current;
       setFits(next);
       // Each presentation's menu closes with it, and must not reopen when it returns.
       if (next) setExpanded(false);
@@ -135,6 +140,18 @@ function MainMenuBar({ merged, onExpandedChange }: MainMenuProps & { merged: boo
     update();
     return () => observer.disconnect();
   }, [merged, menus]);
+  // The collapsed titles took the focus with them: hand it to where Escape on the titles would
+  // have returned it, else to the hamburger. Focus already on another control stays there.
+  useLayoutEffect(() => {
+    if (fits || !strandedFocus.current) return;
+    strandedFocus.current = false;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    const earlier = previousFocus.current;
+    (earlier?.isConnected && !slot.current?.contains(earlier) ? earlier : hamburger.current)?.focus({
+      preventScroll: true,
+    });
+  }, [fits]);
 
   const close = () => {
     setOpen(null);
@@ -261,7 +278,16 @@ function MainMenuBar({ merged, onExpandedChange }: MainMenuProps & { merged: boo
   );
   if (!merged) return showTitles ? titles : button;
   return (
-    <div ref={slot} className={styles.mainMenuSlot}>
+    <div
+      ref={slot}
+      className={styles.mainMenuSlot}
+      onFocus={() => {
+        focusInside.current = true;
+      }}
+      onBlur={() => {
+        focusInside.current = false;
+      }}
+    >
       <div ref={measure} className={clsx(styles.menuBar, styles.menuMeasure)} aria-hidden="true" inert>
         {menus.map((m) => (
           <span key={m.id} className={styles.menuTitle}>
