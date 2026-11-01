@@ -105,7 +105,7 @@ Collected during the sync, none of them blocking v0.3.0:
 - **Windows process-tree teardown.** When an agent probe or a completion ends, the app stops the agent process but not always its children (a PyInstaller child of Antigravity, a `git` and credential-manager chain started by Codex's plugin update check). This needs a design of its own, for example with Job Objects, because it touches how every agent is started.
 - **Next upstream sync.** The port is frozen at upstream `504d859`. Upstream has moved on (`c5cb217c` on 2026-10-31).
 - **Small fixes.** `src/features/github/diff/reviewDiff.test.tsx:219` fails now and then. The module doc at `crates/ide-tools/src/lib.rs:9-10` still describes the old `PATH` behaviour.
-- **Possible upstream contributions**, if the owner wants them: the `PATH` budget fix, the Windows fix to `actionTitles.test.ts`, and the `release.yml` corrections (`includeUpdaterJson`, no rpm for pre-releases). Upstream has the same defects.
+- **No upstream contributions.** On 2026-11-01 the owner decided not to open issues or contributions to upstream OpenIDEA. The candidates were the `PATH` budget fix, the Windows fix to `actionTitles.test.ts`, the `release.yml` corrections (`includeUpdaterJson`, no rpm for pre-releases) and the fork fixes of the v0.3.1 sync. Upstream has the same defects.
 - **Crew bugs**, for a session in the Crew repository: composer detection confused by Antigravity's teamwork rows; an ACP member taken for a pane member on retry; panes shrunk when the dashboard is opened from a phone; an ACP member's queue filling up with old messages and blocking new ones. The first four are fixed in gmaldarelli/ibl-crew#101, which waits for the owner's merge.
 
 Status on 2026-10-31: the small fixes (#13) and the process-tree teardown (#14) are merged into `next/v0.3.1`, and MT-1 (#15) is in review. The teardown review left two follow-ups: when no job can be assigned, the natural-exit `taskkill` finds no tree and only logs a warning, so it should be skipped or worded to say that descendants may survive; and `ProcessTree::contain` replaces the creation flags set by `prepare()`, which needs a doc comment or a shared constant.
@@ -124,7 +124,7 @@ Other findings from the same tests:
 - On v0.2.2 every Suggest left its temporary folder behind, and Antigravity left two processes running. The teardown fix in v0.3.1 covers both.
 - On the owner's PC, Antigravity 1.4.5 does not answer the ACP `initialize` within 30 seconds, with or without the teardown fix. It stays a follow-up.
 - `cargo test` adds directories to `PATH` until it passes cmd's 8,191-character limit, so the ignored real-agent tests need a runner that restores the normal `PATH`.
-- Possible upstream issue: Maven on Windows receives a non-ASCII cache path as `??`, seen in an ignored Tomcat test.
+- Maven on Windows receives a non-ASCII cache path as `??`, seen in an ignored Tomcat test. No upstream issue (owner decision, 2026-11-01).
 
 Known limitations for the v0.2.3 and v0.3.0 release notes: the first start after an update from 0.2.2 or earlier copies the settings and can show no window for a minute or two, so the app must not be closed; if the agent answers Suggest with an error, the error text can appear in the commit message box and must be discarded.
 
