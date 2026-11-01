@@ -533,14 +533,23 @@ impl AgentManager {
                     if !options.is_empty() {
                         self.shared.remember(&spec.id, Some(&options), None);
                     }
-                    if stop == "refusal" {
-                        Err(format!("{} refused to answer.", spec.name))
-                    } else if stop == "cancelled" {
-                        Err(format!("{} stopped before answering.", spec.name))
-                    } else {
-                        // The last updates of a turn can trail its response.
-                        tokio::time::sleep(TURN_GRACE).await;
-                        Ok(collector.text.lock().trim().to_owned())
+                    // Only a finished turn returns its text; any other end discards what was said.
+                    match stop.as_deref() {
+                        Some("end_turn") => {
+                            // The last updates of a turn can trail its response.
+                            tokio::time::sleep(TURN_GRACE).await;
+                            Ok(collector.text.lock().trim().to_owned())
+                        }
+                        Some("refusal") => Err(format!("{} refused to answer.", spec.name)),
+                        Some("cancelled") => Err(format!("{} stopped before answering.", spec.name)),
+                        Some("max_tokens" | "max_turn_requests") => {
+                            Err(format!("{} stopped before its answer was complete.", spec.name))
+                        }
+                        Some(stop) => {
+                            tracing::warn!(agent = %spec.id, stop, "complete: the turn did not end normally");
+                            Err(format!("{} could not finish its answer.", spec.name))
+                        }
+                        None => Err(format!("{} sent an answer without a stop reason.", spec.name)),
                     }
                 }
                 Ok(Err(AskError::ReadOnly(message))) => Err(message),
@@ -1850,7 +1859,7 @@ async fn ask(
     config: &[AgentConfigChoice],
     fallback_config: &[AgentConfigOption],
     collector: &Collector,
-) -> Result<(String, Vec<AgentConfigOption>), AskError> {
+) -> Result<(Option<String>, Vec<AgentConfigOption>), AskError> {
     peer.initialize(&client_info()).await?;
     let cwd_s = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf()).to_string_lossy().into_owned();
     let session: Value = peer.request("session/new", json!({ "cwd": cwd_s, "mcpServers": [] }), None).await?;
@@ -1934,7 +1943,8 @@ async fn ask(
     let reply: Value = peer
         .request("session/prompt", json!({ "sessionId": id, "prompt": [{ "type": "text", "text": prompt }] }), None)
         .await?;
-    let stop = reply.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn").to_owned();
+    // `None`: a v1 reply without a stop reason (the v2 dialect always reports one).
+    let stop = reply.get("stopReason").and_then(Value::as_str).map(str::to_owned);
     Ok((stop, options))
 }
 
