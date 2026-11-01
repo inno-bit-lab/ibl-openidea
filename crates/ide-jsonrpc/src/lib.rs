@@ -243,6 +243,9 @@ struct Inner {
     pid: Option<u32>,
     /// Fired when the reader task has stopped (EOF, error or kill).
     reader_done: CancellationToken,
+    /// Fired by [`Peer::supervise`] after teardown and wait completes.
+    /// `None` while process is running; `Some(Ok(exit code))` or `Some(Err(...))` when process exited.
+    process_exited: watch::Sender<Option<Result<Option<i32>, (std::io::ErrorKind, String)>>>,
 }
 
 impl Inner {
@@ -269,6 +272,18 @@ impl Inner {
         self.closed.send_if_modified(|state| {
             if state.is_none() {
                 *state = Some(code);
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    fn mark_process_exited(&self, result: std::io::Result<Option<i32>>) {
+        let stored = result.map_err(|e| (e.kind(), e.to_string()));
+        self.process_exited.send_if_modified(|state| {
+            if state.is_none() {
+                *state = Some(stored);
                 true
             } else {
                 false
@@ -471,11 +486,11 @@ impl Peer {
         let inner = self.inner.clone();
         tokio::spawn(async move {
             let (status, killed) = tokio::select! {
-                status = child.wait() => (status.ok(), false),
+                status = child.wait() => (status, false),
                 _ = inner.kill.cancelled() => {
                     kill_process_tree(tree.take()).await;
                     let _ = child.start_kill();
-                    (child.wait().await.ok(), true)
+                    (child.wait().await, true)
                 }
             };
             if !killed {
@@ -487,14 +502,19 @@ impl Peer {
                     inner.reader_done.cancelled().await;
                 };
                 let _ = tokio::time::timeout(OUTPUT_DRAIN, drained).await;
-                if status.is_some() {
+                if status.is_ok() {
                     kill_exited_process_tree(tree.take()).await;
                 } else {
                     // A failed wait does not establish that the leader has exited.
                     kill_process_tree(tree.take()).await;
                 }
             }
-            inner.mark_closed(status.and_then(|s| s.code()));
+            let exit_code = match &status {
+                Ok(s) => Ok(s.code()),
+                Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
+            };
+            inner.mark_process_exited(exit_code);
+            inner.mark_closed(status.ok().and_then(|s| s.code()));
         });
     }
 
@@ -553,6 +573,7 @@ impl Peer {
     {
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let (closed, _) = watch::channel(None);
+        let (process_exited, _) = watch::channel(None);
         let inner = Arc::new(Inner {
             out: out_tx,
             pending: Mutex::new(HashMap::new()),
@@ -562,6 +583,7 @@ impl Peer {
             kill: CancellationToken::new(),
             pid,
             reader_done: CancellationToken::new(),
+            process_exited,
         });
 
         // Writer: a single task drains the queue so messages never interleave.
@@ -661,9 +683,12 @@ impl Peer {
                 }
                 inner.reader_done.cancel();
                 inner.close_transport();
-                if close_on_eof || inner.kill.is_cancelled() {
+                if close_on_eof || (inner.kill.is_cancelled() && inner.pid.is_none()) {
                     inner.mark_closed(None);
                     inner.kill.cancel();
+                } else if inner.kill.is_cancelled() {
+                    // Supervised child process is present. The supervisor task handles process
+                    // tree teardown and wait(), and will mark closed and process_exited.
                 } else {
                     // The process closed stdout; give it a moment to exit on its own.
                     let kill = inner.kill.clone();
@@ -737,6 +762,22 @@ impl Peer {
         let mut rx = self.inner.closed.subscribe();
         match rx.wait_for(|s| s.is_some()).await {
             Ok(state) => state.flatten(),
+            Err(_) => None,
+        }
+    }
+
+    /// Awaits completion of process tree teardown and exit of the child process.
+    /// If this peer does not own a child process, returns `Some(Ok(None))` immediately.
+    pub async fn process_exited(&self) -> Option<std::io::Result<Option<i32>>> {
+        if self.inner.pid.is_none() {
+            return Some(Ok(None));
+        }
+        let mut rx = self.inner.process_exited.subscribe();
+        match rx.wait_for(|s| s.is_some()).await {
+            Ok(state) => state.as_ref().map(|res| match res {
+                Ok(code) => Ok(*code),
+                Err((kind, msg)) => Err(std::io::Error::new(*kind, msg.clone())),
+            }),
             Err(_) => None,
         }
     }

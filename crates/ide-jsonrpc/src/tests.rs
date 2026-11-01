@@ -439,3 +439,46 @@ async fn output_before_the_handshake_is_reported_not_dropped() {
     assert!(lines.iter().any(|l| l == "python: not found"), "{lines:?}");
     assert!(lines.iter().any(|l| l.ends_with(". . .") && l.len() > 6), "{lines:?}");
 }
+
+#[tokio::test]
+async fn process_exited_returns_some_ok_none_for_peer_without_process() {
+    let (a, b) = tokio::io::duplex(1024);
+    let peer = Peer::connect(a, b, Arc::new(NoopHandler));
+    assert!(peer.pid().is_none());
+    assert_eq!(peer.process_exited().await.unwrap().unwrap(), None);
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn spawn_process_signals_process_exited_on_windows() {
+    let peer = Peer::spawn(
+        "cmd.exe",
+        &["/C".into(), "exit 3".into()],
+        &std::env::temp_dir(),
+        &[],
+        Arc::new(NoopHandler),
+        Box::new(|_| {}),
+    )
+    .unwrap();
+    assert!(peer.pid().is_some());
+    let exited = tokio::time::timeout(Duration::from_secs(5), peer.process_exited()).await.unwrap();
+    assert_eq!(exited.unwrap().unwrap(), Some(3));
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn peer_kill_signals_process_exited_on_windows() {
+    let peer = Peer::spawn_contained(
+        "cmd.exe",
+        &["/C".into(), "pause".into()],
+        &std::env::temp_dir(),
+        &[],
+        Arc::new(NoopHandler),
+        Box::new(|_| {}),
+        Framing::Lines,
+    )
+    .unwrap();
+    peer.kill();
+    let exited = tokio::time::timeout(Duration::from_secs(5), peer.process_exited()).await.unwrap();
+    assert!(matches!(exited, Some(Ok(_))), "kill must signal process_exited: {exited:?}");
+}
