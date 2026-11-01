@@ -6,6 +6,14 @@ use tokio::io::duplex;
 /// The modes reported by the fixture; None keeps upstream task-test defaults.
 type FakeModes = Option<(String, Vec<(&'static str, &'static str)>)>;
 
+/// A scripted `session/prompt` answer for completion tests: these text chunks, then the turn's end.
+#[derive(Clone)]
+struct Script {
+    chunks: Vec<String>,
+    /// v1: the prompt reply; v2: the fields of the closing `idle` `state_update`. `Err`: a JSON-RPC error.
+    end: Result<Value, String>,
+}
+
 /// Says "Hi", edits a file, asks to run a command and reports what it was allowed.
 #[derive(Default)]
 struct FakeAgent {
@@ -28,6 +36,8 @@ struct FakeAgent {
     requests: Mutex<Vec<(String, Value)>>,
     permissions: Mutex<Vec<Value>>,
     v2: AtomicBool,
+    /// Replaces the default prompt turn when set.
+    script: Mutex<Option<Script>>,
 }
 
 impl FakeAgent {
@@ -239,6 +249,26 @@ impl Handler for FakeAgent {
             "session/prompt" => {
                 let text = params.pointer("/prompt/0/text").and_then(Value::as_str).unwrap_or_default().to_owned();
                 self.prompts.lock().push(text.clone());
+                let script = self.script.lock().clone();
+                if let Some(Script { chunks, end }) = script {
+                    let v2 = self.v2.load(Ordering::Relaxed);
+                    if v2 {
+                        self.update(&session, json!({"sessionUpdate":"state_update","state":"running"}));
+                    }
+                    for chunk in &chunks {
+                        self.say(&session, chunk);
+                    }
+                    return match end {
+                        Err(message) => Err((codes::INTERNAL_ERROR, message)),
+                        Ok(fields) if v2 => {
+                            let mut idle = json!({"sessionUpdate":"state_update","state":"idle"});
+                            idle.as_object_mut().unwrap().extend(fields.as_object().cloned().unwrap_or_default());
+                            self.update(&session, idle);
+                            Ok(json!({}))
+                        }
+                        Ok(reply) => Ok(reply),
+                    };
+                }
                 if text == "again" {
                     self.say(&session, "second turn");
                     return Ok(json!({"stopReason": "end_turn"}));
@@ -1403,6 +1433,119 @@ async fn complete_cleans_up_after_errors_timeouts_and_cancellation() {
     let mgr = manager(tmp.path(), agent.clone());
     assert!(mgr.complete("claude", "question", &[], Duration::from_secs(5)).await.is_err());
     assert!(!agent.cwds.lock()[0].exists());
+}
+
+/// Synthetic Suggest replies, shared with the UI tests of `commitViewOptions.test.tsx`.
+fn suggest_responses() -> Value {
+    serde_json::from_str(include_str!("../tests/fixtures/suggest-responses.json")).unwrap()
+}
+
+fn ends_with(chunks: &[&str], end: Result<Value, String>) -> Script {
+    Script { chunks: chunks.iter().map(|c| (*c).to_owned()).collect(), end }
+}
+
+/// `complete` against an agent that answers with `script`; whatever the outcome, the
+/// throwaway session must be torn down.
+async fn scripted_complete(script: Script, v2: bool) -> IdeResult<String> {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::with_modes("default", &[("default", "Default")]));
+    agent.v2.store(v2, Ordering::Relaxed);
+    *agent.script.lock() = Some(script);
+    let mgr = manager(tmp.path(), agent.clone());
+    let result = mgr.complete("claude", "Suggest commit message", &[], Duration::from_secs(5)).await;
+    assert_eq!(agent.prompts.lock().len(), 1);
+    let cwds = agent.cwds.lock().clone();
+    assert_eq!(cwds.len(), 1);
+    assert!(!cwds[0].exists(), "temporary cwd {} should be removed after complete", cwds[0].display());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !agent.latest().is_closed() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("completion must close its fixture connection");
+    result
+}
+
+/// D3 transport witness: what `complete` returns for the synthetic Suggest replies. Generic
+/// completion returns text, so this passes with and without the Suggest response contract.
+/// With `D3_ACP_WITNESS_FILE` set it records the observed returns for the UI witness tests.
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_suggest_transport_witness() {
+    let fixture = suggest_responses();
+    let mut observed = serde_json::Map::new();
+    for key in ["diagnostic", "success", "failure"] {
+        let expected = fixture[key].as_str().unwrap();
+        // The success reply streams in several chunks.
+        let chars: Vec<char> = expected.chars().collect();
+        let size = if key == "success" { chars.len().div_ceil(3) } else { chars.len() };
+        let chunks: Vec<String> = chars.chunks(size).map(String::from_iter).collect();
+        assert!(key != "success" || chunks.len() == 3);
+        let answer =
+            scripted_complete(Script { chunks, end: Ok(json!({"stopReason": "end_turn"})) }, false).await.unwrap();
+        assert_eq!(answer, expected, "{key}");
+        observed.insert(key.to_owned(), Value::String(answer));
+    }
+    if let Some(path) = std::env::var_os("D3_ACP_WITNESS_FILE") {
+        // `create_new`: a capture of an earlier run is never reused.
+        let file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).expect("a new witness file");
+        serde_json::to_writer_pretty(file, &Value::Object(observed)).unwrap();
+    }
+}
+
+/// A turn that ends in error, for a reason this client does not know, or before the answer
+/// is complete returns no text, even when the agent already said something.
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_rejects_error_unknown_and_incomplete_stops() {
+    for stop in ["error", "future_stop", "max_tokens", "max_turn_requests"] {
+        let result =
+            scripted_complete(ends_with(&["fix: partial answer"], Ok(json!({"stopReason": stop}))), false).await;
+        let error = result.expect_err(stop);
+        assert!(!error.message.contains("partial answer"), "{stop}: {}", error.message);
+    }
+}
+
+/// A v1 prompt reply without a string `stopReason` is malformed, not a finished turn.
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_rejects_malformed_v1_stop() {
+    for reply in [json!({}), json!({"stopReason": null}), json!({"stopReason": 7}), json!({"stopReason": ["end_turn"]})]
+    {
+        let result = scripted_complete(ends_with(&["fix: partial answer"], Ok(reply.clone())), false).await;
+        let error = result.expect_err(&reply.to_string());
+        assert!(!error.message.contains("partial answer"), "{reply}: {}", error.message);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_keeps_finished_refused_and_cancelled_turns_apart() {
+    let answer =
+        scripted_complete(ends_with(&["fix: a", "\n\nbody"], Ok(json!({"stopReason": "end_turn"}))), false).await;
+    assert_eq!(answer.unwrap(), "fix: a\n\nbody");
+    for (stop, expected) in [("refusal", "refused to answer"), ("cancelled", "stopped before answering")] {
+        let result = scripted_complete(ends_with(&["partial answer"], Ok(json!({"stopReason": stop}))), false).await;
+        let error = result.expect_err(stop);
+        assert!(error.message.contains(expected), "{stop}: {}", error.message);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_keeps_the_diagnostic_of_a_json_rpc_error_after_a_partial_answer() {
+    let result = scripted_complete(ends_with(&["partial answer"], Err("fixture model overloaded".into())), false).await;
+    assert_eq!(result.unwrap_err().message, "fixture model overloaded");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn complete_keeps_v2_errors_and_successes() {
+    let failed = json!({"error": {"code": -32000, "message": "fixture v2 failure"}});
+    let result = scripted_complete(ends_with(&["partial answer"], Ok(failed)), true).await;
+    assert_eq!(result.unwrap_err().message, "fixture v2 failure");
+    let result = scripted_complete(ends_with(&["partial answer"], Ok(json!({"stopReason": "error"}))), true).await;
+    assert!(!result.unwrap_err().message.contains("partial answer"));
+    let result = scripted_complete(ends_with(&["fix: v2"], Ok(json!({"stopReason": "end_turn"}))), true).await;
+    assert_eq!(result.unwrap(), "fix: v2");
+    // An idle state without a stop reason ends a v2 turn: it is not a malformed v1 reply.
+    let result = scripted_complete(ends_with(&["fix: v2"], Ok(json!({}))), true).await;
+    assert_eq!(result.unwrap(), "fix: v2");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1,0 +1,5 @@
+{
+  "diagnostic": "The MCP server 'MCP_DOCKER' failed to initialize: Docker Desktop is not running.",
+  "success": "{\"version\": 1, \"status\": \"success\", \"message\": \"fix: handle empty lists\\n\\nPreserve the previous selection.\"}",
+  "failure": "{\"version\": 1, \"status\": \"failure\", \"error\": \"The agent could not initialize its MCP server.\"}"
+}

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { AgentConfigChoice, Commit, FileStatus } from "@/bindings";
@@ -78,6 +79,27 @@ const ignored: FileStatus[] = [
 ];
 
 const row = (el: HTMLElement) => el.closest("[role='treeitem']") as HTMLElement;
+
+type SuggestReplies = Record<"diagnostic" | "success" | "failure", string>;
+
+/**
+ * The synthetic agent replies shared with `complete_suggest_transport_witness` (ide-agent). With
+ * `D3_ACP_WITNESS_FILE` set, the replies that test observed through `complete` instead.
+ */
+function suggestReplies(): SuggestReplies {
+  const read = (path: string) => JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const fixture = read("crates/ide-agent/tests/fixtures/suggest-responses.json");
+  const witness = process.env.D3_ACP_WITNESS_FILE;
+  const replies = witness ? read(witness) : fixture;
+  const keys = ["diagnostic", "success", "failure"] as const;
+  if (Object.keys(replies).length !== keys.length) throw new Error(`unexpected keys in ${witness ?? "the fixture"}`);
+  for (const key of keys) {
+    if (typeof replies[key] !== "string" || replies[key] !== fixture[key]) {
+      throw new Error(`${key} in ${witness ?? "the fixture"} differs from the fixture`);
+    }
+  }
+  return replies as SuggestReplies;
+}
 
 function renderView() {
   render(
@@ -392,6 +414,71 @@ describe("Suggest Commit Message", () => {
     expect(agentComplete).toHaveBeenCalledTimes(1);
     expect(agentComplete.mock.calls[0]![0]).toBe("codex");
     expect(useCommit.getState().message).toBe("keep this draft");
+  });
+
+  // D3: what an agent says reaches the draft only as a structured success.
+  const replies = suggestReplies();
+  const surfaces = ["tool window", "dialog"] as const;
+
+  /** Shows a Commit surface and returns the part of the page that holds its message field. */
+  async function commitSurface(surface: (typeof surfaces)[number]): Promise<HTMLElement> {
+    if (surface === "tool window") {
+      renderView();
+      return document.body;
+    }
+    render(<VcsDialogHost />);
+    act(() => showCommitDialog());
+    return screen.findByRole("dialog", { name: "Commit Changes" });
+  }
+
+  /** Clicks Suggest and waits until the request has settled. */
+  async function suggestIn(container: HTMLElement) {
+    fireEvent.click(within(container).getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() =>
+      expect(within(container).getByRole("button", { name: "Suggest Commit Message" })).toBeEnabled(),
+    );
+    expect(agentComplete).toHaveBeenCalledTimes(1);
+  }
+
+  function closeSurface(container: HTMLElement) {
+    if (container !== document.body) fireEvent.click(within(container).getByRole("button", { name: "Cancel" }));
+  }
+
+  it.each(surfaces)("structured Suggest rejects the ACP diagnostic and preserves the draft (%s)", async (surface) => {
+    suggestSettings("codex");
+    agentComplete.mockResolvedValue({ status: "ok", data: replies.diagnostic });
+    useCommit.setState({ message: "keep this draft" });
+    const container = await commitSurface(surface);
+    await suggestIn(container);
+    expect(useCommit.getState().message).toBe("keep this draft");
+    const alert = within(container).getByRole("alert");
+    expect(alert).toHaveTextContent("The agent returned an invalid commit suggestion. Your draft was kept.");
+    expect(alert).not.toHaveTextContent("MCP_DOCKER");
+    closeSurface(container);
+  });
+
+  it.each(surfaces)("structured Suggest rejects explicit failure and preserves the draft (%s)", async (surface) => {
+    suggestSettings("codex");
+    agentComplete.mockResolvedValue({ status: "ok", data: replies.failure });
+    useCommit.setState({ message: "keep this draft" });
+    const container = await commitSurface(surface);
+    await suggestIn(container);
+    expect(useCommit.getState().message).toBe("keep this draft");
+    expect(within(container).getByRole("alert")).toHaveTextContent(
+      "The agent could not suggest a commit message: The agent could not initialize its MCP server.",
+    );
+    closeSurface(container);
+  });
+
+  it.each(surfaces)("structured Suggest inserts only the validated message (%s)", async (surface) => {
+    suggestSettings("codex");
+    agentComplete.mockResolvedValue({ status: "ok", data: replies.success });
+    useCommit.setState({ message: "draft before Suggest" });
+    const container = await commitSurface(surface);
+    await suggestIn(container);
+    expect(useCommit.getState().message).toBe("fix: handle empty lists\n\nPreserve the previous selection.");
+    expect(within(container).queryByRole("alert")).toBeNull();
+    closeSurface(container);
   });
 
   function setTrust(trusted: boolean) {
