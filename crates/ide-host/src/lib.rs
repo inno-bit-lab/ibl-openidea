@@ -7,6 +7,8 @@ pub mod environment;
 mod java_runtime;
 pub mod notebook;
 pub mod ops;
+#[cfg(test)]
+pub(crate) mod pause;
 mod project;
 mod proxy;
 mod requests;

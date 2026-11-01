@@ -103,6 +103,8 @@ impl crate::Host {
         for project in self.projects().into_iter().filter(|p| !p.light) {
             let trusted = self.trust.trusted(&project.root).unwrap_or(false);
             let previous = project.trusted.swap(trusted, std::sync::atomic::Ordering::AcqRel);
+            #[cfg(test)]
+            crate::pause::point(&project.root, "refresh:apply").await;
             if previous == trusted {
                 continue;
             }
@@ -118,6 +120,8 @@ impl crate::Host {
                 project.lsp.set_execution_allowed(true);
                 project.agents.set_execution_allowed(true);
             } else {
+                #[cfg(test)]
+                crate::pause::point(&project.root, "refresh:after-gate").await;
                 self.environment.project_closed();
                 project.agents.shutdown();
                 self.processes.kill_project(&project.root);

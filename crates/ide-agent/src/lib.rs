@@ -12,6 +12,8 @@ mod config;
 mod conversation;
 mod model;
 mod native;
+#[cfg(test)]
+pub(crate) mod pause;
 mod provider;
 pub mod registry;
 mod skills;
@@ -649,6 +651,8 @@ impl AgentManager {
         };
         let handle = Task::restore(file, self.shared.clone());
         handle.state.lock().busy = true;
+        #[cfg(test)]
+        pause::point(&self.shared.paths.store_dir, "create:before-insert").await;
         self.tasks.write().insert(task.id.clone(), handle.clone());
         handle.emit_task();
         handle.persist();
@@ -1511,6 +1515,8 @@ impl Task {
         }
         self.persist();
         self.emit_task();
+        #[cfg(test)]
+        pause::point(&self.shared.paths.store_dir, "session:before-register").await;
         let live = Live { peer, session: session_id, capabilities, embedded };
         *self.live.lock() = Some(live.clone());
         Ok(live)

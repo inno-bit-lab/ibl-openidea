@@ -14,6 +14,40 @@ struct Script {
     end: Result<Value, String>,
 }
 
+#[derive(Clone)]
+struct Hold {
+    method: String,
+    reached: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+    is_reached: Arc<AtomicBool>,
+    is_released: Arc<AtomicBool>,
+}
+
+impl Hold {
+    fn new(method: &str) -> Self {
+        Self {
+            method: method.to_string(),
+            reached: Arc::new(tokio::sync::Notify::new()),
+            release: Arc::new(tokio::sync::Notify::new()),
+            is_reached: Arc::new(AtomicBool::new(false)),
+            is_released: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    async fn wait_reached(&self) {
+        if self.is_reached.load(Ordering::Acquire) {
+            return;
+        }
+        self.reached.notified().await;
+    }
+
+    fn release(&self) {
+        if !self.is_released.swap(true, Ordering::AcqRel) {
+            self.release.notify_waiters();
+        }
+    }
+}
+
 /// Says "Hi", edits a file, asks to run a command and reports what it was allowed.
 #[derive(Default)]
 struct FakeAgent {
@@ -23,6 +57,7 @@ struct FakeAgent {
     prompts: Mutex<Vec<String>>,
     modes: Mutex<FakeModes>,
     hold_prompts: AtomicBool,
+    hold: Mutex<Option<Hold>>,
     fail_set_mode: AtomicBool,
     drops_mode_on_set: AtomicBool,
     notifies_mode_change_on_set: AtomicBool,
@@ -126,6 +161,18 @@ impl Handler for FakeAgent {
     fn on_request(&self, method: &str, params: Value) -> Result<Value, (i64, String)> {
         self.calls.lock().push(method.to_owned());
         self.requests.lock().push((method.to_owned(), params.clone()));
+        let hold = {
+            let mut h = self.hold.lock();
+            if h.as_ref().is_some_and(|held| held.method == method) { h.take() } else { None }
+        };
+        if let Some(hold) = hold {
+            hold.is_reached.store(true, Ordering::Release);
+            hold.reached.notify_waiters();
+            while self.servers.lock().last().is_none_or(|p| !p.is_closed()) && !hold.is_released.load(Ordering::Acquire)
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
         let session = params.get("sessionId").and_then(Value::as_str).unwrap_or("s1").to_owned();
         match method {
             "initialize" => {
