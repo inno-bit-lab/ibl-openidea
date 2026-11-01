@@ -448,5 +448,9 @@
   "run.services.configurationCount": "{count, plural, one {# configurazione} other {# configurazioni}}",
   "search.bookmarks.count": "{count, plural, one {# segnalibro} other {# segnalibri}}",
   "search.findInFiles.summary": "{count, plural, one {#{more} corrispondenza} other {#{more} corrispondenze}} in {files, plural, one {#{more} file} other {#{more} file}}",
+  "search.findToolWindow.summary": "{count, plural, one {#{more} corrispondenza} other {#{more} corrispondenze}} in {files, plural, one {# file} other {# file}}",
+  "search.replace.confirm": "Sostituire {count, plural, one {# occorrenza} other {# occorrenze}} di '{pattern}' con '{replacement}' in {files, plural, one {# file} other {# file}}?",
+  "search.replace.stoppedSummary": "Interrotto dopo aver sostituito {count, plural, one {# occorrenza} other {# occorrenze}} in {files, plural, one {# file} other {# file}}{failed, plural, =0 {} one { (# non riuscito)} other { (# non riusciti)}}",
+  "search.replace.summary": "{count, plural, one {Sostituita # occorrenza} other {Sostituite # occorrenze}} in {files, plural, one {# file} other {# file}}{failed, plural, =0 {} one { (# non riuscito)} other { (# non riusciti)}}",
   "settings.zoom.hint": "Modifica con {zoomIn} o {zoomOut}. Imposta al 100% con {reset}"
 }

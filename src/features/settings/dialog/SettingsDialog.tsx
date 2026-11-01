@@ -89,8 +89,8 @@ function GroupPage({ node }: { node: PageNode }) {
 
 function ScopeSwitch({ pageId, scope }: { pageId: string; scope: Scope }) {
   const options: Array<[Scope, string]> = [
-    ["global", "Global"],
-    ["project", "This project"],
+    ["global", tx("Global")],
+    ["project", tx("This project")],
   ];
   return (
     <div className={styles.scope} role="radiogroup" aria-label={tx("Settings scope")}>

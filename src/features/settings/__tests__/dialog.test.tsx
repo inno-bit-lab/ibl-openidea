@@ -21,6 +21,7 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
 });
 
 import { registerAction, executeAction } from "@/platform/actions";
+import { setLocale } from "@/platform/i18n";
 import { useProject } from "@/platform/project";
 import { useKeymap } from "@/platform/keymap";
 import { ContextMenuHost } from "@/ui";
@@ -361,6 +362,30 @@ describe("Settings dialog", () => {
       expect(within(dialog).getByLabelText("JVM options")).toHaveValue("-Xmx1g");
       expect(within(dialog).getByLabelText("Language server JDK")).toBeInTheDocument();
       expect(within(dialog).getByText(/used by new projects/)).toBeInTheDocument();
+    });
+
+    it("names the scope switch and its choices in Italian", async () => {
+      try {
+        await act(async () => {
+          await setLocale("it");
+        });
+        render(<SettingsDialog />);
+        await act(async () => {
+          await executeAction("file.settings", "languages.java");
+        });
+        const scope = screen.getByRole("radiogroup", { name: "Ambito delle impostazioni" });
+        expect(
+          within(scope)
+            .getAllByRole("radio")
+            .map((r) => r.textContent),
+        ).toEqual(["Globale", "Questo progetto"]);
+        // The page keeps the scope an earlier test chose; one of the two is selected either way.
+        expect(within(scope).getAllByRole("radio", { checked: true })).toHaveLength(1);
+      } finally {
+        await act(async () => {
+          await setLocale("en");
+        });
+      }
     });
   });
 

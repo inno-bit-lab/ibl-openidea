@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { setLocale } from "@/platform/i18n";
 import type { FileMatches, ReplaceEvent, SearchQuery } from "@/platform/ipc";
 import { preserveCase } from "@/platform/search";
 import { matchRows, previewReplacement } from "../find/session";
@@ -110,6 +111,41 @@ describe("replace flow model", () => {
     expect(summaryText({ files: 1, replacements: 4, failed: 1, cancelled: true, elapsedMs: 3 })).toBe(
       "Stopped after replacing 4 occurrences in 1 file (1 failed)",
     );
+  });
+
+  it("confirmation and summary texts use one and other of each count, and keep the texts as written", () => {
+    expect(confirmText({ usages: 1, files: 2 }, "a{b}'c", "#x")).toBe(
+      "Replace 1 occurrence of 'a{b}'c' with '#x' in 2 files?",
+    );
+    expect(summaryText({ files: 1, replacements: 2, failed: 2, cancelled: false, elapsedMs: 3 })).toBe(
+      "Replaced 2 occurrences in 1 file (2 failed)",
+    );
+  });
+
+  describe("in Italian", () => {
+    beforeAll(() => setLocale("it"));
+    afterAll(() => setLocale("en"));
+
+    it("confirmation and summary texts carry the counts", () => {
+      expect(confirmText({ usages: 3, files: 1 }, "foo", "bar")).toBe(
+        "Sostituire 3 occorrenze di 'foo' con 'bar' in 1 file?",
+      );
+      expect(confirmText({ usages: 1, files: 2 }, "a{b}'c", "#x")).toBe(
+        "Sostituire 1 occorrenza di 'a{b}'c' con '#x' in 2 file?",
+      );
+      expect(summaryText({ files: 2, replacements: 1, failed: 0, cancelled: false, elapsedMs: 3 })).toBe(
+        "Sostituita 1 occorrenza in 2 file",
+      );
+      expect(summaryText({ files: 3, replacements: 4, failed: 2, cancelled: false, elapsedMs: 3 })).toBe(
+        "Sostituite 4 occorrenze in 3 file (2 non riusciti)",
+      );
+      expect(summaryText({ files: 1, replacements: 4, failed: 1, cancelled: true, elapsedMs: 3 })).toBe(
+        "Interrotto dopo aver sostituito 4 occorrenze in 1 file (1 non riuscito)",
+      );
+      expect(summaryText({ files: 1, replacements: 1, failed: 0, cancelled: true, elapsedMs: 3 })).toBe(
+        "Interrotto dopo aver sostituito 1 occorrenza in 1 file",
+      );
+    });
   });
 });
 
