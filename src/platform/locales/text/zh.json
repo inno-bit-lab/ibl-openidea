@@ -5429,5 +5429,8 @@
   "Choose an agent to suggest commit messages in the Commit settings.": "请在“提交”设置中选择用于建议提交消息的智能体。",
   "Open Settings": "打开设置",
   "The agent returned an invalid commit suggestion. Your draft was kept.": "智能体返回的提交建议无效。已保留您的草稿。",
-  "The agent could not suggest a commit message: {error}": "智能体无法建议提交消息：{error}"
+  "The agent could not suggest a commit message: {error}": "智能体无法建议提交消息：{error}",
+  "Type text to search the project": "输入要在项目中搜索的文本",
+  "Invalid pattern": "模式无效",
+  "Searching…": "正在搜索…"
 }

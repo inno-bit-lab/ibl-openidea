@@ -447,5 +447,6 @@
   "menu.editor.contextInfo": "上下文信息",
   "run.services.configurationCount": "{count} 个配置",
   "search.bookmarks.count": "{count} 个书签",
+  "search.findInFiles.summary": "{files, plural, one {#{more}} other {#{more}}} 个文件中有 {count, plural, one {#{more}} other {#{more}}} 个匹配项",
   "settings.zoom.hint": "使用 {zoomIn} 或 {zoomOut} 更改，使用 {reset} 重置为 100%"
 }

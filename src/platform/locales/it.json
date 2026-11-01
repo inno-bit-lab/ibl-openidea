@@ -447,5 +447,6 @@
   "menu.editor.contextInfo": "Informazioni sul contesto",
   "run.services.configurationCount": "{count, plural, one {# configurazione} other {# configurazioni}}",
   "search.bookmarks.count": "{count, plural, one {# segnalibro} other {# segnalibri}}",
+  "search.findInFiles.summary": "{count, plural, one {#{more} corrispondenza} other {#{more} corrispondenze}} in {files, plural, one {#{more} file} other {#{more} file}}",
   "settings.zoom.hint": "Modifica con {zoomIn} o {zoomOut}. Imposta al 100% con {reset}"
 }
