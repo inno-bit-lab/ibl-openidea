@@ -108,6 +108,7 @@ impl crate::Host {
             }
             if !trusted {
                 project.lsp.set_execution_allowed(false);
+                project.agents.set_execution_allowed(false);
             }
             project.repos();
             if trusted {
@@ -115,6 +116,7 @@ impl crate::Host {
                     self.environment.spawn_post_start(cmd, project.root.clone(), project.sink.clone());
                 }
                 project.lsp.set_execution_allowed(true);
+                project.agents.set_execution_allowed(true);
             } else {
                 self.environment.project_closed();
                 project.agents.shutdown();

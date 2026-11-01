@@ -335,6 +335,7 @@ impl Host {
         tracing::info!("opened {} in window {window} in {} ms {laps:?}", root.display(), started.elapsed().as_millis());
 
         let (db, http_history, agents) = self.project_services(&root, &project_key);
+        agents.set_execution_allowed(trusted.load(Ordering::Acquire));
         let notebooks = crate::notebook::NotebookService::new(
             self.data_dir.join("notebook-runtime").join(uuid::Uuid::new_v4().to_string()),
             sink.clone(),

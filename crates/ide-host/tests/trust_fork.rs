@@ -216,3 +216,48 @@ async fn restricted_ignored_and_status_in_a_multi_repo_project() {
     }
     host.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revoke_refuses_new_completions_in_the_agent_layer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = dunce::canonicalize(tmp.path()).unwrap();
+    let root = base.join("project");
+    std::fs::create_dir(&root).unwrap();
+    let host = host(&base);
+    let marker = base.join("agent.marker");
+    agent_profile(&host, &base, &marker);
+    let project = host.open_project("main", &root).unwrap();
+    host.set_project_trust(&root, true, false).await.unwrap();
+    let _ = project.agents.complete("witness", "control", &[], std::time::Duration::from_secs(5)).await;
+    assert!(marker.exists(), "trusted control must execute this witness");
+    std::fs::remove_file(&marker).unwrap();
+    host.set_project_trust(&root, false, false).await.unwrap();
+    let result = project.agents.complete("witness", "after revoke", &[], std::time::Duration::from_secs(5)).await;
+    let spawned = marker.exists();
+    host.shutdown().await;
+    assert!(!spawned, "revoked manager must not reach the witness");
+    assert_eq!(result.unwrap_err().message, "Project is in Restricted Mode. Trust the project to enable execution.");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closed_project_refuses_completions_through_a_retained_arc() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = dunce::canonicalize(tmp.path()).unwrap();
+    let root = base.join("project");
+    std::fs::create_dir(&root).unwrap();
+    let host = host(&base);
+    let marker = base.join("agent.marker");
+    agent_profile(&host, &base, &marker);
+    host.open_project("main", &root).unwrap();
+    host.set_project_trust(&root, true, false).await.unwrap();
+    let project = host.project("main").unwrap();
+    let _ = project.agents.complete("witness", "control", &[], std::time::Duration::from_secs(5)).await;
+    assert!(marker.exists(), "trusted control must execute this witness");
+    std::fs::remove_file(&marker).unwrap();
+    host.close_project("main");
+    let result = project.agents.complete("witness", "after close", &[], std::time::Duration::from_secs(5)).await;
+    let spawned = marker.exists();
+    host.shutdown().await;
+    assert!(!spawned, "a retained project must not spawn after close");
+    assert_eq!(result.unwrap_err().message, "Project is in Restricted Mode. Trust the project to enable execution.");
+}
