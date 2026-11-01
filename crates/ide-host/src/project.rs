@@ -17,9 +17,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Serializes trust decisions and terminal project close transitions.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrustGate {
+    pub closed: bool,
+}
+
 /// Everything bound to one open project folder.
 pub struct Project {
     pub(crate) trusted: Arc<AtomicBool>,
+    pub trust_gate: Mutex<TrustGate>,
     pub root: PathBuf,
     /// Window-scoped event sink, for commands that emit project events.
     pub sink: SharedSink,
@@ -343,6 +350,7 @@ impl Host {
         ide_agent::registry::maintain(crate::ops::agent::registry_paths(self));
         let project = Arc::new(Project {
             trusted,
+            trust_gate: Mutex::new(TrustGate::default()),
             root,
             sink,
             languages,
@@ -459,6 +467,7 @@ impl Host {
         );
         let project = Arc::new(Project {
             trusted: Arc::new(AtomicBool::new(true)),
+            trust_gate: Mutex::new(TrustGate::default()),
             sink,
             languages,
             settings,

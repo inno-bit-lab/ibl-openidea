@@ -362,6 +362,11 @@ impl AgentManager {
         }
     }
 
+    /// Checks if execution is currently admitted, returning the current cancellation token epoch.
+    pub fn admit(&self) -> IdeResult<CancellationToken> {
+        self.shared.admit()
+    }
+
     /// Loads the project's saved tasks. Spawned work runs on `runtime`.
     pub fn new(paths: AgentPaths, runtime: tokio::runtime::Handle) -> Self {
         let connector: Connector = Arc::new(|spec, cwd, client, on_stderr| match spec.driver {

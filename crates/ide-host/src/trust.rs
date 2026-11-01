@@ -101,29 +101,38 @@ impl crate::Host {
 
     pub async fn refresh_project_trust(&self) -> IdeResult<()> {
         for project in self.projects().into_iter().filter(|p| !p.light) {
-            let trusted = self.trust.trusted(&project.root).unwrap_or(false);
-            let previous = project.trusted.swap(trusted, std::sync::atomic::Ordering::AcqRel);
-            #[cfg(test)]
             crate::pause::point(&project.root, "refresh:apply").await;
-            if previous == trusted {
+            let (changed, revocation, trusted) = {
+                let gate = project.trust_gate.lock();
+                if gate.closed {
+                    continue;
+                }
+                let trusted = self.trust.trusted(&project.root).unwrap_or(false);
+                let previous = project.trusted.swap(trusted, std::sync::atomic::Ordering::SeqCst);
+                if previous == trusted {
+                    (false, None, trusted)
+                } else if trusted {
+                    project.repos();
+                    if let Some(cmd) = self.environment.project_opened(&project.root, &project.sink) {
+                        self.environment.spawn_post_start(cmd, project.root.clone(), project.sink.clone());
+                    }
+                    project.lsp.set_execution_allowed(true);
+                    project.agents.set_execution_allowed(true);
+                    (true, None, trusted)
+                } else {
+                    project.lsp.set_execution_allowed(false);
+                    let r = project.agents.revoke();
+                    project.repos();
+                    self.environment.project_closed();
+                    (true, Some(r), trusted)
+                }
+            };
+            if !changed {
                 continue;
             }
-            if !trusted {
-                project.lsp.set_execution_allowed(false);
-                project.agents.set_execution_allowed(false);
-            }
-            project.repos();
-            if trusted {
-                if let Some(cmd) = self.environment.project_opened(&project.root, &project.sink) {
-                    self.environment.spawn_post_start(cmd, project.root.clone(), project.sink.clone());
-                }
-                project.lsp.set_execution_allowed(true);
-                project.agents.set_execution_allowed(true);
-            } else {
-                #[cfg(test)]
+            if let Some(r) = revocation {
                 crate::pause::point(&project.root, "refresh:after-gate").await;
-                self.environment.project_closed();
-                project.agents.shutdown();
+                r.finish();
                 self.processes.kill_project(&project.root);
                 project.notebooks.restrict().await;
                 let windows: Vec<_> = self
@@ -319,5 +328,127 @@ impl TrustStore {
         let trusted = self.trusted(&root)?;
         let state = self.decisions()?;
         Ok(TrustStatus { decided: trusted || state.restricted.contains(&root), root: root.into(), trusted })
+    }
+}
+
+#[cfg(test)]
+mod races {
+    use super::*;
+    use crate::{Host, HostConfig};
+    use ide_core::NullSink;
+    use std::sync::Arc;
+
+    fn test_host(base: &Path) -> Arc<Host> {
+        Arc::new(Host::new(HostConfig {
+            config_dir: base.join("config"),
+            data_dir: base.join("data"),
+            languages: Arc::new(ide_language::LanguageRegistry::load(None).unwrap()),
+            syntax: Arc::default(),
+            sink_for: Box::new(|_| Arc::new(NullSink)),
+            owner: |w| w,
+            runtime: tokio::runtime::Handle::current(),
+            project_environment: false,
+        }))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn grant_racing_close_leaves_the_closed_project_without_admission() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let root = base.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let host = test_host(&base);
+        let project = host.open_project("main", &root).unwrap();
+        assert!(!project.is_trusted());
+        assert!(project.agents.admit().is_err());
+
+        // Intercept grant at refresh:apply
+        let arm = crate::pause::arm(&root, "refresh:apply");
+        let host_clone = host.clone();
+        let root_clone = root.clone();
+        let grant_task = tokio::spawn(async move { host_clone.set_project_trust(&root_clone, true, false).await });
+        arm.wait_reached().await;
+
+        // Close project while grant is paused before gate
+        host.close_project("main");
+        assert!(project.trust_gate.lock().closed);
+
+        // Release grant: must observe closed gate and skip re-opening admission
+        arm.release();
+        grant_task.await.unwrap().unwrap();
+
+        assert!(project.trust_gate.lock().closed);
+        assert!(project.agents.admit().is_err(), "closed project must NOT have admission granted");
+        host.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn grant_racing_revoke_ends_in_the_last_decision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let root = base.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let host = test_host(&base);
+        let project = host.open_project("main", &root).unwrap();
+
+        // 1. Grant G starts and pauses at refresh:apply
+        let arm = crate::pause::arm(&root, "refresh:apply");
+        let host_g = host.clone();
+        let root_g = root.clone();
+        let grant_task = tokio::spawn(async move { host_g.set_project_trust(&root_g, true, false).await });
+        arm.wait_reached().await;
+
+        // 2. While G is paused, Revoke R is submitted and sets decision to false
+        let host_r = host.clone();
+        let root_r = root.clone();
+        let revoke_task = tokio::spawn(async move { host_r.set_project_trust(&root_r, false, false).await });
+
+        // 3. Release G
+        arm.release();
+        grant_task.await.unwrap().unwrap();
+        revoke_task.await.unwrap().unwrap();
+
+        // The final state must match the last decision (false / restricted)
+        assert!(!project.is_trusted(), "project must end in revoked state");
+        assert!(project.agents.admit().is_err(), "admission must be restricted");
+        host.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stale_revoke_tail_keeps_a_later_grant() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = dunce::canonicalize(tmp.path()).unwrap();
+        let root = base.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let host = test_host(&base);
+        let project = host.open_project("main", &root).unwrap();
+
+        // Initially trusted
+        host.set_project_trust(&root, true, false).await.unwrap();
+        assert!(project.is_trusted());
+        assert!(project.agents.admit().is_ok());
+
+        // 1. Revoke R starts, completes critical section under gate, pauses at refresh:after-gate
+        let arm = crate::pause::arm(&root, "refresh:after-gate");
+        let host_r = host.clone();
+        let root_r = root.clone();
+        let revoke_task = tokio::spawn(async move { host_r.set_project_trust(&root_r, false, false).await });
+        arm.wait_reached().await;
+
+        // 2. While R's tail is held, Grant G runs and completes
+        host.set_project_trust(&root, true, false).await.unwrap();
+        assert!(project.is_trusted());
+        let g_epoch = project.agents.admit().unwrap();
+        assert!(!g_epoch.is_cancelled(), "Grant G epoch must be alive");
+
+        // 3. Now release R's after-gate tail
+        arm.release();
+        revoke_task.await.unwrap().unwrap();
+
+        // 4. Assert: stale R tail finishing must NOT cancel G's admission
+        assert!(project.is_trusted(), "project must remain trusted");
+        assert!(!g_epoch.is_cancelled(), "Grant G epoch must NOT be cancelled by stale R finish");
+        assert!(project.agents.admit().is_ok(), "admission must remain valid");
+        host.shutdown().await;
     }
 }

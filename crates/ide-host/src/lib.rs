@@ -7,8 +7,8 @@ pub mod environment;
 mod java_runtime;
 pub mod notebook;
 pub mod ops;
-#[cfg(test)]
-pub(crate) mod pause;
+#[doc(hidden)]
+pub mod pause;
 mod project;
 mod proxy;
 mod requests;
@@ -150,7 +150,8 @@ impl Host {
             if !project.light {
                 self.environment.project_closed();
             }
-            project.agents.shutdown();
+            project.trust_gate.lock().closed = true;
+            project.agents.close();
             project.notebooks.stop_admission();
             self.shutdown_notebooks_blocking(vec![project.notebooks.clone()]);
             let lsp = project.lsp.clone();
@@ -199,8 +200,9 @@ impl Host {
         self.terminals.kill_all();
         let projects: Vec<_> = self.projects.write().drain().map(|(_, p)| p).collect();
         for project in &projects {
+            project.trust_gate.lock().closed = true;
+            project.agents.close();
             project.notebooks.stop_admission();
-            project.agents.shutdown();
         }
         // Kernel cleanup owns its interrupt/termination/reaping deadlines. An
         // outer LSP timeout must never abort it before owned children are reaped.

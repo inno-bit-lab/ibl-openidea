@@ -261,3 +261,60 @@ async fn closed_project_refuses_completions_through_a_retained_arc() {
     assert!(!spawned, "a retained project must not spawn after close");
     assert_eq!(result.unwrap_err().message, "Project is in Restricted Mode. Trust the project to enable execution.");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn closed_project_stays_closed_after_a_late_grant() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = dunce::canonicalize(tmp.path()).unwrap();
+    let root = base.join("project");
+    std::fs::create_dir(&root).unwrap();
+    let host = host(&base);
+    let marker = base.join("agent.marker");
+    agent_profile(&host, &base, &marker);
+
+    let project = host.open_project("main", &root).unwrap();
+    let hold = ide_host::pause::arm(&root, "refresh:apply");
+
+    let h = host.clone();
+    let r = root.clone();
+    let grant = tokio::spawn(async move { h.set_project_trust(&r, true, false).await });
+
+    hold.wait_reached().await;
+    host.close_project("main");
+    hold.release();
+    grant.await.unwrap().unwrap();
+
+    let result = project.agents.complete("witness", "after late grant", &[], std::time::Duration::from_secs(5)).await;
+    let spawned = marker.exists();
+    host.shutdown().await;
+    assert!(!spawned, "late grant must not reopen admission after close");
+    assert_eq!(result.unwrap_err().message, "Project is in Restricted Mode. Trust the project to enable execution.");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_shutdown_is_terminal_for_retained_projects() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = dunce::canonicalize(tmp.path()).unwrap();
+    let root = base.join("project");
+    std::fs::create_dir(&root).unwrap();
+    let host = host(&base);
+    let marker = base.join("agent.marker");
+    agent_profile(&host, &base, &marker);
+
+    let project = host.open_project("main", &root).unwrap();
+    host.set_project_trust(&root, true, false).await.unwrap();
+    host.shutdown().await;
+
+    assert!(project.trust_gate.lock().closed);
+    assert_eq!(
+        project.agents.admit().unwrap_err().message,
+        "Project is in Restricted Mode. Trust the project to enable execution."
+    );
+    let result = host.set_project_trust(&root, true, false).await;
+    assert!(result.is_ok());
+    assert!(project.trust_gate.lock().closed);
+    assert_eq!(
+        project.agents.admit().unwrap_err().message,
+        "Project is in Restricted Mode. Trust the project to enable execution."
+    );
+}
