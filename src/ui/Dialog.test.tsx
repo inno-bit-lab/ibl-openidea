@@ -210,7 +210,11 @@ describe("Dialog keyboard", () => {
 
 describe("Dialog names", () => {
   it("keep their English text in English", () => {
-    render(<Dialog open onClose={() => {}} aria-label="Recent Files" />);
+    render(
+      <Dialog open onClose={() => {}} aria-label="Recent Files">
+        <p>x</p>
+      </Dialog>,
+    );
     expect(screen.getByRole("dialog", { name: "Recent Files" })).toBeInTheDocument();
   });
 
@@ -225,8 +229,12 @@ describe("Dialog names", () => {
     it("translate an explicit name as they translate the title", () => {
       render(
         <>
-          <Dialog open onClose={() => {}} aria-label="Recent Files" />
-          <Dialog open onClose={() => {}} title="Usages Detected" />
+          <Dialog open onClose={() => {}} aria-label="Recent Files">
+            <p>x</p>
+          </Dialog>
+          <Dialog open onClose={() => {}} title="Usages Detected">
+            <p>y</p>
+          </Dialog>
         </>,
       );
       expect(screen.getByRole("dialog", { name: "File recenti" })).toBeInTheDocument();
@@ -236,8 +244,12 @@ describe("Dialog names", () => {
     it("keep a name the caller already translated, and text that is not in the catalog", () => {
       render(
         <>
-          <Dialog open onClose={() => {}} aria-label={tx("Recent Files")} />
-          <Dialog open onClose={() => {}} aria-label="build.gradle.kts" />
+          <Dialog open onClose={() => {}} aria-label={tx("Recent Files")}>
+            <p>x</p>
+          </Dialog>
+          <Dialog open onClose={() => {}} aria-label="build.gradle.kts">
+            <p>y</p>
+          </Dialog>
         </>,
       );
       expect(screen.getByRole("dialog", { name: "File recenti" })).toBeInTheDocument();
