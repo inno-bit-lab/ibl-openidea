@@ -1,5 +1,5 @@
 /** Main menu for the frameless title bar, with hamburger and persistent title modes. */
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import clsx from "clsx";
 import { useProject } from "@/platform/project";
 import { lookup, t, useI18n } from "@/platform/i18n";
@@ -84,6 +84,8 @@ function MainMenuBar({ merged, onExpandedChange }: MainMenuProps & { merged: boo
   const [open, setOpen] = useState<number | null>(null);
   const [focused, setFocused] = useState(0);
   const [bar, setBar] = useState<HTMLDivElement | null>(null);
+  /** Each open menu is named by its title button: the label is already translated. */
+  const titleId = useId();
   const slot = useRef<HTMLDivElement>(null);
   const measure = useRef<HTMLDivElement>(null);
   const hamburger = useRef<HTMLButtonElement>(null);
@@ -230,6 +232,7 @@ function MainMenuBar({ merged, onExpandedChange }: MainMenuProps & { merged: boo
       {menus.map((m, i) => (
         <button
           key={m.id}
+          id={`${titleId}-${i}`}
           type="button"
           role="menuitem"
           tabIndex={focused === i ? 0 : -1}
@@ -267,11 +270,7 @@ function MainMenuBar({ merged, onExpandedChange }: MainMenuProps & { merged: boo
           onClose={onMenuClose}
           className={menuStyles.popup}
         >
-          <MenuList
-            items={menuItems(menus[open].children)}
-            onDone={close}
-            aria-label={label(menus[open].id, menus[open].label)}
-          />
+          <MenuList items={menuItems(menus[open].children)} onDone={close} aria-labelledby={`${titleId}-${open}`} />
         </Popup>
       )}
     </div>
