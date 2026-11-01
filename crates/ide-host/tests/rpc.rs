@@ -284,6 +284,7 @@ async fn vcs_ignored_lists_only_ignored_files() {
     let repo = git_repo_with_ignored(tmp.path());
     let peer = open_host(&tmp.path().join("server"), &repo).await;
 
+    invoke(&peer, "project_trust_set", json!({"path": repo, "trusted": true, "folder": false})).await.unwrap();
     let ignored = invoke(&peer, "vcs_ignored", json!({})).await.unwrap();
     let entries = ignored.as_array().unwrap();
     assert_eq!(file_names(entries), ["ignored.log"], "{entries:?}");
@@ -426,6 +427,41 @@ async fn properties_conversion_through_remote_dispatch_without_a_remote_host() {
     let reloaded = invoke(&peer, "doc_snapshot", json!({"doc":doc})).await.unwrap();
     assert_eq!(reloaded["text"], "value=你好😀界");
     assert_eq!(reloaded["dirty"], false);
+    invoke(&peer, "close_project", json!({})).await.unwrap();
+    peer.kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restricted_remote_project_keeps_fork_read_commands() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = git_repo_with_ignored(tmp.path());
+    let base = tmp.path().join("server");
+    std::fs::create_dir_all(base.join("config/agents")).unwrap();
+    std::fs::write(
+        base.join("config/agents/remote-witness.toml"),
+        "name = 'Server profile witness'\ncommand = 'fixture-not-started'\n",
+    )
+    .unwrap();
+    let peer = open_host(&base, &repo).await;
+    invoke(&peer, "project_trust_set", json!({"path": repo, "trusted": false, "folder": false})).await.unwrap();
+    assert_eq!(invoke(&peer, "project_current", json!({})).await.unwrap()["trusted"], false);
+    let ignored = invoke(&peer, "vcs_ignored", json!({})).await.unwrap();
+    assert_eq!(file_names(ignored.as_array().unwrap()), ["ignored.log"]);
+    let error =
+        invoke(&peer, "agent_complete", json!({"provider": "remote-witness", "prompt": "Suggest", "config": []}))
+            .await
+            .unwrap_err();
+    assert_eq!(error.kind, ide_core::error::ErrorKind::Unavailable);
+    assert!(error.message.contains("Restricted Mode"));
+    let list = peer
+        .request::<_, Value>(
+            "invoke",
+            Invoke { window: "unknown".into(), cmd: "agent_providers".into(), args: json!({}) },
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(list.as_array().unwrap().iter().any(|p| p["id"] == "remote-witness"));
     invoke(&peer, "close_project", json!({})).await.unwrap();
     peer.kill();
 }
