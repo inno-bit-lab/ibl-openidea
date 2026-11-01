@@ -237,4 +237,71 @@ describe("main menu presentation", () => {
     expect(screen.queryByRole("menubar")).toBeNull();
     expect(screen.getByRole("button", { name: "Main Menu" })).toBeInTheDocument();
   });
+
+  // From rev-codex's PR #21 review witness: focus must not fall to the body when the presentation switches.
+  it.each(["title", "submenu", "fallback"])("keeps focus across a presentation switch from %s", async (from) => {
+    available = from === "fallback" ? 100 : 500;
+    setStyle("merged");
+    render(
+      <>
+        <button>Editor</button>
+        <MainMenu />
+      </>,
+    );
+    await act(async () => {});
+    const editor = screen.getByRole("button", { name: "Editor" });
+    editor.focus();
+    alt();
+    if (from === "submenu") {
+      fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+      await screen.findByRole("menu", { name: "File" });
+      expect(screen.getByRole("menuitem", { name: "Open" })).toHaveFocus();
+    } else if (from === "fallback") {
+      await screen.findByRole("menu", { name: "Main Menu" });
+      expect(document.activeElement).not.toBe(document.body);
+    } else {
+      expect(titles().getByRole("menuitem", { name: "File" })).toHaveFocus();
+    }
+    act(() => {
+      available = from === "fallback" ? 500 : 100;
+      resize();
+    });
+    expect(screen.queryByRole("menu")).toBeNull();
+    const targets =
+      from === "fallback"
+        ? [editor, ...titles().getAllByRole("menuitem")]
+        : [editor, screen.getByRole("button", { name: "Main Menu" })];
+    expect(targets).toContain(document.activeElement);
+  });
+
+  it("moves focus from a collapsing title to the hamburger when no earlier focus is known", async () => {
+    setStyle("merged");
+    render(<MainMenu />);
+    await screen.findByRole("menubar");
+    titles().getByRole("menuitem", { name: "Edit" }).focus();
+    act(() => {
+      available = 100;
+      resize();
+    });
+    expect(screen.getByRole("button", { name: "Main Menu" })).toHaveFocus();
+  });
+
+  it("leaves focus on an outside control when the titles collapse", async () => {
+    setStyle("merged");
+    render(
+      <>
+        <button>Editor</button>
+        <MainMenu />
+      </>,
+    );
+    await screen.findByRole("menubar");
+    const editor = screen.getByRole("button", { name: "Editor" });
+    editor.focus();
+    act(() => {
+      available = 100;
+      resize();
+    });
+    expect(editor).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Main Menu" })).not.toHaveFocus();
+  });
 });
