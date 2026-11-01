@@ -140,11 +140,11 @@ class MyersLCS {
 
   /** Bounds D by A + B·√N: expected O(N) under common assumptions. */
   executeLinear() {
-    this.run(20000 + 10 * Math.floor(Math.sqrt(this.count1 + this.count2)), false);
+    this.run(4000 + 10 * Math.floor(Math.sqrt(this.count1 + this.count2)), false);
   }
 
   executeWithThreshold() {
-    this.run(Math.max(20000 + 10 * Math.floor(Math.sqrt(this.count1 + this.count2)), DELTA_THRESHOLD_SIZE), true);
+    this.run(Math.max(4000 + 10 * Math.floor(Math.sqrt(this.count1 + this.count2)), DELTA_THRESHOLD_SIZE), true);
   }
 
   private run(threshold: number, throwException: boolean) {
@@ -268,7 +268,7 @@ class MyersLCS {
   }
 }
 
-const DELTA_THRESHOLD_SIZE = 20000;
+const DELTA_THRESHOLD_SIZE = 4000;
 
 /** Patience diff (PatienceIntLCS): unique common elements anchor the match, Myers fills the gaps. */
 class PatienceLCS {

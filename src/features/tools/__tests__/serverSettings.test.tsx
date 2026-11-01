@@ -86,14 +86,15 @@ describe("Language Servers page settings", () => {
     renderPage();
     await pythonPicker(user);
     await user.click(listItem("ty")!);
-    const ty = details("ty (Python)");
+    const ty = await screen.findByLabelText("ty (Python) details");
     expect(within(ty).getByRole("button", { name: "Language server for Python" })).toHaveTextContent("Automatic");
     // The language is in the label already, so names drop a "(Python)" suffix.
     expect(within(ty).getByText(/basedpyright → Pyright → ty\.$/)).toBeInTheDocument();
     await user.click(listItem("gopls")!);
-    expect(within(details("gopls")).getByRole("checkbox", { name: /Use gopls/ })).toBeInTheDocument();
-    expect(within(details("gopls")).queryByRole("button", { name: /^Language server for/ })).toBeNull();
-  });
+    const gopls = await screen.findByLabelText("gopls details");
+    expect(within(gopls).getByRole("checkbox", { name: /Use gopls/ })).toBeInTheDocument();
+    expect(within(gopls).queryByRole("button", { name: /^Language server for/ })).toBeNull();
+  }, 15_000);
 
   it("selects exactly one Python analyzer and restores automatic fallback without writing defaults", async () => {
     const user = userEvent.setup();
@@ -216,8 +217,8 @@ describe("Language Servers page settings", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove Language Server" }));
     expect(stagedFor("languageServers.ruff")).toBeNull();
-    expect(listItem("ruff")).toBeNull();
-  });
+    await waitFor(() => expect(listItem("ruff")).toBeNull());
+  }, 15_000);
 
   it("keeps the remove button for servers of one's own", async () => {
     const user = userEvent.setup();

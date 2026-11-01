@@ -412,8 +412,8 @@ describe("compare entry points", () => {
 
 describe("oversized line comparison", () => {
   it("falls back to transferable chunks on initial comparison and either-side edits", () => {
-    const a = doc("alpha\n".repeat(12000) + "beta\n".repeat(12000));
-    const b = doc("beta\n".repeat(12000) + "alpha\n".repeat(12000));
+    const a = doc("alpha\n".repeat(2500) + "beta\n".repeat(2500));
+    const b = doc("beta\n".repeat(2500) + "alpha\n".repeat(2500));
     const config = ideaDiffConfig("none", "words");
     const built = Chunk.build(a, b, config);
     const editB = ChangeSet.of({ from: 0, insert: "header\n" }, b.length);
