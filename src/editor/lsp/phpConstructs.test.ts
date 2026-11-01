@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { ensureSyntaxTree } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { phpConstructAt, phpConstructDocumentation } from "./phpConstructs";
 import { lspDoc } from "./lsp";
@@ -16,7 +17,9 @@ afterEach(() => {
 });
 
 function state(doc: string) {
-  return EditorState.create({ doc, extensions: [php] });
+  const s = EditorState.create({ doc, extensions: [php] });
+  ensureSyntaxTree(s, s.doc.length, 1000);
+  return s;
 }
 
 describe("PHP language constructs", () => {
@@ -61,6 +64,7 @@ describe("PHP language constructs", () => {
       parent: document.body,
     });
     views.push(view);
+    ensureSyntaxTree(view.state, view.state.doc.length, 1000);
     expect((await requestHover(view, 8))?.contents.value).toContain("empty(mixed $var): bool");
     for (const action of [
       () => gotoTargets(view, "definition"),

@@ -359,7 +359,6 @@ mod platform {
         title: &'static str,
         instruction: &'static str,
         copying: &'static str,
-        waiting: &'static str,
         publishing: &'static str,
         counter: fn(u64, u64) -> String,
     }
@@ -367,7 +366,6 @@ mod platform {
     impl Texts {
         fn content(&self, progress: &Progress) -> String {
             let message = match progress.phase() {
-                ProgressPhase::WaitingForOtherStart => self.waiting,
                 ProgressPhase::Publishing => self.publishing,
                 _ => self.copying,
             };
@@ -388,7 +386,6 @@ mod platform {
         title: "IBLOpenIdea: updating your profile",
         instruction: "Copying your settings from the previous version",
         copying: "This happens once, on the first start of this version. IBLOpenIdea opens when it finishes; do not close it.",
-        waiting: "Another IBLOpenIdea start is updating your profile. This window closes when it finishes.",
         publishing: "Finishing…",
         counter: |files, mb| format!("{files} files, {mb} MB copied"),
     };
@@ -396,7 +393,6 @@ mod platform {
         title: "IBLOpenIdea: aggiornamento del profilo",
         instruction: "Copia delle impostazioni dalla versione precedente",
         copying: "Succede una sola volta, al primo avvio di questa versione. IBLOpenIdea si apre al termine: non chiuderlo.",
-        waiting: "Un altro avvio di IBLOpenIdea sta aggiornando il profilo. Questa finestra si chiude al termine.",
         publishing: "Completamento…",
         counter: |files, mb| format!("{files} file, {mb} MB copiati"),
     };
@@ -404,7 +400,6 @@ mod platform {
         title: "IBLOpenIdea：正在更新配置文件",
         instruction: "正在从旧版本复制设置",
         copying: "此操作仅在首次启动此版本时执行一次。完成后 IBLOpenIdea 将自动打开，请勿关闭。",
-        waiting: "另一个 IBLOpenIdea 进程正在更新配置文件。完成后此窗口将关闭。",
         publishing: "正在完成…",
         counter: |files, mb| format!("已复制 {files} 个文件，{mb} MB"),
     };

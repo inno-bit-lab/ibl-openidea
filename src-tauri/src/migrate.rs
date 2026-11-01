@@ -535,7 +535,7 @@ impl Run<'_> {
         for base in self.bases.clone() {
             let partial = partial_path(&base, self.to);
             if exists(&partial) {
-                clean &= self.attempt(Step::RemovePartial(base), || fs::remove_dir_all(&partial))?;
+                clean &= self.attempt(Step::RemovePartial(base), || remove_dir_all_robust(&partial))?;
             }
         }
         if !exists(&self.marker_path()) {
@@ -647,7 +647,7 @@ impl Run<'_> {
         let partial = partial_path(base, self.to);
         if exists(&partial) {
             self.step(Step::RemovePartial(base.to_path_buf()))?;
-            fs::remove_dir_all(&partial).map_err(at(&partial))?;
+            remove_dir_all_robust(&partial).map_err(at(&partial))?;
         }
         Ok(())
     }
@@ -656,7 +656,7 @@ impl Run<'_> {
     /// stays so the next start tries again.
     fn discard_partial(&mut self, base: &Path) -> Result<(), Fault> {
         let partial = partial_path(base, self.to);
-        if !self.attempt(Step::RemovePartial(base.to_path_buf()), || fs::remove_dir_all(&partial))? {
+        if !self.attempt(Step::RemovePartial(base.to_path_buf()), || remove_dir_all_robust(&partial))? {
             self.keep_journal = true;
         }
         Ok(())
@@ -863,6 +863,64 @@ fn journal_path(config: &Path, to: &str) -> PathBuf {
 
 fn partial_path(base: &Path, to: &str) -> PathBuf {
     base.join(format!("{to}.partial"))
+}
+
+/// Recursively removes a directory tree, clearing read-only attributes on Windows so
+/// that partial directories with read-only files (e.g. copied repository objects or caches)
+/// do not fail with Access Denied and leave orphaned partial state.
+fn remove_dir_all_robust(path: &Path) -> io::Result<()> {
+    if !exists(path) {
+        return Ok(());
+    }
+    if fs::remove_dir_all(path).is_ok() {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        make_writable_and_remove(path)?;
+        if exists(path) {
+            fs::remove_dir_all(path)?;
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::remove_dir_all(path)
+    }
+}
+
+#[cfg(windows)]
+fn make_writable_and_remove(path: &Path) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    let metadata = fs::symlink_metadata(path)?;
+    // Reparse points (junctions, symlinks, mount points): do NOT follow or change permissions of external targets!
+    if metadata.file_type().is_symlink() || (metadata.file_attributes() & 0x400) != 0 {
+        if metadata.is_dir() {
+            let _ = fs::remove_dir(path);
+        } else {
+            let _ = fs::remove_file(path);
+        }
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let p = entry.path();
+            make_writable_and_remove(&p)?;
+        }
+        let mut permissions = metadata.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        let _ = fs::set_permissions(path, permissions);
+        let _ = fs::remove_dir(path);
+    } else {
+        let mut permissions = metadata.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        let _ = fs::set_permissions(path, permissions);
+        let _ = fs::remove_file(path);
+    }
+    Ok(())
 }
 
 fn marker_path(config: &Path, to: &str) -> PathBuf {
@@ -1965,5 +2023,127 @@ mod tests {
         assert!(!status.trusted);
         assert!(!status.decided);
         assert_eq!(f.sources(), sources);
+    }
+
+    #[test]
+    fn remove_dir_all_robust_removes_tree_with_readonly_files() {
+        let root = TempDir::new();
+        let partial = root.0.join("profile.partial");
+        let sub = partial.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let file1 = partial.join("file1.txt");
+        let file2 = sub.join("file2.txt");
+        fs::write(&file1, "read only 1").unwrap();
+        fs::write(&file2, "read only 2").unwrap();
+
+        let mut p1 = fs::metadata(&file1).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p1.set_readonly(true);
+        fs::set_permissions(&file1, p1).unwrap();
+
+        let mut p2 = fs::metadata(&file2).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p2.set_readonly(true);
+        fs::set_permissions(&file2, p2).unwrap();
+
+        assert!(remove_dir_all_robust(&partial).is_ok());
+        assert!(!exists(&partial));
+    }
+
+    #[test]
+    fn remove_dir_all_robust_preserves_external_file_permissions() {
+        let root = TempDir::new();
+        let external = root.0.join("external.txt");
+        fs::write(&external, "external data").unwrap();
+        let mut p = fs::metadata(&external).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p.set_readonly(true);
+        fs::set_permissions(&external, p).unwrap();
+
+        let partial = root.0.join("profile.partial");
+        fs::create_dir(&partial).unwrap();
+        let internal_file = partial.join("internal.txt");
+        fs::write(&internal_file, "internal").unwrap();
+
+        assert!(remove_dir_all_robust(&partial).is_ok());
+        assert!(!exists(&partial));
+        assert!(exists(&external));
+        assert!(fs::metadata(&external).unwrap().permissions().readonly());
+
+        // Restore writable permission so TempDir cleanup succeeds
+        let mut p = fs::metadata(&external).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p.set_readonly(false);
+        let _ = fs::set_permissions(&external, p);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn remove_dir_all_robust_preserves_external_junction_target() {
+        let root = TempDir::new();
+        let external_target = root.0.join("external_target");
+        fs::create_dir(&external_target).unwrap();
+        let external_file = external_target.join("data.txt");
+        fs::write(&external_file, "external secret").unwrap();
+        let mut p = fs::metadata(&external_file).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p.set_readonly(true);
+        fs::set_permissions(&external_file, p).unwrap();
+
+        let partial = root.0.join("profile.partial");
+        fs::create_dir(&partial).unwrap();
+
+        // Create an internal read-only file to force initial fs::remove_dir_all to fail,
+        // thereby driving execution into make_writable_and_remove!
+        let internal_ro = partial.join("internal_ro.txt");
+        fs::write(&internal_ro, "internal readonly").unwrap();
+        let mut p_ro = fs::metadata(&internal_ro).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p_ro.set_readonly(true);
+        fs::set_permissions(&internal_ro, p_ro).unwrap();
+
+        // Create a directory junction pointing to external_target
+        let link = partial.join("junction_link");
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&external_target)
+            .output()
+            .expect("mklink /J execution failed");
+        assert!(output.status.success(), "mklink failed: {:?}", String::from_utf8_lossy(&output.stderr));
+
+        // Exercise remove_dir_all_robust which fails on the readonly file and invokes make_writable_and_remove
+        assert!(remove_dir_all_robust(&partial).is_ok());
+        assert!(!exists(&partial));
+        assert!(exists(&external_target));
+        assert!(exists(&external_file));
+        assert!(fs::metadata(&external_file).unwrap().permissions().readonly());
+
+        // Restore permission so TempDir drop cleans up
+        let mut p = fs::metadata(&external_file).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        p.set_readonly(false);
+        let _ = fs::set_permissions(&external_file, p);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_dir_all_robust_does_not_modify_external_symlink_target_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TempDir::new();
+        let external = root.0.join("external.txt");
+        fs::write(&external, "secret").unwrap();
+        fs::set_permissions(&external, fs::Permissions::from_mode(0o400)).unwrap();
+
+        let partial = root.0.join("profile.partial");
+        fs::create_dir(&partial).unwrap();
+        let link = partial.join("link_to_external");
+        std::os::unix::fs::symlink(&external, &link).unwrap();
+
+        assert!(remove_dir_all_robust(&partial).is_ok());
+        assert!(!exists(&partial));
+        assert!(exists(&external));
+        let mode = fs::metadata(&external).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o400, "external target permissions must not be changed");
     }
 }
