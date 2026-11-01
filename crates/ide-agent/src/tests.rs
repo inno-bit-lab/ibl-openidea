@@ -35,10 +35,9 @@ impl Hold {
     }
 
     async fn wait_reached(&self) {
-        if self.is_reached.load(Ordering::Acquire) {
-            return;
+        while !self.is_reached.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(2)).await;
         }
-        self.reached.notified().await;
     }
 
     fn release(&self) {
@@ -46,6 +45,16 @@ impl Hold {
             self.release.notify_waiters();
         }
     }
+}
+
+async fn wait_for_closed(peer: Peer) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !peer.is_closed() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("peer must close");
 }
 
 /// Says "Hi", edits a file, asks to run a command and reports what it was allowed.
@@ -67,6 +76,7 @@ struct FakeAgent {
     reports_mode_without_current: AtomicBool,
     reports_conflicting_legacy_mode: AtomicBool,
     fails_new_once: AtomicBool,
+    fail_rollback_transport: AtomicBool,
     cwds: Mutex<Vec<PathBuf>>,
     requests: Mutex<Vec<(String, Value)>>,
     permissions: Mutex<Vec<Value>>,
@@ -91,7 +101,7 @@ impl FakeAgent {
 
     fn update(&self, session: &str, update: Value) {
         let peer = self.latest();
-        peer.notify("session/update", json!({ "sessionId": session, "update": update })).unwrap();
+        let _ = peer.notify("session/update", json!({ "sessionId": session, "update": update }));
     }
 
     fn say(&self, session: &str, text: &str) {
@@ -161,6 +171,13 @@ impl Handler for FakeAgent {
     fn on_request(&self, method: &str, params: Value) -> Result<Value, (i64, String)> {
         self.calls.lock().push(method.to_owned());
         self.requests.lock().push((method.to_owned(), params.clone()));
+        if method == "_openidea/rollback" && self.fail_rollback_transport.load(Ordering::Acquire) {
+            if let Some(peer) = self.servers.lock().last().cloned() {
+                peer.kill();
+            }
+            std::thread::sleep(Duration::from_millis(500));
+            return Err((codes::INTERNAL_ERROR, "transport closed".into()));
+        }
         let hold = {
             let mut h = self.hold.lock();
             if h.as_ref().is_some_and(|held| held.method == method) { h.take() } else { None }
@@ -2240,4 +2257,443 @@ async fn completion_runs_again_after_execution_is_allowed_again() {
     mgr.set_execution_allowed(true);
     completion_control(&mgr, &agent).await;
     mgr.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_after_shutdown_never_reaches_the_connector() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let mgr = manager(tmp.path(), agent.clone());
+    mgr.shutdown();
+    let result = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("hello"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().message, RESTRICTED_EXECUTION);
+    assert!(agent.servers.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_during_create_never_starts_the_agent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let mgr = Arc::new(manager(tmp.path(), agent.clone()));
+    let arm = pause::arm(tmp.path().join("store"), "create:before-insert");
+    let create_task = tokio::spawn({
+        let mgr = mgr.clone();
+        async move {
+            mgr.create(NewAgentTask {
+                instructions: None,
+                project_root: None,
+                prompt: text("hello"),
+                provider: "claude".into(),
+                config: vec![],
+                isolation: Isolation::Local,
+                base: None,
+            })
+            .await
+        }
+    });
+    arm.wait_reached().await;
+    mgr.shutdown();
+    arm.release();
+    let result = create_task.await.unwrap();
+    assert!(result.is_err());
+    assert!(agent.servers.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_while_a_task_session_starts_kills_its_agent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let mgr = manager(tmp.path(), agent.clone());
+    let arm = pause::arm(tmp.path().join("store"), "session:before-register");
+    let task = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("start"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    arm.wait_reached().await;
+    mgr.shutdown();
+    arm.release();
+    wait_for(&mgr, &task.id, AgentStatus::Failed).await;
+    wait_for_closed(agent.latest()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revoke_between_setup_and_registration_kills_the_peer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let mgr = manager(tmp.path(), agent.clone());
+    let arm = pause::arm(tmp.path().join("store"), "session:before-register");
+    let task = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("start"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    arm.wait_reached().await;
+    let r = mgr.revoke();
+    r.finish();
+    arm.release();
+    wait_for(&mgr, &task.id, AgentStatus::Failed).await;
+    wait_for_closed(agent.latest()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revoke_during_probe_kills_its_agent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let hold = Hold::new("initialize");
+    *agent.hold.lock() = Some(hold.clone());
+    let mgr = Arc::new(manager(tmp.path(), agent.clone()));
+    let probe_task = tokio::spawn({
+        let mgr = mgr.clone();
+        async move { mgr.probe("claude", true).await }
+    });
+    hold.wait_reached().await;
+    let r = mgr.revoke();
+    r.finish();
+    hold.release();
+    let result = probe_task.await.unwrap();
+    assert!(result.is_err());
+    wait_for_closed(agent.latest()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn probe_after_revoke_never_reaches_the_connector() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let mgr = manager(tmp.path(), agent.clone());
+    mgr.set_execution_allowed(false);
+    let result = mgr.probe("claude", true).await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().message, RESTRICTED_EXECUTION);
+    assert!(agent.servers.lock().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_session_setup_kills_its_peer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    agent.fails_new_once.store(true, Ordering::Relaxed);
+    let mgr = manager(tmp.path(), agent.clone());
+    let task = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("hello"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Failed).await;
+    wait_for_closed(agent.latest()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropped_probe_kills_its_peer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let hold = Hold::new("initialize");
+    *agent.hold.lock() = Some(hold.clone());
+    let mgr = Arc::new(manager(tmp.path(), agent.clone()));
+    let probe_task = tokio::spawn({
+        let mgr = mgr.clone();
+        async move { mgr.probe("claude", true).await }
+    });
+    hold.wait_reached().await;
+    probe_task.abort();
+    let _ = probe_task.await;
+    hold.release();
+    wait_for_closed(agent.latest()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropped_fork_setup_kills_its_peer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    *agent.script.lock() = Some(ends_with(&["done"], Ok(json!({}))));
+    let mgr = Arc::new(manager(tmp.path(), agent.clone()));
+    let task = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("hello"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    mgr.prompt(&task.id, text("turn 2"), false).await.unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+
+    let forked = mgr.fork(&task.id, Some(0)).await.unwrap();
+    let hold = Hold::new("_openidea/rollback");
+    *agent.hold.lock() = Some(hold.clone());
+    let forked_task = mgr.task(&forked.id).unwrap();
+    let session_task = tokio::spawn({
+        let forked_task = forked_task.clone();
+        async move { forked_task.ensure_session().await }
+    });
+    hold.wait_reached().await;
+    session_task.abort();
+    let _ = session_task.await;
+    hold.release();
+    wait_for_closed(agent.latest()).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revoke_during_session_load_resets_replaying() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    *agent.script.lock() = Some(ends_with(&["done"], Ok(json!({}))));
+    let mgr = manager(tmp.path(), agent.clone());
+    let task = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("first turn"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+
+    // Restore manager to trigger session/load on next prompt
+    mgr.shutdown();
+    let mgr2 = Arc::new(manager(tmp.path(), agent.clone()));
+    let hold = Hold::new("session/load");
+    *agent.hold.lock() = Some(hold.clone());
+    let prompt_task = tokio::spawn({
+        let mgr2 = mgr2.clone();
+        let id = task.id.clone();
+        async move { mgr2.prompt(&id, text("second turn"), false).await }
+    });
+    hold.wait_reached().await;
+    let task_handle = mgr2.task(&task.id).unwrap();
+    assert!(task_handle.replaying.load(Ordering::Acquire));
+    let r = mgr2.revoke();
+    r.finish();
+    hold.release();
+    let _ = prompt_task.await;
+    wait_for(&mgr2, &task.id, AgentStatus::Failed).await;
+
+    // Discriminating assertion: replaying must be false while admission remains revoked
+    assert!(!task_handle.replaying.load(Ordering::Acquire), "replaying must be false before retrying");
+
+    // Re-grant and retry
+    mgr2.set_execution_allowed(true);
+    mgr2.prompt(&task.id, text("retry second turn"), false).await.unwrap();
+    wait_for(&mgr2, &task.id, AgentStatus::Ready).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revoke_during_pending_rollback_invalidates_the_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    *agent.script.lock() = Some(ends_with(&["done"], Ok(json!({}))));
+    let mgr = Arc::new(manager(tmp.path(), agent.clone()));
+    let task = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("turn 1"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    mgr.prompt(&task.id, text("turn 2"), false).await.unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+
+    let forked = mgr.fork(&task.id, Some(0)).await.unwrap();
+    let hold = Hold::new("_openidea/rollback");
+    *agent.hold.lock() = Some(hold.clone());
+    let prompt_task = tokio::spawn({
+        let mgr = mgr.clone();
+        let id = forked.id.clone();
+        async move { mgr.prompt(&id, text("continue after fork"), false).await }
+    });
+    hold.wait_reached().await;
+    let r = mgr.revoke();
+    r.finish();
+    hold.release();
+    let _ = prompt_task.await;
+    wait_for(&mgr, &forked.id, AgentStatus::Failed).await;
+
+    // Discriminating assertion: session_id None and pending_rollback 0 before retry
+    let forked_handle = mgr.task(&forked.id).unwrap();
+    {
+        let s = forked_handle.state.lock();
+        assert_eq!(s.session_id, None, "session_id must be None before retry");
+        assert_eq!(s.pending_rollback, 0, "pending_rollback must be 0 before retry");
+    }
+
+    // Persisted state must match
+    let disk_file = std::fs::read(tmp.path().join("store").join(format!("{}.json", forked.id))).unwrap();
+    let disk: TaskFile = serde_json::from_slice(&disk_file).unwrap();
+    assert_eq!(disk.session_id, None);
+    assert_eq!(disk.pending_rollback, 0);
+
+    // Re-grant trust and retry: must start session/new
+    mgr.set_execution_allowed(true);
+    agent.calls.lock().retain(|c| c != "session/new" && c != "_openidea/rollback");
+    mgr.prompt(&forked.id, text("retry continue"), false).await.unwrap();
+    wait_for(&mgr, &forked.id, AgentStatus::Ready).await;
+    assert!(agent.calls.lock().iter().any(|c| c == "session/new"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transport_failure_during_pending_rollback_invalidates_the_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    *agent.script.lock() = Some(ends_with(&["done"], Ok(json!({}))));
+    let mgr = manager(tmp.path(), agent.clone());
+    let task = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("turn 1"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    mgr.prompt(&task.id, text("turn 2"), false).await.unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+
+    let forked = mgr.fork(&task.id, Some(0)).await.unwrap();
+    agent.fail_rollback_transport.store(true, Ordering::Release);
+    mgr.prompt(&forked.id, text("trigger transport drop"), false).await.unwrap();
+    wait_for(&mgr, &forked.id, AgentStatus::Failed).await;
+
+    // Discriminating assertion: session_id None and pending_rollback 0 before retry
+    let forked_handle = mgr.task(&forked.id).unwrap();
+    {
+        let s = forked_handle.state.lock();
+        assert_eq!(s.session_id, None, "session_id must be None after transport error");
+        assert_eq!(s.pending_rollback, 0, "pending_rollback must be 0 after transport error");
+    }
+
+    let disk_file = std::fs::read(tmp.path().join("store").join(format!("{}.json", forked.id))).unwrap();
+    let disk: TaskFile = serde_json::from_slice(&disk_file).unwrap();
+    assert_eq!(disk.session_id, None);
+    assert_eq!(disk.pending_rollback, 0);
+
+    // Admission was never revoked: next prompt immediately opens session/new without rollback
+    agent.fail_rollback_transport.store(false, Ordering::Release);
+    agent.calls.lock().retain(|c| c != "session/new" && c != "_openidea/rollback");
+    mgr.prompt(&forked.id, text("retry continue"), false).await.unwrap();
+    wait_for(&mgr, &forked.id, AgentStatus::Ready).await;
+    assert!(agent.calls.lock().iter().any(|c| c == "session/new"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_is_terminal_for_admission() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    let mgr = manager(tmp.path(), agent.clone());
+    mgr.close();
+    // Attempt to re-open admission
+    mgr.set_execution_allowed(true);
+    assert!(mgr.shared.admit().is_err());
+    let result = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("hello"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await;
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err().message, RESTRICTED_EXECUTION);
+    let probe_result = mgr.probe("claude", true).await;
+    assert!(probe_result.is_err());
+    assert_eq!(probe_result.unwrap_err().message, RESTRICTED_EXECUTION);
+    let complete_result = mgr.complete("claude", "prompt", &[], Duration::from_secs(5)).await;
+    assert!(complete_result.is_err());
+    assert_eq!(complete_result.unwrap_err().message, RESTRICTED_EXECUTION);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn revocation_finish_spares_a_later_grant() {
+    let tmp = tempfile::tempdir().unwrap();
+    let agent = Arc::new(FakeAgent::default());
+    *agent.script.lock() = Some(ends_with(&["done"], Ok(json!({}))));
+    let mgr = manager(tmp.path(), agent.clone());
+    let task = mgr
+        .create(NewAgentTask {
+            instructions: None,
+            project_root: None,
+            prompt: text("turn 1"),
+            provider: "claude".into(),
+            config: vec![],
+            isolation: Isolation::Local,
+            base: None,
+        })
+        .await
+        .unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    let peer_a = agent.servers.lock().last().cloned().unwrap();
+
+    // 1. Revocation R captures peer_a under gate
+    let r = mgr.revoke();
+
+    // 2. Later Grant G runs before R finish
+    mgr.set_execution_allowed(true);
+
+    // 3. New prompt starts peer_b under G's epoch
+    mgr.prompt(&task.id, text("turn 2"), false).await.unwrap();
+    wait_for(&mgr, &task.id, AgentStatus::Ready).await;
+    assert_eq!(agent.servers.lock().len(), 2);
+    let peer_b = agent.servers.lock()[1].clone();
+    assert!(!peer_b.is_closed(), "peer B must be alive before R.finish");
+
+    // 4. Delayed R finish executes
+    r.finish();
+
+    // 5. Assert: peer_a is closed, but peer_b remains alive and admission remains valid
+    assert!(peer_a.is_closed(), "peer A captured by R must be killed");
+    assert!(!peer_b.is_closed(), "peer B must NOT be killed by stale R finish");
+    assert!(mgr.shared.admit().is_ok(), "admission must remain valid for Grant G");
 }

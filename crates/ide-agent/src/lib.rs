@@ -98,6 +98,7 @@ struct Shared {
 /// Admission and cancellation change together, including for retained project handles.
 struct Execution {
     allowed: bool,
+    closed: bool,
     epoch: CancellationToken,
 }
 
@@ -127,6 +128,25 @@ fn provider_options(provider: &str, mut config: Vec<AgentConfigOption>) -> Vec<A
 }
 
 impl Shared {
+    fn admit(&self) -> IdeResult<CancellationToken> {
+        let execution = self.execution.lock();
+        if execution.allowed && !execution.closed {
+            Ok(execution.epoch.clone())
+        } else {
+            Err(IdeError::unavailable(RESTRICTED_EXECUTION))
+        }
+    }
+
+    fn register(&self, epoch: &CancellationToken, store: impl FnOnce()) -> bool {
+        let execution = self.execution.lock();
+        if execution.allowed && !execution.closed && !epoch.is_cancelled() {
+            store();
+            true
+        } else {
+            false
+        }
+    }
+
     fn spec(&self, id: &str) -> Option<provider::ProviderSpec> {
         self.providers.read().iter().find(|p| p.id == id).cloned()
     }
@@ -308,11 +328,33 @@ fn argument_store_error(error: std::io::Error) -> IdeError {
     }
 }
 
+/// Captured live peers and tasks during trust revocation.
+/// Finishing the revocation kills the captured peers and persists tasks
+/// outside the trust gate without cancelling a subsequent grant's epoch.
+pub struct AgentRevocation {
+    peers: Vec<acp::Conn>,
+    tasks: Vec<Arc<Task>>,
+}
+
+impl AgentRevocation {
+    pub fn finish(self) {
+        for peer in self.peers {
+            peer.kill();
+        }
+        for task in self.tasks {
+            task.persist();
+        }
+    }
+}
+
 impl AgentManager {
     /// Closes admission and cancels all completions of this epoch on revoke/close.
     /// Only an explicit `true` reopens admission.
     pub fn set_execution_allowed(&self, allowed: bool) {
         let mut execution = self.shared.execution.lock();
+        if execution.closed {
+            return;
+        }
         execution.allowed = allowed;
         if !allowed {
             execution.epoch.cancel();
@@ -340,7 +382,7 @@ impl AgentManager {
         }
         let providers = RwLock::new(provider::load(paths.custom_agents_dir.as_deref()));
         let shared = Arc::new(Shared {
-            execution: Mutex::new(Execution { allowed: true, epoch: CancellationToken::new() }),
+            execution: Mutex::new(Execution { allowed: true, closed: false, epoch: CancellationToken::new() }),
             paths,
             runtime,
             connector,
@@ -475,13 +517,7 @@ impl AgentManager {
         if prompt.is_empty() {
             return Err(IdeError::invalid("nothing to ask"));
         }
-        let epoch = {
-            let execution = self.shared.execution.lock();
-            if !execution.allowed {
-                return Err(IdeError::unavailable(RESTRICTED_EXECUTION));
-            }
-            execution.epoch.clone()
-        };
+        let epoch = self.shared.admit()?;
         let mut spec = provider::load(self.shared.paths.custom_agents_dir.as_deref())
             .into_iter()
             .find(|p| p.id == provider)
@@ -578,6 +614,7 @@ impl AgentManager {
 
     /// Creates the task (and its worktree) and sends `req.prompt` as its first message.
     pub async fn create(&self, req: NewAgentTask) -> IdeResult<AgentTask> {
+        let epoch = self.shared.admit()?;
         let spec = self
             .shared
             .spec(&req.provider)
@@ -653,6 +690,9 @@ impl AgentManager {
         handle.state.lock().busy = true;
         #[cfg(test)]
         pause::point(&self.shared.paths.store_dir, "create:before-insert").await;
+        if epoch.is_cancelled() {
+            return Err(IdeError::unavailable(RESTRICTED_EXECUTION));
+        }
         self.tasks.write().insert(task.id.clone(), handle.clone());
         handle.emit_task();
         handle.persist();
@@ -897,6 +937,7 @@ impl AgentManager {
         if !refresh && let Some(p) = self.shared.probes.lock().get(provider) {
             return Ok(p.clone());
         }
+        let epoch = self.shared.admit()?;
         let spec = self.shared.spec(provider).ok_or_else(|| IdeError::invalid(format!("unknown agent {provider}")))?;
         let mut probe = AgentProbe {
             provider: spec.id.clone(),
@@ -922,8 +963,25 @@ impl AgentManager {
         let reply = match started {
             Err(e) => Err(format!("Couldn't start {} (`{}`): {e}", spec.name, spec.command)),
             Ok(peer) => {
+                struct PeerKillOnDrop(Option<Peer>);
+                impl Drop for PeerKillOnDrop {
+                    fn drop(&mut self) {
+                        if let Some(p) = self.0.take() {
+                            p.kill();
+                        }
+                    }
+                }
+                let mut peer_guard = PeerKillOnDrop(Some(peer.clone()));
                 let params = acp::initialize_params(&client_info());
-                let r = tokio::time::timeout(PROBE_TIMEOUT, peer.request::<_, Value>("initialize", params, None)).await;
+                let init_future = peer.request::<_, Value>("initialize", params, None);
+                let r = tokio::select! {
+                    biased;
+                    _ = epoch.cancelled() => {
+                        return Err(IdeError::unavailable(RESTRICTED_EXECUTION));
+                    }
+                    res = tokio::time::timeout(PROBE_TIMEOUT, init_future) => res,
+                };
+                peer_guard.0 = None;
                 peer.kill();
                 match r {
                     Ok(Ok(v)) => Ok(v),
@@ -1052,7 +1110,24 @@ impl AgentManager {
         blocking(move || worktree::file_at(&cwd, &path, &base)).await
     }
 
-    /// Stops every agent (project closed).
+    /// Closes the agent manager permanently (terminal).
+    pub fn close(&self) {
+        {
+            let mut execution = self.shared.execution.lock();
+            execution.closed = true;
+            execution.allowed = false;
+            execution.epoch.cancel();
+            execution.epoch = CancellationToken::new();
+        }
+        for task in self.tasks.read().values() {
+            task.kill();
+            // What arrived after the last save (a subagent's late updates).
+            task.persist();
+        }
+        *self.shared.sink.write() = None;
+    }
+
+    /// Stops every agent.
     pub fn shutdown(&self) {
         self.set_execution_allowed(false);
         for task in self.tasks.read().values() {
@@ -1061,6 +1136,27 @@ impl AgentManager {
             task.persist();
         }
         *self.shared.sink.write() = None;
+    }
+
+    /// Revokes execution admission under the gate and captures live peers and tasks.
+    /// Does not clear the event sink. Finishing the returned `AgentRevocation`
+    /// kills captured peers outside the gate without touching subsequent grant epochs.
+    pub fn revoke(&self) -> AgentRevocation {
+        {
+            let mut execution = self.shared.execution.lock();
+            execution.allowed = false;
+            execution.epoch.cancel();
+            execution.epoch = CancellationToken::new();
+        }
+        let tasks: Vec<Arc<Task>> = self.tasks.read().values().cloned().collect();
+        let mut peers = Vec::new();
+        for task in &tasks {
+            task.cancel_permissions();
+            if let Some(live) = task.live.lock().take() {
+                peers.push(live.peer);
+            }
+        }
+        AgentRevocation { peers, tasks }
     }
 }
 
@@ -1391,6 +1487,7 @@ impl Task {
 
     async fn ensure_session(self: &Arc<Self>) -> Result<Live, String> {
         let _guard = self.connecting.lock().await;
+        let epoch = self.shared.admit().map_err(|e| e.to_string())?;
         if let Some(live) = self.live.lock().clone()
             && !live.peer.is_closed()
         {
@@ -1419,106 +1516,183 @@ impl Task {
             .map(|peer| acp::Conn::new(peer, client))
             .map_err(|e| format!("Couldn't start {} (`{}`): {e}", spec.name, spec.command))?;
 
-        let init = peer.initialize(&client_info()).await.map_err(|e| self.describe(e))?;
-        let can_load = init.load_session();
-        let (capabilities, embedded) = capabilities_of(&init);
-        // Agents that compare canonical paths fail in a symlinked directory (macOS `/tmp`).
-        let cwd_s = dunce::canonicalize(&cwd).unwrap_or(cwd).to_string_lossy().into_owned();
-
-        let mut session = None;
-        if let (Some(id), true) = (saved, can_load) {
-            self.replaying.store(true, Ordering::Release);
-            let loaded: Result<Value, RpcError> =
-                peer.request("session/load", json!({ "sessionId": id, "cwd": cwd_s, "mcpServers": [] }), None).await;
-            tokio::time::sleep(REPLAY_GRACE).await;
-            self.replaying.store(false, Ordering::Release);
-            match loaded {
-                Ok(v) => session = Some((id, v)),
-                Err(e) => tracing::info!("agent task {}: session/load failed, starting a new session: {e}", self.id),
+        struct PeerGuard(Option<acp::Conn>);
+        impl Drop for PeerGuard {
+            fn drop(&mut self) {
+                if let Some(p) = self.0.take() {
+                    p.kill();
+                }
             }
         }
-        let resumed = session.is_some();
-        let (session_id, result) = match session {
-            Some(s) => s,
-            None => {
-                let v: Value = peer
-                    .request("session/new", json!({ "cwd": cwd_s, "mcpServers": [] }), None)
-                    .await
-                    .map_err(|e| match e {
-                        RpcError::Server { ref message, .. } if message.to_lowercase().contains("auth") => {
-                            format!("{} needs you to sign in. {}", spec.name, spec.login_hint)
+        let mut peer_guard = PeerGuard(Some(peer.clone()));
+
+        let task = self.clone();
+        let peer_clone = peer.clone();
+        let setup_future = async move {
+            let init = peer_clone.initialize(&client_info()).await.map_err(|e| task.describe(e))?;
+            let can_load = init.load_session();
+            let (capabilities, embedded) = capabilities_of(&init);
+            // Agents that compare canonical paths fail in a symlinked directory (macOS `/tmp`).
+            let cwd_s = dunce::canonicalize(&cwd).unwrap_or(cwd).to_string_lossy().into_owned();
+
+            let mut session = None;
+            if let (Some(id), true) = (saved, can_load) {
+                task.replaying.store(true, Ordering::Release);
+                struct ReplayGuard<'a>(&'a AtomicBool);
+                impl<'a> Drop for ReplayGuard<'a> {
+                    fn drop(&mut self) {
+                        self.0.store(false, Ordering::Release);
+                    }
+                }
+                let _replay_guard = ReplayGuard(&task.replaying);
+                let loaded: Result<Value, RpcError> = peer_clone
+                    .request("session/load", json!({ "sessionId": id, "cwd": cwd_s, "mcpServers": [] }), None)
+                    .await;
+                tokio::time::sleep(REPLAY_GRACE).await;
+                drop(_replay_guard);
+                match loaded {
+                    Ok(v) => session = Some((id, v)),
+                    Err(e) => {
+                        tracing::info!("agent task {}: session/load failed, starting a new session: {e}", task.id)
+                    }
+                }
+            }
+            let resumed = session.is_some();
+            let (session_id, result) = match session {
+                Some(s) => s,
+                None => {
+                    let v: Value = peer_clone
+                        .request("session/new", json!({ "cwd": cwd_s, "mcpServers": [] }), None)
+                        .await
+                        .map_err(|e| match e {
+                            RpcError::Server { ref message, .. } if message.to_lowercase().contains("auth") => {
+                                format!("{} needs you to sign in. {}", spec.name, spec.login_hint)
+                            }
+                            e => task.describe(e),
+                        })?;
+                    let id =
+                        v.get("sessionId").and_then(Value::as_str).ok_or("the agent returned no session")?.to_owned();
+                    (id, v)
+                }
+            };
+
+            // A fork of an earlier point: the copied session still has the later turns.
+            let pending = task.state.lock().pending_rollback;
+            if pending > 0 {
+                if resumed && capabilities.rollback {
+                    let params = json!({ "sessionId": session_id, "turns": pending });
+                    struct RollbackGuard<'a> {
+                        task: &'a Task,
+                        settled: bool,
+                    }
+                    impl<'a> Drop for RollbackGuard<'a> {
+                        fn drop(&mut self) {
+                            if !self.settled {
+                                {
+                                    let mut s = self.task.state.lock();
+                                    s.session_id = None;
+                                    s.pending_rollback = 0;
+                                }
+                                self.task.persist();
+                            }
                         }
-                        e => self.describe(e),
-                    })?;
-                let id = v.get("sessionId").and_then(Value::as_str).ok_or("the agent returned no session")?.to_owned();
-                (id, v)
+                    }
+                    let mut guard = RollbackGuard { task: &task, settled: false };
+                    let rollback_res = peer_clone.request::<_, Value>("_openidea/rollback", params, None).await;
+                    match rollback_res {
+                        Ok(_) => {
+                            guard.settled = true;
+                            task.state.lock().pending_rollback = 0;
+                        }
+                        Err(RpcError::Server { ref message, code, .. }) => {
+                            guard.settled = true;
+                            task.state.lock().pending_rollback = 0;
+                            tracing::warn!(
+                                "agent task {}: dropping {pending} forked turns failed: {message} ({code})",
+                                task.id
+                            );
+                        }
+                        Err(e) => {
+                            let desc = task.describe(e);
+                            return Err(format!("dropping forked turns failed: {desc}"));
+                        }
+                    }
+                } else {
+                    task.state.lock().pending_rollback = 0;
+                    tracing::warn!("agent task {}: can't drop {pending} forked turns", task.id);
+                }
             }
+
+            // The session's settings, then the user's choices on top.
+            // A session that reports none keeps the last known ones, but what is set is unknown.
+            let reported = config::options_of(&result);
+            let known = !reported.is_empty();
+            let (mut options, wanted) = {
+                let s = task.state.lock();
+                (if known { reported } else { s.task.config.clone() }, s.wanted.clone())
+            };
+            config::add_client_options(&provider_id, &mut options);
+            for choice in &wanted {
+                // An option the session doesn't offer yet is set once it does (`apply_late_choices`).
+                let Some(o) = options.iter().find(|o| o.id == choice.id).cloned() else { continue };
+                if o.id == config::CURSOR_APPROVAL {
+                    if o.values.iter().any(|v| v.value == choice.value) {
+                        options.iter_mut().find(|o| o.id == choice.id).unwrap().current = Some(choice.value.clone());
+                    }
+                    continue;
+                }
+                let already = known && o.current.as_deref() == Some(choice.value.as_str());
+                if already || !o.values.iter().any(|v| v.value == choice.value) {
+                    continue;
+                }
+                task.config_sent.lock().insert((choice.id.clone(), choice.value.clone()));
+                let (method, mut params) = config::set_request(&o, &choice.value);
+                params["sessionId"] = json!(session_id);
+                match peer_clone.request::<_, Value>(method, params, None).await {
+                    Ok(reply) => {
+                        if let Some(fresh) = reply.get("configOptions") {
+                            config::merge_update(&mut options, fresh);
+                        }
+                        if let Some(o) = options.iter_mut().find(|o| o.id == choice.id) {
+                            o.current = Some(choice.value.clone());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("agent task {}: setting {} to {} failed: {e}", task.id, o.id, choice.value)
+                    }
+                }
+            }
+            task.shared.remember(&provider_id, Some(&options), None);
+            {
+                let mut s = task.state.lock();
+                s.task.model = model_of(&options).or(s.task.model.take());
+                s.task.config = options;
+                s.task.capabilities = capabilities;
+                s.session_id = Some(session_id.clone());
+            }
+            task.persist();
+            task.emit_task();
+            Ok((session_id, capabilities, embedded))
         };
 
-        // A fork of an earlier point: the copied session still has the later turns.
-        let pending = std::mem::take(&mut self.state.lock().pending_rollback);
-        if pending > 0 {
-            if resumed && capabilities.rollback {
-                let params = json!({ "sessionId": session_id, "turns": pending });
-                if let Err(e) = peer.request::<_, Value>("_openidea/rollback", params, None).await {
-                    tracing::warn!("agent task {}: dropping {pending} forked turns failed: {e}", self.id);
-                }
-            } else {
-                tracing::warn!("agent task {}: can't drop {pending} forked turns", self.id);
+        let (session_id, capabilities, embedded) = tokio::select! {
+            biased;
+            _ = epoch.cancelled() => {
+                return Err(RESTRICTED_EXECUTION.to_string());
             }
-        }
-
-        // The session's settings, then the user's choices on top.
-        // A session that reports none keeps the last known ones, but what is set is unknown.
-        let reported = config::options_of(&result);
-        let known = !reported.is_empty();
-        let (mut options, wanted) = {
-            let s = self.state.lock();
-            (if known { reported } else { s.task.config.clone() }, s.wanted.clone())
+            res = setup_future => res?,
         };
-        config::add_client_options(&provider_id, &mut options);
-        for choice in &wanted {
-            // An option the session doesn't offer yet is set once it does (`apply_late_choices`).
-            let Some(o) = options.iter().find(|o| o.id == choice.id).cloned() else { continue };
-            if o.id == config::CURSOR_APPROVAL {
-                if o.values.iter().any(|v| v.value == choice.value) {
-                    options.iter_mut().find(|o| o.id == choice.id).unwrap().current = Some(choice.value.clone());
-                }
-                continue;
-            }
-            let already = known && o.current.as_deref() == Some(choice.value.as_str());
-            if already || !o.values.iter().any(|v| v.value == choice.value) {
-                continue;
-            }
-            self.config_sent.lock().insert((choice.id.clone(), choice.value.clone()));
-            let (method, mut params) = config::set_request(&o, &choice.value);
-            params["sessionId"] = json!(session_id);
-            match peer.request::<_, Value>(method, params, None).await {
-                Ok(reply) => {
-                    if let Some(fresh) = reply.get("configOptions") {
-                        config::merge_update(&mut options, fresh);
-                    }
-                    if let Some(o) = options.iter_mut().find(|o| o.id == choice.id) {
-                        o.current = Some(choice.value.clone());
-                    }
-                }
-                Err(e) => tracing::warn!("agent task {}: setting {} to {} failed: {e}", self.id, o.id, choice.value),
-            }
-        }
-        self.shared.remember(&provider_id, Some(&options), None);
-        {
-            let mut s = self.state.lock();
-            s.task.model = model_of(&options).or(s.task.model.take());
-            s.task.config = options;
-            s.task.capabilities = capabilities;
-            s.session_id = Some(session_id.clone());
-        }
-        self.persist();
-        self.emit_task();
+
         #[cfg(test)]
         pause::point(&self.shared.paths.store_dir, "session:before-register").await;
-        let live = Live { peer, session: session_id, capabilities, embedded };
-        *self.live.lock() = Some(live.clone());
+        let live = Live { peer: peer.clone(), session: session_id, capabilities, embedded };
+        let registered = self.shared.register(&epoch, || {
+            *self.live.lock() = Some(live.clone());
+        });
+        if !registered {
+            return Err(RESTRICTED_EXECUTION.to_string());
+        }
+        peer_guard.0 = None;
         Ok(live)
     }
 

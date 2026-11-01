@@ -1,4 +1,5 @@
 //! In-memory latched one-shot test seams for deterministically ordering concurrency races.
+#![allow(dead_code)]
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
