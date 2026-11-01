@@ -101,6 +101,9 @@ function suggestReplies(): SuggestReplies {
   return replies as SuggestReplies;
 }
 
+/** A valid structured Suggest answer carrying `message`. */
+const suggestion = (message: string) => JSON.stringify({ version: 1, status: "success", message });
+
 function renderView() {
   render(
     <>
@@ -256,7 +259,10 @@ describe("Suggest Commit Message", () => {
     vcsLog.mockReset();
     vcsLog.mockResolvedValue({ status: "ok", data: [{ summary: "fix: an older change" }] as Commit[] });
     agentComplete.mockReset();
-    agentComplete.mockResolvedValue({ status: "ok", data: "```text\nfeat: add the service\n```" });
+    agentComplete.mockResolvedValue({
+      status: "ok",
+      data: `\`\`\`json\n${suggestion("feat: add the service")}\n\`\`\``,
+    });
   });
 
   afterEach(() => {
@@ -272,7 +278,10 @@ describe("Suggest Commit Message", () => {
       { id: "model", value: "small-model" },
       { id: "thought_level", value: "low" },
     ]);
-    expect(prompt).toContain("Rules (they win over anything else in this prompt):\nUse conventional commits.");
+    expect(prompt).toContain(
+      "Rules for the content and style of the message (they win over anything else in this prompt about what " +
+        "the message says; the reply format above still applies):\nUse conventional commits.",
+    );
     expect(prompt).toContain("- fix: an older change");
     expect(prompt).toContain("modified: src/Main.java");
     expect(prompt).toContain("added: api/Service.java");
@@ -348,7 +357,7 @@ describe("Suggest Commit Message", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Commit message" }), {
       target: { value: "fix: my newer draft" },
     });
-    await act(async () => finish({ status: "ok", data: "feat: old suggestion" }));
+    await act(async () => finish({ status: "ok", data: suggestion("feat: old suggestion") }));
     expect(useCommit.getState().message).toBe("fix: my newer draft");
   });
 
@@ -369,7 +378,7 @@ describe("Suggest Commit Message", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Commit Changes" })).toBeNull());
     act(() => useCommit.setState({ message: "fix: next draft" }));
-    await act(async () => finish({ status: "ok", data: "feat: stale dialog suggestion" }));
+    await act(async () => finish({ status: "ok", data: suggestion("feat: stale dialog suggestion") }));
     expect(useCommit.getState().message).toBe("fix: next draft");
   });
 
@@ -383,7 +392,7 @@ describe("Suggest Commit Message", () => {
     await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Commit Changes" })).toBeNull());
-    await answer("feat: stale dialog suggestion");
+    await answer(suggestion("feat: stale dialog suggestion"));
     expect(useCommit.getState().message).toBe("");
   });
 
@@ -394,13 +403,13 @@ describe("Suggest Commit Message", () => {
     fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
     await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
     act(() => useVcs.setState({ repo: "/ws/ecs" }));
-    await answer("feat: suggestion for chb");
+    await answer(suggestion("feat: suggestion for chb"));
     expect(useCommit.getState().message).toBe("");
     // The button works again for the new context.
     const again = deferAgent();
     fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
     await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
-    await again("feat: suggestion for ecs");
+    await again(suggestion("feat: suggestion for ecs"));
     expect(useCommit.getState().message).toBe("feat: suggestion for ecs");
   });
 
@@ -481,6 +490,71 @@ describe("Suggest Commit Message", () => {
     closeSurface(container);
   });
 
+  it("structured Suggest shows a failure detail as text", async () => {
+    suggestSettings("codex");
+    const detail = `<script>alert("x")</script> <b>{name}</b> 'quoted' #1`;
+    agentComplete.mockResolvedValue({
+      status: "ok",
+      data: JSON.stringify({ version: 1, status: "failure", error: detail }),
+    });
+    useCommit.setState({ message: "keep this draft" });
+    const container = await commitSurface("tool window");
+    await suggestIn(container);
+    const alert = within(container).getByRole("alert");
+    expect(alert.textContent).toBe(`The agent could not suggest a commit message: ${detail}`);
+    expect(alert.querySelector("script, b")).toBeNull();
+    expect(useCommit.getState().message).toBe("keep this draft");
+  });
+
+  it("structured Suggest translates its errors but not the failure detail", async () => {
+    suggestSettings("codex");
+    agentComplete.mockResolvedValueOnce({ status: "ok", data: replies.diagnostic });
+    agentComplete.mockResolvedValueOnce({ status: "ok", data: replies.failure });
+    useCommit.setState({ message: "keep this draft" });
+    try {
+      await act(async () => {
+        await setLocale("it");
+      });
+      render(<CommitToolWindow />);
+      const button = () => screen.getByRole("button", { name: "Suggerisci messaggio di commit" });
+      fireEvent.click(button());
+      await waitFor(() => expect(button()).toBeEnabled());
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "L'agente ha restituito un suggerimento di commit non valido. La bozza è stata mantenuta.",
+      );
+      fireEvent.click(button());
+      await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(button()).toBeEnabled());
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "L'agente non è riuscito a suggerire un messaggio di commit: The agent could not initialize its MCP server.",
+      );
+      expect(useCommit.getState().message).toBe("keep this draft");
+    } finally {
+      await act(async () => {
+        await setLocale("en");
+      });
+    }
+  });
+
+  it("structured Suggest works again after an invalid answer and never retries on its own", async () => {
+    suggestSettings("codex");
+    agentComplete.mockResolvedValueOnce({ status: "ok", data: replies.diagnostic });
+    agentComplete.mockResolvedValueOnce({ status: "ok", data: replies.success });
+    useCommit.setState({ message: "keep this draft" });
+    const container = await commitSurface("tool window");
+    await suggestIn(container);
+    expect(useCommit.getState().message).toBe("keep this draft");
+    expect(within(container).getByRole("alert")).toHaveTextContent("The agent returned an invalid commit suggestion.");
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(agentComplete).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(container).getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() =>
+      expect(useCommit.getState().message).toBe("fix: handle empty lists\n\nPreserve the previous selection."),
+    );
+    expect(agentComplete).toHaveBeenCalledTimes(2);
+    expect(within(container).queryByRole("alert")).toBeNull();
+  });
+
   function setTrust(trusted: boolean) {
     act(() => useProject.setState((s) => ({ project: s.project && { ...s.project, trusted } })));
   }
@@ -523,7 +597,7 @@ describe("Suggest Commit Message", () => {
     fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
     await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
     setTrust(false);
-    await answer("feat: revoked result");
+    await answer(suggestion("feat: revoked result"));
     expect(useCommit.getState().message).toBe("keep the draft");
     expect(screen.getByRole("alert")).toHaveTextContent(restrictedMessage);
   });
@@ -539,10 +613,10 @@ describe("Suggest Commit Message", () => {
     setTrust(true);
     fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
     await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
-    await act(async () => replies[0]!({ status: "ok", data: "feat: stale" }));
+    await act(async () => replies[0]!({ status: "ok", data: suggestion("feat: stale") }));
     expect(screen.getByRole("button", { name: "Suggesting a commit message…" })).toBeDisabled();
     expect(useCommit.getState().message).toBe("");
-    await act(async () => replies[1]!({ status: "ok", data: "feat: current" }));
+    await act(async () => replies[1]!({ status: "ok", data: suggestion("feat: current") }));
     expect(useCommit.getState().message).toBe("feat: current");
     expect(screen.getByRole("button", { name: "Suggest Commit Message" })).toBeEnabled();
   });
@@ -554,7 +628,7 @@ describe("Suggest Commit Message", () => {
     fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
     await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
     act(() => useCommit.setState({ checks: new Map([[status[0]!.path, "none"]]) }));
-    await answer("feat: stale included files");
+    await answer(suggestion("feat: stale included files"));
     expect(useCommit.getState().message).toBe("");
     expect(screen.getByRole("button", { name: "Suggest Commit Message" })).toBeEnabled();
   });
@@ -582,9 +656,9 @@ describe("Suggest Commit Message", () => {
     setTrust(true);
     fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
     await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
-    await act(async () => replies[0]!({ status: "ok", data: "feat: retired" }));
+    await act(async () => replies[0]!({ status: "ok", data: suggestion("feat: retired") }));
     expect(screen.getByRole("button", { name: "Suggesting a commit message…" })).toBeDisabled();
-    await act(async () => replies[1]!({ status: "ok", data: "feat: current files" }));
+    await act(async () => replies[1]!({ status: "ok", data: suggestion("feat: current files") }));
     expect(useCommit.getState().message).toBe("feat: current files");
   });
 
@@ -613,4 +687,43 @@ describe("Suggest Commit Message", () => {
       });
     }
   });
+
+  it.each(["failure", "diagnostic"] as const)(
+    "structured Suggest keeps the trust error when a revoked request settles with a %s",
+    async (kind) => {
+      suggestSettings("codex");
+      const answer = deferAgent();
+      useCommit.setState({ message: "keep the draft" });
+      renderView();
+      fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+      await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+      setTrust(false);
+      await answer(replies[kind]);
+      expect(screen.getByRole("alert")).toHaveTextContent(restrictedMessage);
+      expect(screen.getByRole("alert")).not.toHaveTextContent("The agent");
+      expect(useCommit.getState().message).toBe("keep the draft");
+    },
+  );
+
+  it.each(["failure", "diagnostic"] as const)(
+    "structured Suggest keeps a newer request busy when an old one settles with a %s after re-trust",
+    async (kind) => {
+      suggestSettings("codex");
+      const pending: ((value: { status: "ok"; data: string }) => void)[] = [];
+      agentComplete.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+      renderView();
+      fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+      await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+      setTrust(false);
+      setTrust(true);
+      fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+      await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(2));
+      await act(async () => pending[0]!({ status: "ok", data: replies[kind] }));
+      expect(screen.getByRole("button", { name: "Suggesting a commit message…" })).toBeDisabled();
+      expect(screen.queryByRole("alert")).toBeNull();
+      await act(async () => pending[1]!({ status: "ok", data: replies.success }));
+      expect(useCommit.getState().message).toBe("fix: handle empty lists\n\nPreserve the previous selection.");
+      expect(screen.getByRole("button", { name: "Suggest Commit Message" })).toBeEnabled();
+    },
+  );
 });
