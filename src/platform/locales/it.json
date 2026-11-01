@@ -448,6 +448,7 @@
   "run.services.configurationCount": "{count, plural, one {# configurazione} other {# configurazioni}}",
   "search.bookmarks.count": "{count, plural, one {# segnalibro} other {# segnalibri}}",
   "search.findInFiles.summary": "{count, plural, one {#{more} corrispondenza} other {#{more} corrispondenze}} in {files, plural, one {#{more} file} other {#{more} file}}",
+  "search.findToolWindow.excluded": "{count, plural, one {# escluso} other {# esclusi}}",
   "search.findToolWindow.summary": "{count, plural, one {#{more} corrispondenza} other {#{more} corrispondenze}} in {files, plural, one {# file} other {# file}}",
   "search.replace.confirm": "Sostituire {count, plural, one {# occorrenza} other {# occorrenze}} di '{pattern}' con '{replacement}' in {files, plural, one {# file} other {# file}}?",
   "search.replace.stoppedSummary": "Interrotto dopo aver sostituito {count, plural, one {# occorrenza} other {# occorrenze}} in {files, plural, one {# file} other {# file}}{failed, plural, =0 {} one { (# non riuscito)} other { (# non riusciti)}}",

@@ -380,7 +380,10 @@ function FindTabView({ tab }: { tab: FindTab }) {
                   count: st.matchCount,
                   files: st.files.length,
                   more: st.summary?.limitHit ? "+" : "",
-                }) + (marks.excluded.size ? ` · ${tx`${marks.excluded.size} excluded`}` : "")}
+                }) +
+                (marks.excluded.size
+                  ? ` · ${t("search.findToolWindow.excluded", { count: marks.excluded.size })}`
+                  : "")}
         </span>
         <span className={styles.spacer} />
         <Button size="small" variant="ghost" disabled={!selection.size} onClick={exclude} title="Exclude / include (⌫)">
