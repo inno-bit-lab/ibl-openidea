@@ -956,7 +956,7 @@ export function CommitMessageField({ included, runner }: { included: number; run
       )}
       {suggestError && (
         <div className={clsx(styles.inspections, styles.inspectionError)} role="alert">
-          {suggestError}
+          <T>{suggestError}</T>
           {!cfg.suggestAgent && (
             <>
               {" "}

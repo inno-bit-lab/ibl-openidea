@@ -25,6 +25,7 @@ vi.mock("@/platform/ipc", async (importOriginal) => {
 
 import { ContextMenuHost, hideContextMenu } from "@/ui/Menu";
 import { registerActions } from "@/platform/actions";
+import { setLocale, tx } from "@/platform/i18n";
 import { useProject } from "@/platform/project";
 import { useProjectRoots } from "@/platform/projectRoots";
 import { CommitToolWindow } from "../CommitView";
@@ -498,5 +499,31 @@ describe("Suggest Commit Message", () => {
     expect(screen.getByRole("button", { name: "Suggesting a commit message…" })).toBeDisabled();
     await act(async () => replies[1]!({ status: "ok", data: "feat: current files" }));
     expect(useCommit.getState().message).toBe("feat: current files");
+  });
+
+  it("translates a restricted refusal when the backend answers before the trust event", async () => {
+    suggestSettings("codex");
+    let reject!: (reason: Error) => void;
+    agentComplete.mockImplementation(
+      () =>
+        new Promise((_, no) => {
+          reject = no;
+        }),
+    );
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest Commit Message" }));
+    await waitFor(() => expect(agentComplete).toHaveBeenCalledTimes(1));
+    try {
+      await act(async () => {
+        await setLocale("it");
+      });
+      await act(async () => reject(new Error(restrictedMessage)));
+      setTrust(false);
+      expect(screen.getByRole("alert")).toHaveTextContent(tx(restrictedMessage));
+    } finally {
+      await act(async () => {
+        await setLocale("en");
+      });
+    }
   });
 });
