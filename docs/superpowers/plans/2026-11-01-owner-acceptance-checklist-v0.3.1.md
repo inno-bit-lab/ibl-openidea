@@ -23,7 +23,13 @@ L'app installata cerca gli aggiornamenti solo tra le versioni definitive, quindi
 - [ ] Il profilo c'è ancora: preset, layout, JDK e progetti recenti.
 - [ ] In Impostazioni di Windows, App installate, c'è una sola voce IBLOpenIdea. Se mostra ancora la versione precedente, segnalo ma non è un KO: è un limite noto.
 
-In alternativa puoi installare a mano `IBLOpenIdea_0.3.1-1_x64-setup.exe` dalla pagina della release.
+In alternativa puoi installare a mano `IBLOpenIdea_0.3.1-1_x64-setup.exe` (39.781.475 byte) dalla pagina della release. Prima di lanciarlo controlla che sia integro:
+
+```powershell
+(Get-FileHash "$env:USERPROFILE\Downloads\IBLOpenIdea_0.3.1-1_x64-setup.exe" -Algorithm SHA256).Hash
+```
+
+Deve uscire `EA0533CA45B01B3A5D83E51FC5BCC45E7769333B2D3340FB456AFE7217558D5E`.
 
 ## 2. Italiano
 
