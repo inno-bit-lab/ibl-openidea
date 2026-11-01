@@ -1,6 +1,7 @@
 # Italian glossary
 
-- **Date**: 2026-10-31
+- **Date**: 2026-11-01
+- **Owner decision, 2026-11-01 (IT-TERMS)**: shelve (including shelved, shelf and unshelve), diff, stash, stage, workspace, breakpoint, watchpoint, timeline, effort, thinking and task stay in English. This overrides their earlier Italian renderings below; reasoning stays "ragionamento". Pop, apply and unstage keep "Estrai", "Applica" and "Rimuovi dallo stage".
 - **Status**: Applied to `src/platform/locales/it.json` and `src/platform/locales/text/it.json` on `port/mt4-italian-release` (MT-4). The owner may still change single choices; a change updates this file and the catalogs in one delta commit.
 - **Plan**: [`2026-10-31-sync-mt4-italian-release.md`](../plans/2026-10-31-sync-mt4-italian-release.md).
 - **Source**: the fork catalog at `c8ed282` (`text/it.json`, 4584 entries, and `it.json`). Where the fork rendered one string in two ways, mostly a menu label against a text-catalog entry, one rendering was kept, usually the text catalog's (section 7).
@@ -9,7 +10,7 @@ Use it for every new Italian string, and check the strings the remaining v0.3.0 
 
 ## 1. Git terms kept in English
 
-Commit, Push, Pull, Fetch, Merge, Rebase, Cherry-Pick, Stash, Checkout, Tag, Revert and Reset (as Git operations), Patch, Upstream and HEAD stay in English, lower case inside a phrase: "Nessun commit", "Interrompi rebase".
+Commit, Push, Pull, Fetch, Merge, Rebase, Cherry-Pick, Stash, Shelve, Unshelve, Stage, Checkout, Tag, Revert and Reset (as Git operations), Diff, Patch, Upstream and HEAD stay in English, lower case inside a phrase: "Nessun commit", "Interrompi rebase", "Mostra diff".
 
 Repository, branch, worktree and pull request stay in English too. The first three are masculine (il repository, il branch) and the plural does not change: "In tutti i {count} repository", "Nessun repository o branch corrispondente". Pull request is feminine: "Nessuna pull request".
 
@@ -26,28 +27,28 @@ Merge as a noun stays in English ("Merge della pull request eseguito correttamen
 
 Revert alone, as a button, is "Ripristina"; "Revert Change" is "Annulla modifica". Docker pull is a download: "Scarica immagine".
 
+Diff is masculine and invariant: "il diff", "i diff", "Nessun diff". Shelf is the noun for shelved changes, masculine and invariant: "lo shelf", "gli shelf", "Mostra shelf", "Modifiche in shelf". Shelved states use "in shelf", staged states "in stage". Actions follow the Git pattern: "Esegui shelve delle modifiche…", "Esegui unshelve", "Esegui stash delle modifiche…", "Esegui stage". Pop, apply and unstage remain "Estrai", "Applica" and "Rimuovi dallo stage".
+
 ## 2. Other terms kept in English
 
 Debug, Debugger, Build (as a name), Plugin, Server, Language server, Editor, Thread, Test, Directory, Chat, Log ("Log Git"), Classpath, JDK, JRE, Proxy, code lens, LightEdit, prompt and preset ("Gestisci preset…", "Nuovo preset"). Product names, language names, file names, paths, commands, options, environment variables and shortcuts never change.
+
+Workspace, breakpoint, watchpoint and task are masculine and invariant: "il workspace", "i workspace", "il breakpoint", "i breakpoint", "il watchpoint", "i watchpoint", "il task", "i task". Use "Visualizza breakpoint…", "Nuovo workspace…", "Nuovo task…". Timeline is feminine: "la timeline". Effort and thinking stay in English: "l'effort", "il thinking", "Effort di ragionamento (livello di thinking)". Stage also stays in English for build phases: "lo stage", "gli stage", "Stage di build". Change a catalog value only when its English source uses the corresponding term; activity remains "attività" and reasoning remains "ragionamento".
 
 ## 3. Translated terms
 
 | English                        | Italian                                     | Example                                                  |
 | ------------------------------ | ------------------------------------------- | -------------------------------------------------------- |
-| diff                           | differenze                                  | "Mostra differenze", "Nessuna differenza"                |
 | agent                          | agente                                      | "Attività dell'agente"                                   |
 | arguments                      | argomenti                                   | "Argomenti dell'agente"                                  |
-| effort, thinking, reasoning    | intensità, elaborazione, ragionamento       | "Intensità di elaborazione"                              |
+| reasoning                      | ragionamento                                | "Effort di ragionamento"                                 |
 | enable, disabled               | Abilita, disabilitato                       | "Questo agente è disabilitato"                           |
 | ACP Registry                   | registro ACP                                | "Impossibile caricare il registro ACP: {error}"          |
 | run                            | Esegui, esecuzione                          | "Azioni di esecuzione"                                   |
 | build (action)                 | Compila, compilazione                       | "Arresta compilazione"                                   |
-| breakpoint                     | punto di interruzione                       | "Visualizza punti di interruzione…"                      |
-| watchpoint                     | punto di osservazione                       | "Aggiungi punto di osservazione campo"                   |
 | step into, step over, step out | Entra in, Passa oltre, Esci da              | "Forza passa oltre", "Entra intelligente"                |
 | pause, stop                    | Metti in pausa, Arresta                     | "Metti in pausa il programma"                            |
 | project                        | progetto                                    | "Nuovo progetto…"                                        |
-| workspace                      | area di lavoro                              | "Configurazione dell'area di lavoro"                     |
 | settings                       | impostazioni                                | "Tutte le impostazioni…"                                 |
 | changes                        | modifiche                                   | "Modifiche locali"                                       |
 | changelist                     | elenco modifiche                            | "Nuovo elenco modifiche…"                                |
@@ -56,17 +57,14 @@ Debug, Debugger, Build (as a name), Plugin, Server, Language server, Editor, Thr
 | conflict, resolve              | conflitto, Risolvi                          | "Risolvi conflitti…"                                     |
 | history                        | cronologia                                  | "Cronologia locale"                                      |
 | annotate                       | Annota                                      | "Annota con Git Blame"                                   |
-| shelve, shelved                | Accantona, accantonate                      | "Accantona modifiche…", "Modifiche accantonate"          |
-| shelf (noun), unshelve         | scaffale, Ripristina dallo scaffale         | "Mostra scaffale"                                        |
-| stash (verb), pop, apply       | Metti in stash, Estrai, Applica             | "Metti in stash le modifiche…", "Estrai stash"           |
-| stage, unstage                 | Prepara (stage), Rimuovi dallo stage        |                                                          |
+| pop, apply                     | Estrai, Applica                             | "Estrai stash", "Applica stash"                          |
+| unstage                        | Rimuovi dallo stage                         |                                                          |
 | untracked, ignored             | non tracciati, ignorati                     | "Includi file non tracciati", "File e cartelle ignorati" |
 | amend, squash, reword          | Emenda, Comprimi (squash), Riformula        | "Emenda commit"                                          |
 | rollback                       | Annulla modifiche                           | "Annulla modifiche…"                                     |
 | reset (outside Git)            | Ripristina                                  | "Ripristina zoom dell'IDE", "Ripristina frame"           |
 | compare                        | Confronta                                   | "Confronta con…"                                         |
 | review (pull request)          | revisione, Revisiona, revisori              | "Nessuna revisione"                                      |
-| timeline                       | sequenza temporale                          | "Controlla nuovi eventi nella sequenza temporale"        |
 | tool window                    | finestra degli strumenti                    | "Massimizza finestra degli strumenti"                    |
 | tab, Tab key                   | scheda, Tabulazione                         | "Nuova scheda", "Dimensione tabulazione"                 |
 | terminal                       | terminale                                   | "Apri nel terminale"                                     |
@@ -74,7 +72,6 @@ Debug, Debugger, Build (as a name), Plugin, Server, Language server, Editor, Thr
 | inspection                     | ispezione                                   | "Riesegui ispezione"                                     |
 | caret                          | cursore                                     | "Usa cursore a blocco"                                   |
 | gutter                         | barra laterale                              | "Icone della barra laterale"                             |
-| task                           | attività                                    | "Nuova attività…"                                        |
 | refactor                       | refactoring                                 | "Esegui refactoring di questo…"                          |
 | live template                  | modello live                                | "Inserisci modello live…"                                |
 | scratch file                   | file temporaneo                             | "Nuovo file temporaneo…"                                 |
@@ -132,6 +129,8 @@ The MT-3 tranche 1 strings ("feat(i18n): translate the MT-3 strings into Italian
 The MT-2 strings ("feat(i18n): translate the MT-2 strings into Italian", 49 added to the text catalog, no keyed change) added no group either. 38 values come from the fork. 10 strings the fork never had are new. "Reasoning effort (thinking level) used when generating commit message suggestions." is reworded to "Intensità di ragionamento (livello di elaborazione)…", because the fork's "Livello di ragionamento (intensità di elaborazione)" swapped the terms of "Effort" and "Thinking".
 
 The MT-3 tranche 2 strings ("feat(i18n): translate the MT-3 tranche 2 strings into Italian": 4 source texts of the Suggest Commit Message button and the `menu.vcs.showHistoryForSelection` key) all come from the fork and add no group.
+
+The 2026-11-01 IT-TERMS owner decision updates both catalogs by their English source. In particular, "Reasoning effort (thinking level)…" now reads "Effort di ragionamento (livello di thinking)…"; the MT-2 wording quoted above is historical. The consistency check still reports only the same 14 deliberate groups in section 6; the terminology change introduces no new double rendering.
 
 To run it, save this as `glossary-check.mjs` outside the repository and run `node glossary-check.mjs <repository root>`:
 
