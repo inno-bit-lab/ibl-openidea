@@ -1134,6 +1134,7 @@ async fn task_project_root_controls_local_and_worktree_repositories() {
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     };
     git(&["init", "-q", "-b", "member-main"]);
+    git(&["config", "core.autocrlf", "false"]);
     std::fs::write(member.join("file.txt"), "original\n").unwrap();
     git(&["add", "."]);
     git(&["commit", "-qm", "initial"]);
