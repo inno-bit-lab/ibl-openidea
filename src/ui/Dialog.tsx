@@ -315,7 +315,7 @@ function DialogInner({
     window.addEventListener("pointerup", up);
   };
 
-  const label = aria["aria-label"] ?? (typeof title === "string" ? title : undefined);
+  const label = tx(aria["aria-label"]) ?? (typeof title === "string" ? title : undefined);
   const hasFooter = !!(buttons?.length || footerStart || onHelp || footer);
   const canResize = resizable === "both" && !popup;
 

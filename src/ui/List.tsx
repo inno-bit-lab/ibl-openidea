@@ -16,6 +16,7 @@ import {
 } from "react";
 import clsx from "clsx";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { tx } from "@/platform/i18n";
 import styles from "./List.module.css";
 
 export interface ListRowState {
@@ -178,7 +179,7 @@ export function List<T>({
     <div
       ref={scrollRef}
       role="listbox"
-      aria-label={aria["aria-label"]}
+      aria-label={tx(aria["aria-label"])}
       aria-labelledby={aria["aria-labelledby"]}
       aria-activedescendant={
         focusable && active >= 0 && virtualizer.getVirtualItems().some((v) => v.index === active)

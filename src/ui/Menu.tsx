@@ -107,6 +107,8 @@ interface MenuListProps {
   /** Close just this level (submenus). */
   onCloseLevel?: () => void;
   "aria-label"?: string;
+  /** Names the menu by an element (a menubar title) instead of translating `aria-label`. */
+  "aria-labelledby"?: string;
   /** Focus the first item on mount. */
   autoFocusFirst?: boolean;
 }
@@ -203,7 +205,13 @@ export function MenuList({ items, onDone, onCloseLevel, autoFocusFirst = true, .
   };
 
   return (
-    <div role="menu" aria-label={aria["aria-label"]} className={styles.menu} onKeyDown={onKeyDown}>
+    <div
+      role="menu"
+      aria-label={tx(aria["aria-label"])}
+      aria-labelledby={aria["aria-labelledby"]}
+      className={styles.menu}
+      onKeyDown={onKeyDown}
+    >
       {resolved.map((r, i) => {
         if (r.kind === "separator") return <div key={r.key} role="separator" className={styles.separator} />;
         if (r.kind === "header")

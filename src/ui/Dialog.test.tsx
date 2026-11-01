@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import { setLocale, tx } from "@/platform/i18n";
 import { usePlatform } from "@/platform/platformInfo";
 import { Dialog, dialogPlatformOf, orderDialogButtons, type DialogButton, type DialogPlatform } from "./Dialog";
 
@@ -204,5 +205,55 @@ describe("Dialog keyboard", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "View Usages" }));
     fireEvent.keyDown(document.activeElement!, { key: "Tab" });
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
+  });
+});
+
+describe("Dialog names", () => {
+  it("keep their English text in English", () => {
+    render(
+      <Dialog open onClose={() => {}} aria-label="Recent Files">
+        <p>x</p>
+      </Dialog>,
+    );
+    expect(screen.getByRole("dialog", { name: "Recent Files" })).toBeInTheDocument();
+  });
+
+  describe("in Italian", () => {
+    beforeAll(async () => {
+      await setLocale("it");
+    });
+    afterAll(async () => {
+      await setLocale("en");
+    });
+
+    it("translate an explicit name as they translate the title", () => {
+      render(
+        <>
+          <Dialog open onClose={() => {}} aria-label="Recent Files">
+            <p>x</p>
+          </Dialog>
+          <Dialog open onClose={() => {}} title="Usages Detected">
+            <p>y</p>
+          </Dialog>
+        </>,
+      );
+      expect(screen.getByRole("dialog", { name: "File recenti" })).toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "Utilizzi rilevati" })).toBeInTheDocument();
+    });
+
+    it("keep a name the caller already translated, and text that is not in the catalog", () => {
+      render(
+        <>
+          <Dialog open onClose={() => {}} aria-label={tx("Recent Files")}>
+            <p>x</p>
+          </Dialog>
+          <Dialog open onClose={() => {}} aria-label="build.gradle.kts">
+            <p>y</p>
+          </Dialog>
+        </>,
+      );
+      expect(screen.getByRole("dialog", { name: "File recenti" })).toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "build.gradle.kts" })).toBeInTheDocument();
+    });
   });
 });

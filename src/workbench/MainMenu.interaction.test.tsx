@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type Settings } from "@/platform/ipc";
 import { useProject } from "@/platform/project";
 import { registerActions } from "@/platform/actions";
+import { setLocale } from "@/platform/i18n";
 import { MainMenu } from "./MainMenu";
 
 let available = 500;
@@ -303,5 +304,36 @@ describe("main menu presentation", () => {
     });
     expect(editor).toHaveFocus();
     expect(screen.getByRole("button", { name: "Main Menu" })).not.toHaveFocus();
+  });
+});
+
+describe("main menu names in Italian", () => {
+  beforeEach(async () => {
+    await act(async () => {
+      await setLocale("it");
+    });
+  });
+  afterEach(async () => {
+    await act(async () => {
+      await setLocale("en");
+    });
+  });
+
+  it("names an open menu by its visible title, never translating it twice", async () => {
+    vi.spyOn(commands, "menuModel").mockResolvedValue([
+      {
+        kind: "submenu",
+        id: "build",
+        label: "Build",
+        children: [{ kind: "action", id: "test.open", label: "Open", hint: null, arg: null }],
+      },
+    ]);
+    setStyle("merged");
+    render(<MainMenu />);
+    await screen.findByRole("menubar");
+    // The glossary keeps Build as the menu name; the text catalog's "Build" is the action, "Compila".
+    fireEvent.click(titles().getByRole("menuitem", { name: "Build" }));
+    expect(await screen.findByRole("menu", { name: "Build" })).toBeInTheDocument();
+    expect(screen.queryByRole("menu", { name: "Compila" })).toBeNull();
   });
 });

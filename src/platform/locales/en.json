@@ -448,6 +448,7 @@
   "run.services.configurationCount": "{count} configurations",
   "search.bookmarks.count": "{count, plural, one {# bookmark} other {# bookmarks}}",
   "search.findInFiles.summary": "{count, plural, one {#{more} match} other {#{more} matches}} in {files, plural, one {#{more} file} other {#{more} files}}",
+  "search.findToolWindow.excluded": "{count} excluded",
   "search.findToolWindow.summary": "{count, plural, one {#{more} match} other {#{more} matches}} in {files, plural, one {# file} other {# files}}",
   "search.replace.confirm": "Replace {count, plural, one {# occurrence} other {# occurrences}} of '{pattern}' with '{replacement}' in {files, plural, one {# file} other {# files}}?",
   "search.replace.stoppedSummary": "Stopped after replacing {count, plural, one {# occurrence} other {# occurrences}} in {files, plural, one {# file} other {# files}}{failed, plural, =0 {} other { (# failed)}}",

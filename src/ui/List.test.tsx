@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { setLocale, tx } from "@/platform/i18n";
 import { HighlightedText } from "./HighlightedText";
 import { List, listNavigate } from "./List";
 import { fuzzyMatch, indexRuns } from "./match";
@@ -73,6 +74,36 @@ describe("List", () => {
     renderList();
     const first = screen.getAllByRole("option")[0]!;
     expect([...first.querySelectorAll("mark")].map((m) => m.textContent)).toEqual(["Ord", "Con"]);
+  });
+
+  it("keeps its English name in English", () => {
+    renderList();
+    expect(screen.getByRole("listbox", { name: "Results" })).toBeInTheDocument();
+  });
+
+  describe("in Italian", () => {
+    beforeAll(async () => {
+      await setLocale("it");
+    });
+    afterAll(async () => {
+      await setLocale("en");
+    });
+
+    it("translates its name", () => {
+      renderList();
+      expect(screen.getByRole("listbox", { name: "Risultati" })).toBeInTheDocument();
+    });
+
+    it("keeps a name the caller already translated, and text that is not in the catalog", () => {
+      render(
+        <>
+          <List<string> aria-label={tx("Results")} items={["a"]} getKey={(s) => s} renderItem={(s) => s} />
+          <List<string> aria-label="README.md" items={["b"]} getKey={(s) => s} renderItem={(s) => s} />
+        </>,
+      );
+      expect(screen.getByRole("listbox", { name: "Risultati" })).toBeInTheDocument();
+      expect(screen.getByRole("listbox", { name: "README.md" })).toBeInTheDocument();
+    });
   });
 
   it("listNavigate skips sections and clamps at the ends", () => {
