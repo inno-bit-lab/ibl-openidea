@@ -11,6 +11,9 @@ import { fullDateTime, prettyDate } from "./prettyDate";
 describe("prettyDate", () => {
   const o = { ...DEFAULT_DATE_FORMAT, overrideSystem: true, pattern: "dd.MM.yyyy", use24Hour: true };
   const now = new Date(2026, 9, 31, 9, 2).getTime();
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
 
   it("formats relative dates like GitHub", () => {
     expect(prettyDate(now - 20_000, now, o)).toBe("just now");
@@ -18,9 +21,10 @@ describe("prettyDate", () => {
     expect(prettyDate(now - 60_000, now, o)).toBe("1 minute ago");
     expect(prettyDate(now - 42 * 60_000, now, o)).toBe("42 minutes ago");
     expect(prettyDate(now - 3_600_000, now, o)).toBe("1 hour ago");
-    expect(prettyDate(new Date(2026, 9, 31, 0, 27).getTime(), now, o)).toBe("8 hours ago");
-    expect(prettyDate(new Date(2026, 9, 30, 8, 0).getTime(), now, o)).toBe("yesterday");
-    expect(prettyDate(new Date(2026, 9, 21, 9, 5).getTime(), now, o)).toBe("9 days ago");
+    // Relative labels round elapsed time, independently of the host's DST/calendar offsets.
+    expect(prettyDate(now - 8 * hour - 35 * minute, now, o)).toBe("8 hours ago");
+    expect(prettyDate(now - day - hour - 2 * minute, now, o)).toBe("yesterday");
+    expect(prettyDate(now - 10 * day + 3 * minute, now, o)).toBe("9 days ago");
     expect(prettyDate(new Date(2026, 8, 2, 9, 5).getTime(), now, o)).toBe("on 02.09.2026");
     expect(prettyDate("not a date", now, o)).toBe("");
   });

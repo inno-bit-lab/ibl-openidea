@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:net";
+import { createServer as createVite } from "vite";
 import { claimSession, preferredVitePort, withDevConfig, worktreeId } from "./dev-session.ts";
 
 const servers: Server[] = [];
@@ -26,7 +27,6 @@ async function freePort(): Promise<number> {
 
 describe("development worktrees", () => {
   it("keeps Vite origins stable and uses an available port when the preferred port is occupied", async () => {
-    const { createServer: createVite } = await import("vite");
     const preferred = preferredVitePort(worktreeId("/repo/idea"));
     expect(preferred).toBe(preferredVitePort(worktreeId("/repo/idea")));
     expect(preferred).not.toBe(preferredVitePort(worktreeId("/repo/idea-other")));
@@ -37,6 +37,8 @@ describe("development worktrees", () => {
     const vite = await createVite({
       configFile: false,
       logLevel: "silent",
+      // This fixture checks TCP binding, not application dependency discovery/prebundling.
+      optimizeDeps: { noDiscovery: true, include: [] },
       server: { host: "127.0.0.1", port, strictPort: false, watch: null },
     });
     try {
