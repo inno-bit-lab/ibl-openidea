@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { openEditorPaths, useEditorRegistry } from "@/editor/api";
 import { executeAction } from "@/platform/actions";
 import { setContext } from "@/platform/context";
-import { useTxTemplate, tx } from "@/platform/i18n";
+import { useTxTemplate, t, tx } from "@/platform/i18n";
 import { call, commands, type SearchScope } from "@/platform/ipc";
 import { useProject } from "@/platform/project";
 import { useProjectModules } from "@/platform/projectRoots";
@@ -479,7 +479,7 @@ function FindInFilesDialog() {
       // IDEA's Find in Files is a modeless dialog: it survives switching to another app.
       closeOnDeactivate={false}
       dismissOnBackdrop={!s.pinned}
-      aria-label={s.replace ? "Replace in Files" : "Find in Files"}
+      aria-label={s.replace ? tx("Replace in Files") : tx("Find in Files")}
       className={styles.dialog}
     >
       <div className={styles.root} onKeyDown={onKeyDown}>
@@ -676,7 +676,7 @@ function FindInFilesDialog() {
             }}
             focusable={false}
             rowHeight={ROW}
-            aria-label="Matches"
+            aria-label={tx("Matches")}
             empty={<span>{emptyText(state, s.pattern)}</span>}
             renderItem={(r, st) => {
               const state = s.replace ? groupState(r, marks) : "pending";
@@ -797,7 +797,7 @@ function FindInFilesDialog() {
         anchor={historyMenu === "replace" ? replaceBoxRef : patternBoxRef}
         items={historyMenu ? historyItems(historyMenu) : []}
         placement="bottom-start"
-        aria-label="Recent searches"
+        aria-label={tx("Recent searches")}
         onClose={() => setHistoryMenu(null)}
       />
       <Menu
@@ -805,7 +805,7 @@ function FindInFilesDialog() {
         anchor={contextRef}
         items={contextItems}
         placement="bottom-end"
-        aria-label="Search context"
+        aria-label={tx("Search context")}
         onClose={() => setContextMenu(false)}
       />
     </Dialog>
@@ -813,19 +813,19 @@ function FindInFilesDialog() {
 }
 
 function statusText(s: FindState): string {
-  if (s.status === "invalid") return "Invalid pattern";
-  if (s.status === "error") return s.error ?? "Search failed";
+  if (s.status === "invalid") return tx("Invalid pattern");
+  if (s.status === "error") return s.error ?? tx("Search failed");
   if (s.status === "idle") return "";
   const files = s.files.length;
   const more = s.summary?.limitHit ? "+" : "";
-  if (!s.matchCount) return s.status === "done" ? "No matches" : "Searching…";
-  return `${s.matchCount}${more} match${s.matchCount === 1 ? "" : "es"} in ${files}${more} file${files === 1 ? "" : "s"}`;
+  if (!s.matchCount) return s.status === "done" ? tx("No matches") : tx("Searching…");
+  return t("search.findInFiles.summary", { count: s.matchCount, files, more });
 }
 
 function emptyText(s: FindState, pattern: string): string {
-  if (!pattern) return "Type text to search the project";
-  if (s.status === "invalid") return s.error ?? "Invalid pattern";
-  if (s.status === "searching" || s.status === "validating") return "Searching…";
-  if (s.status === "error") return s.error ?? "Search failed";
-  return "Nothing found";
+  if (!pattern) return tx("Type text to search the project");
+  if (s.status === "invalid") return s.error ?? tx("Invalid pattern");
+  if (s.status === "searching" || s.status === "validating") return tx("Searching…");
+  if (s.status === "error") return s.error ?? tx("Search failed");
+  return tx("Nothing found");
 }

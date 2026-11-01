@@ -55,7 +55,7 @@ function GearButton() {
         anchor={ref}
         items={GEAR_MENU}
         placement="top-start"
-        aria-label="Manage"
+        aria-label={tx("Manage")}
       />
     </>
   );
@@ -79,7 +79,7 @@ function NavItem({
       aria-current={page === id ? "page" : undefined}
       onClick={() => onSelect(id)}
     >
-      {label}
+      <T>{label}</T>
     </button>
   );
 }
@@ -185,7 +185,7 @@ export function WelcomeView() {
       </aside>
       <section
         className={clsx(styles.content, shown === "plugins" && styles.contentPlugins)}
-        aria-label={shown === "projects" ? "Projects" : shown === "customize" ? "Customize" : "Plugins"}
+        aria-label={tx(shown === "projects" ? "Projects" : shown === "customize" ? "Customize" : "Plugins")}
         aria-busy={opening || undefined}
       >
         {shown === "projects" && <ProjectsPage />}
