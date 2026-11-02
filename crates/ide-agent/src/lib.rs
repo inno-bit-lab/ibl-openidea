@@ -14,6 +14,7 @@ mod model;
 mod native;
 #[cfg(test)]
 pub(crate) mod pause;
+pub(crate) mod pi_light;
 mod provider;
 pub mod registry;
 mod skills;
@@ -21,6 +22,12 @@ mod timeline;
 mod worktree;
 
 pub use model::*;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CompletionSafety {
+    RequireRestrictedMode,
+    PiNoTools,
+}
 
 use conversation::{Conversation, SavedSubagent, Session};
 use ide_core::{CancellationToken, IdeError, IdeResult, IpcPath};
@@ -523,10 +530,64 @@ impl AgentManager {
             return Err(IdeError::invalid("nothing to ask"));
         }
         let epoch = self.shared.admit()?;
-        let mut spec = provider::load(self.shared.paths.custom_agents_dir.as_deref())
-            .into_iter()
-            .find(|p| p.id == provider)
-            .ok_or_else(|| IdeError::invalid(format!("unknown agent {provider}")))?;
+        let cwd = std::env::temp_dir().join(format!("ibl-suggest-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&cwd)
+            .map_err(|e| IdeError::internal(format!("cannot create temporary directory {}: {e}", cwd.display())))?;
+
+        let custom_dir = self.shared.paths.custom_agents_dir.as_deref();
+        let is_custom_pi = custom_dir.map_or(false, |dir| dir.join("pi.toml").is_file());
+
+        let (mut spec, safety) = match provider {
+            "pi" if !is_custom_pi => {
+                let mut spec = provider::load(custom_dir)
+                    .into_iter()
+                    .find(|p| p.id == provider)
+                    .ok_or_else(|| IdeError::invalid(format!("unknown agent {provider}")))?;
+                match pi_light::resolve_pi_executable() {
+                    Ok(pi_exe) => match pi_light::ensure_pi_light_launcher(&cwd, &pi_exe) {
+                        Ok(launcher_path) => match pi_light::prepare_pi_light_settings(&cwd) {
+                            Ok(()) => {
+                                spec.env.retain(|(k, _)| {
+                                    !k.eq_ignore_ascii_case("PI_EXE")
+                                        && !k.eq_ignore_ascii_case("PI_ACP_PI_COMMAND")
+                                        && !k.eq_ignore_ascii_case("PI_CODING_AGENT_DIR")
+                                        && !k.eq_ignore_ascii_case("NO_UPDATE_NOTIFIER")
+                                        && !k.eq_ignore_ascii_case("npm_config_update_notifier")
+                                });
+                                let empty_agent_dir = cwd.join(".pi-agent-empty");
+                                spec.env.extend([
+                                    ("PI_EXE".into(), pi_exe.to_string_lossy().into_owned()),
+                                    ("PI_ACP_PI_COMMAND".into(), launcher_path.to_string_lossy().into_owned()),
+                                    ("PI_CODING_AGENT_DIR".into(), empty_agent_dir.to_string_lossy().into_owned()),
+                                    ("NO_UPDATE_NOTIFIER".into(), "1".into()),
+                                    ("npm_config_update_notifier".into(), "false".into()),
+                                ]);
+                                (spec, CompletionSafety::PiNoTools)
+                            }
+                            Err(e) => {
+                                tracing::warn!(%e, "failed to prepare pi-light settings in cwd");
+                                (spec, CompletionSafety::RequireRestrictedMode)
+                            }
+                        },
+                        Err(e) => {
+                            tracing::warn!(%e, "failed to prepare pi-light launcher");
+                            (spec, CompletionSafety::RequireRestrictedMode)
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(%e, "could not resolve pi executable");
+                        (spec, CompletionSafety::RequireRestrictedMode)
+                    }
+                }
+            }
+            _ => {
+                let spec = provider::load(custom_dir)
+                    .into_iter()
+                    .find(|p| p.id == provider)
+                    .ok_or_else(|| IdeError::invalid(format!("unknown agent {provider}")))?;
+                (spec, CompletionSafety::RequireRestrictedMode)
+            }
+        };
         // One-shot completions have no terminal in which to answer credentials.
         // Override provider values here only; ordinary tasks retain their environment.
         spec.env.retain(|(key, _)| {
@@ -545,9 +606,6 @@ impl AgentManager {
                 buf.push_back(line);
             })
         };
-        let cwd = std::env::temp_dir().join(format!("ibl-suggest-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&cwd)
-            .map_err(|e| IdeError::internal(format!("cannot create temporary directory {}: {e}", cwd.display())))?;
         // Only raw reported settings identify mode aliases. Never inject client options or bypass defaults.
         let fallback_config =
             self.shared.known.lock().get(&spec.id).map(|known| known.config.clone()).unwrap_or_default();
@@ -568,7 +626,7 @@ impl AgentManager {
         let session = async {
             match tokio::time::timeout(
                 timeout,
-                ask(&peer, &spec, &scope.cwd, prompt, config, &fallback_config, &collector),
+                ask(&peer, &spec, &scope.cwd, prompt, config, &fallback_config, &collector, safety),
             )
             .await
             {
@@ -1944,11 +2002,123 @@ impl Task {
     }
 }
 
+#[derive(Default, PartialEq, Eq)]
+enum CollectorState {
+    #[default]
+    BufferingPreambolo,
+    CollectingBody,
+}
+
 /// Gathers what an agent says in a throwaway session and refuses whatever it asks for.
 #[derive(Default)]
 struct Collector {
     text: Mutex<String>,
     settings_updates: Mutex<Vec<Value>>,
+    preambolo_buffer: Mutex<String>,
+    state: Mutex<CollectorState>,
+    expected_startup_info: Mutex<Option<String>>,
+}
+
+fn is_pi_banner_prefix(s: &str) -> bool {
+    s.starts_with("pi v")
+        || s.starts_with("New version available:")
+        || s.starts_with("## Skills")
+        || s.starts_with("## Context files")
+        || s.starts_with("## Context Files")
+        || s.starts_with("## Extensions")
+        || s.starts_with("## Prompts")
+}
+
+impl Collector {
+    fn set_expected_startup_info(&self, info: Option<String>) {
+        *self.expected_startup_info.lock() = info;
+    }
+
+    fn pre_prompt(&self) {
+        self.text.lock().clear();
+        self.preambolo_buffer.lock().clear();
+        *self.state.lock() = CollectorState::BufferingPreambolo;
+    }
+
+    fn flush_preambolo(&self) {
+        let mut state = self.state.lock();
+        if *state == CollectorState::BufferingPreambolo {
+            let mut buf = self.preambolo_buffer.lock();
+            if !buf.is_empty() {
+                self.text.lock().push_str(&buf);
+                buf.clear();
+            }
+            *state = CollectorState::CollectingBody;
+        }
+    }
+
+    fn push_chunk(&self, chunk: &str) {
+        let mut state = self.state.lock();
+        if *state == CollectorState::CollectingBody {
+            self.text.lock().push_str(chunk);
+            return;
+        }
+
+        let mut buf = self.preambolo_buffer.lock();
+        buf.push_str(chunk);
+
+        let expected_info = self.expected_startup_info.lock().clone();
+        let max_cap = expected_info.as_ref().map_or(512, |s| s.len().max(512));
+
+        // 1. Exact match against expected_startup_info from session metadata
+        if let Some(ref expected) = expected_info {
+            if buf.starts_with(expected) {
+                let remainder = buf[expected.len()..].to_string();
+                buf.clear();
+                *state = CollectorState::CollectingBody;
+                if !remainder.is_empty() {
+                    self.text.lock().push_str(&remainder);
+                }
+                return;
+            } else if expected.starts_with(&*buf) {
+                return;
+            }
+        }
+
+        // 2. Banner detection with paragraph delimiter \n\n
+        if let Some(idx) = buf.find("\n\n") {
+            let candidate = &buf[..idx];
+            if is_pi_banner_prefix(candidate) {
+                let remainder = buf[idx + 2..].to_string();
+                buf.clear();
+                *state = CollectorState::CollectingBody;
+                if !remainder.is_empty() {
+                    self.text.lock().push_str(&remainder);
+                }
+                return;
+            } else {
+                let all = std::mem::take(&mut *buf);
+                *state = CollectorState::CollectingBody;
+                self.text.lock().push_str(&all);
+                return;
+            }
+        }
+
+        // 3. Early divergence check
+        if buf.len() >= 16
+            && !is_pi_banner_prefix(&buf)
+            && !buf.starts_with("pi ")
+            && !buf.starts_with("New ")
+            && !buf.starts_with('#')
+        {
+            let all = std::mem::take(&mut *buf);
+            *state = CollectorState::CollectingBody;
+            self.text.lock().push_str(&all);
+            return;
+        }
+
+        // 4. Capacity overflow
+        if buf.len() >= max_cap {
+            let all = std::mem::take(&mut *buf);
+            *state = CollectorState::CollectingBody;
+            self.text.lock().push_str(&all);
+        }
+    }
 }
 
 impl Handler for Collector {
@@ -1957,7 +2127,7 @@ impl Handler for Collector {
         match update.get("sessionUpdate").and_then(Value::as_str) {
             Some("agent_message_chunk") => {
                 if let Some(text) = update.pointer("/content/text").and_then(Value::as_str) {
-                    self.text.lock().push_str(text);
+                    self.push_chunk(text);
                 }
             }
             Some("config_option_update" | "current_mode_update") => {
@@ -1975,6 +2145,7 @@ impl Handler for Collector {
     }
 }
 
+#[derive(Debug)]
 enum AskError {
     Rpc(RpcError),
     ReadOnly(String),
@@ -2036,6 +2207,7 @@ async fn set_option(
 
 /// One question in a new session (`initialize`, `session/new`, mandatory restrictive mode +
 /// optional `session/set_*`, `session/prompt`).
+#[allow(clippy::too_many_arguments)]
 async fn ask(
     peer: &acp::Conn,
     spec: &provider::ProviderSpec,
@@ -2044,6 +2216,7 @@ async fn ask(
     config: &[AgentConfigChoice],
     fallback_config: &[AgentConfigOption],
     collector: &Collector,
+    safety: CompletionSafety,
 ) -> Result<(Option<String>, Vec<AgentConfigOption>), AskError> {
     peer.initialize(&client_info()).await?;
     let cwd_s = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf()).to_string_lossy().into_owned();
@@ -2052,6 +2225,11 @@ async fn ask(
         .get("sessionId")
         .and_then(Value::as_str)
         .ok_or_else(|| RpcError::Protocol("the agent returned no session".into()))?;
+
+    // Extract _meta.piAcp.startupInfo if provided by the adapter
+    let startup_info = session.pointer("/_meta/piAcp/startupInfo").and_then(Value::as_str).map(str::to_owned);
+    collector.set_expected_startup_info(startup_info);
+
     let mut options = config::options_of(&session);
     collector.merge_config(&mut options).await;
     let read_only = |modes: String| {
@@ -2060,14 +2238,23 @@ async fn ask(
             spec.name
         ))
     };
-    // Checked before any setting is sent, so an agent without a restrictive mode gets none.
-    let chosen_mode = restrictive_mode(&options).map_err(read_only)?;
-    tracing::info!(
-        agent = %spec.id,
-        mode = %chosen_mode,
-        cwd = %cwd.display(),
-        "running read-only completion"
-    );
+
+    if safety == CompletionSafety::RequireRestrictedMode {
+        let chosen_mode = restrictive_mode(&options).map_err(read_only)?;
+        tracing::info!(
+            agent = %spec.id,
+            mode = %chosen_mode,
+            cwd = %cwd.display(),
+            "running read-only completion"
+        );
+    } else {
+        tracing::info!(
+            agent = %spec.id,
+            cwd = %cwd.display(),
+            "running pi-light (no-tools) completion"
+        );
+    }
+
     let has_reported = !options.is_empty();
     for choice in config {
         let value = choice.value.trim();
@@ -2100,34 +2287,45 @@ async fn ask(
             continue;
         }
         if let Err(e) = set_option(peer, id, &mut options, &target, value).await {
+            if safety == CompletionSafety::PiNoTools {
+                return Err(AskError::Rpc(e));
+            }
             tracing::warn!("complete: setting {} to {} failed: {e}", target.id, value);
         }
         collector.merge_config(&mut options).await;
     }
-    // The mode goes last, so no other setting can change it afterwards. It is picked again because
-    // a reply to an earlier setting can replace the modes the agent reports.
-    let mode = restrictive_mode(&options).map_err(read_only)?;
-    let Some(target) = options.iter().find(|o| is_mode_option(o)).cloned() else {
-        return Err(read_only("none".into()));
-    };
-    // Restore it explicitly even when the setup snapshot already named this mode.
-    if let Some(reported) = set_option(peer, id, &mut options, &target, &mode).await? {
-        return Err(read_only(format!("reported {reported} after selecting {mode}")));
+
+    if safety == CompletionSafety::RequireRestrictedMode {
+        // The mode goes last, so no other setting can change it afterwards. It is picked again because
+        // a reply to an earlier setting can replace the modes the agent reports.
+        let mode = restrictive_mode(&options).map_err(read_only)?;
+        let Some(target) = options.iter().find(|o| is_mode_option(o)).cloned() else {
+            return Err(read_only("none".into()));
+        };
+        // Restore it explicitly even when the setup snapshot already named this mode.
+        if let Some(reported) = set_option(peer, id, &mut options, &target, &mode).await? {
+            return Err(read_only(format!("reported {reported} after selecting {mode}")));
+        }
+        collector.merge_config(&mut options).await;
+        // Every reported mode must agree; a stale restrictive copy cannot mask a conflicting notification.
+        let modes_agree = {
+            let mut reported_modes = options.iter().filter(|o| is_mode_option(o)).peekable();
+            reported_modes.peek().is_some()
+                && reported_modes
+                    .all(|o| o.current.as_deref() == Some(mode.as_str()) && o.values.iter().any(|v| v.value == mode))
+        };
+        if !modes_agree {
+            return Err(read_only(
+                restrictive_mode(&options).err().unwrap_or_else(|| "changed after selection".into()),
+            ));
+        }
     }
-    collector.merge_config(&mut options).await;
-    // Every reported mode must agree; a stale restrictive copy cannot mask a conflicting notification.
-    let modes_agree = {
-        let mut reported_modes = options.iter().filter(|o| is_mode_option(o)).peekable();
-        reported_modes.peek().is_some()
-            && reported_modes
-                .all(|o| o.current.as_deref() == Some(mode.as_str()) && o.values.iter().any(|v| v.value == mode))
-    };
-    if !modes_agree {
-        return Err(read_only(restrictive_mode(&options).err().unwrap_or_else(|| "changed after selection".into())));
-    }
+
+    collector.pre_prompt();
     let reply: Value = peer
         .request("session/prompt", json!({ "sessionId": id, "prompt": [{ "type": "text", "text": prompt }] }), None)
         .await?;
+    collector.flush_preambolo();
     // `None`: a v1 reply without a stop reason (the v2 dialect always reports one).
     let stop = reply.get("stopReason").and_then(Value::as_str).map(str::to_owned);
     Ok((stop, options))
@@ -2178,34 +2376,90 @@ async fn remove_completion_dir(cwd: &Path) {
 
 impl CompletionScope {
     async fn finish(&mut self) {
-        if let Some(peer) = self.peer.take() {
+        if let Some(ref peer) = self.peer {
             peer.kill();
+            if peer.pid().is_none() {
+                remove_completion_dir(&self.cwd).await;
+            } else {
+                match tokio::time::timeout(Duration::from_secs(3), peer.process_exited()).await {
+                    Ok(Some(Ok(_status))) => {
+                        // Teardown confirmed: safe removal of cwd.
+                        remove_completion_dir(&self.cwd).await;
+                    }
+                    Ok(Some(Err(e))) => {
+                        // Process wait failed with I/O error: retain cwd.
+                        tracing::warn!(cwd = %self.cwd.display(), %e, "process wait failed; preserving cwd");
+                    }
+                    Ok(None) => {
+                        tracing::warn!(cwd = %self.cwd.display(), "process exit signal lost; preserving cwd");
+                    }
+                    Err(_) => {
+                        // Timeout of 3s expired: process is still exiting.
+                        tracing::warn!(cwd = %self.cwd.display(), "teardown pending beyond 3s; delegating to background cleanup task");
+                        let cwd = self.cwd.clone();
+                        let peer = peer.clone();
+                        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                            runtime.spawn(async move {
+                                match tokio::time::timeout(Duration::from_secs(30), peer.process_exited()).await {
+                                    Ok(Some(Ok(_))) => {
+                                        remove_completion_dir(&cwd).await;
+                                    }
+                                    Ok(Some(Err(e))) => {
+                                        tracing::warn!(cwd = %cwd.display(), %e, "process wait failed; preserving cwd");
+                                    }
+                                    Ok(None) => {
+                                        tracing::warn!(cwd = %cwd.display(), "process exit signal lost; preserving cwd");
+                                    }
+                                    Err(_) => {
+                                        tracing::error!(cwd = %cwd.display(), "process did not exit within 30s; preserving cwd to prevent conflicts");
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        } else {
+            remove_completion_dir(&self.cwd).await;
         }
-        remove_completion_dir(&self.cwd).await;
+        self.peer = None;
         self.finished = true;
     }
 }
 
 impl Drop for CompletionScope {
     fn drop(&mut self) {
-        if let Some(peer) = self.peer.take() {
-            peer.kill();
-        }
         if self.finished {
             return;
         }
-        // Cancellation still cleans an unlocked cwd synchronously. A CLI holding it needs
-        // the runtime to finish killing its process before the background retry succeeds.
-        match std::fs::remove_dir_all(&self.cwd) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => match tokio::runtime::Handle::try_current() {
-                Ok(runtime) => {
-                    let cwd = self.cwd.clone();
-                    runtime.spawn(async move { remove_completion_dir(&cwd).await });
-                }
-                Err(_) => tracing::warn!("complete: removing temporary cwd {} failed: {error}", self.cwd.display()),
-            },
+        let peer = self.peer.take();
+        if let Some(peer) = peer {
+            peer.kill();
+            if peer.pid().is_none() {
+                let _ = std::fs::remove_dir_all(&self.cwd);
+            } else if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                let cwd = self.cwd.clone();
+                runtime.spawn(async move {
+                    match tokio::time::timeout(Duration::from_secs(30), peer.process_exited()).await {
+                        Ok(Some(Ok(_))) => {
+                            remove_completion_dir(&cwd).await;
+                        }
+                        Ok(Some(Err(e))) => {
+                            tracing::warn!(cwd = %cwd.display(), %e, "process wait failed; preserving cwd");
+                        }
+                        Ok(None) => {
+                            tracing::warn!(cwd = %cwd.display(), "process exit signal lost; preserving cwd");
+                        }
+                        Err(_) => {
+                            tracing::error!(cwd = %cwd.display(), "process did not exit within 30s; preserving cwd");
+                        }
+                    }
+                });
+            } else {
+                tracing::warn!(cwd = %self.cwd.display(), "runtime unavailable during drop; preserving cwd");
+            }
+        } else {
+            let _ = std::fs::remove_dir_all(&self.cwd);
         }
     }
 }

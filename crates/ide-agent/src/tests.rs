@@ -2260,6 +2260,194 @@ async fn completion_runs_again_after_execution_is_allowed_again() {
     mgr.shutdown();
 }
 
+#[tokio::test]
+async fn pi_light_launcher_generation_and_settings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let launcher_dir = tmp.path().join("launcher");
+    let fake_pi = tmp.path().join("fake_pi.exe");
+    std::fs::write(&fake_pi, b"fake").unwrap();
+
+    let launcher = pi_light::ensure_pi_light_launcher(&launcher_dir, &fake_pi).unwrap();
+    assert!(launcher.is_file());
+    let script = std::fs::read_to_string(&launcher).unwrap();
+    for flag in pi_light::PI_LIGHT_FLAGS {
+        assert!(script.contains(flag), "launcher missing flag {flag}");
+    }
+
+    let cwd = tmp.path().join("session_cwd");
+    pi_light::prepare_pi_light_settings(&cwd).unwrap();
+    let settings = cwd.join(".pi").join("settings.json");
+    assert!(settings.is_file());
+    let settings_json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(settings_json["quietStartup"], true);
+    assert!(cwd.join(".pi-agent-empty").is_dir());
+}
+
+#[test]
+fn collector_banner_filtering_exact_metadata_and_fragmentation() {
+    let collector = Collector::default();
+    collector.set_expected_startup_info(Some("pi v1.4.0 (thinking: max)\n\n".to_string()));
+    collector.pre_prompt();
+
+    // Fragmented chunks
+    collector.push_chunk("pi v1.4.0 ");
+    collector.push_chunk("(thinking: max)\n\n");
+    collector.push_chunk("feat: add login");
+
+    collector.flush_preambolo();
+    assert_eq!(*collector.text.lock(), "feat: add login");
+}
+
+#[test]
+fn collector_banner_filtering_concatenated_chunk() {
+    let collector = Collector::default();
+    collector.set_expected_startup_info(Some("pi v1.4.0 (thinking: max)\n\n".to_string()));
+    collector.pre_prompt();
+
+    // Concatenated in single chunk
+    collector.push_chunk("pi v1.4.0 (thinking: max)\n\nfix: memory leak");
+    collector.flush_preambolo();
+    assert_eq!(*collector.text.lock(), "fix: memory leak");
+}
+
+#[test]
+fn collector_banner_filtering_divergence_preserves_valid_response() {
+    let collector = Collector::default();
+    collector.pre_prompt();
+
+    // Legitimate response starting with ## Context or normal text
+    collector.push_chunk("## Context: update README\n\nAdditional details about the change");
+    collector.flush_preambolo();
+    assert_eq!(*collector.text.lock(), "## Context: update README\n\nAdditional details about the change");
+}
+
+#[test]
+fn collector_banner_filtering_capacity_overflow_and_flush() {
+    let collector = Collector::default();
+    collector.pre_prompt();
+
+    // Chunk of 600 bytes of non-banner text
+    let large_text = "x".repeat(600);
+    collector.push_chunk(&large_text);
+    collector.flush_preambolo();
+    assert_eq!(*collector.text.lock(), large_text);
+
+    // Multibyte characters
+    let collector2 = Collector::default();
+    collector2.pre_prompt();
+    collector2.push_chunk("✨ feat: commit with emoji\n\n");
+    collector2.flush_preambolo();
+    assert_eq!(*collector2.text.lock(), "✨ feat: commit with emoji\n\n");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_pi_light_policy_bypasses_restrictive_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Agent without restrictive mode (only model and thought_level)
+    let agent = Arc::new(FakeAgent::without_modes());
+    let _mgr = manager(tmp.path(), agent.clone());
+
+    // Directly test ask with CompletionSafety::PiNoTools
+    let collector = Collector::default();
+    let peer = duplex(1 << 20);
+    let (ar, aw) = tokio::io::split(peer.0);
+    let (br, bw) = tokio::io::split(peer.1);
+    let server = Peer::connect_framed(br, bw, agent.clone(), Framing::Lines);
+    agent.servers.lock().push(server);
+    let client = Peer::connect_framed(ar, aw, Arc::new(Collector::default()), Framing::Lines);
+    let conn = acp::Conn::new(client, acp::Dialect::wrap(Arc::new(Collector::default())));
+
+    let spec = provider::ProviderSpec {
+        id: "pi".into(),
+        name: "Pi".into(),
+        driver: provider::Driver::Acp,
+        command: "pi".into(),
+        args: vec![],
+        env: vec![],
+        source: AgentSource::Builtin,
+        login_hint: "".into(),
+    };
+
+    let choices = vec![
+        AgentConfigChoice { id: "model".into(), value: "small".into() },
+        AgentConfigChoice { id: "thought_level".into(), value: "low".into() },
+    ];
+
+    let result = ask(
+        &conn,
+        &spec,
+        tmp.path(),
+        "generate commit message",
+        &choices,
+        &[],
+        &collector,
+        CompletionSafety::PiNoTools,
+    )
+    .await;
+    assert!(result.is_ok(), "PiNoTools must succeed without read-only mode: {:?}", result.err());
+
+    // With RequireRestrictedMode, the exact same agent without modes must fail
+    let collector2 = Collector::default();
+    let result_restricted = ask(
+        &conn,
+        &spec,
+        tmp.path(),
+        "generate commit message",
+        &choices,
+        &[],
+        &collector2,
+        CompletionSafety::RequireRestrictedMode,
+    )
+    .await;
+    assert!(result_restricted.is_err(), "RequireRestrictedMode must reject agent without modes");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn complete_rejects_untrusted_custom_pi_override_without_restricted_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let custom_dir = tmp.path().join("custom_agents");
+    std::fs::create_dir_all(&custom_dir).unwrap();
+    // Create custom pi.toml override
+    std::fs::write(
+        custom_dir.join("pi.toml"),
+        r#"
+name = "Custom Pi"
+command = "my-custom-pi"
+args = []
+"#,
+    )
+    .unwrap();
+
+    let agent = Arc::new(FakeAgent::without_modes());
+    let connector: Connector = Arc::new(move |_spec, _cwd, client, _stderr| {
+        let (a, b) = duplex(1 << 20);
+        let (ar, aw) = tokio::io::split(a);
+        let (br, bw) = tokio::io::split(b);
+        let server = Peer::connect_framed(br, bw, agent.clone(), Framing::Lines);
+        agent.servers.lock().push(server);
+        Ok(Peer::connect_framed(ar, aw, client, Framing::Lines))
+    });
+
+    let mgr = AgentManager::with_connector(
+        AgentPaths {
+            project_root: tmp.path().to_path_buf(),
+            store_dir: tmp.path().join("store"),
+            worktrees_dir: tmp.path().join("worktrees"),
+            models_file: tmp.path().join("models.json"),
+            custom_agents_dir: Some(custom_dir),
+            home_dir: None,
+        },
+        tokio::runtime::Handle::current(),
+        connector,
+    );
+
+    // Custom override must NOT receive PiNoTools exemption, so it fails on restrictive mode
+    let res = mgr.complete("pi", "test prompt", &[], Duration::from_secs(5)).await;
+    assert!(res.is_err());
+    let err_msg = res.unwrap_err().message;
+    assert!(err_msg.contains("cannot run read-only"), "Error should be read-only rejection: {err_msg}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_after_shutdown_never_reaches_the_connector() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2697,4 +2885,82 @@ async fn revocation_finish_spares_a_later_grant() {
     assert!(peer_a.is_closed(), "peer A captured by R must be killed");
     assert!(!peer_b.is_closed(), "peer B must NOT be killed by stale R finish");
     assert!(mgr.shared.admit().is_ok(), "admission must remain valid for Grant G");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completion_scope_cancellation_during_session_with_real_process_waits_for_exit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("completion_scope_test_session");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(cwd.join("marker.txt"), b"running").unwrap();
+
+    #[cfg(windows)]
+    let (cmd, args) = ("cmd.exe", vec!["/c".into(), "ping 127.0.0.1 -n 10 > nul".into()]);
+    #[cfg(not(windows))]
+    let (cmd, args) = ("sleep", vec!["10".into()]);
+
+    let peer = ide_jsonrpc::Peer::spawn_contained(
+        cmd,
+        &args,
+        &cwd,
+        &[],
+        Arc::new(ide_jsonrpc::NoopHandler),
+        Box::new(|_| {}),
+        ide_jsonrpc::Framing::Lines,
+    )
+    .expect("spawn test process");
+    assert!(peer.pid().is_some());
+
+    let scope = CompletionScope { cwd: cwd.clone(), peer: Some(peer), finished: false };
+
+    drop(scope);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if !cwd.exists() {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "temporary cwd must be removed after process exit");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completion_scope_cancellation_during_finish_with_real_process_waits_for_exit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("completion_scope_test_finish");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(cwd.join("marker.txt"), b"running").unwrap();
+
+    #[cfg(windows)]
+    let (cmd, args) = ("cmd.exe", vec!["/c".into(), "ping 127.0.0.1 -n 10 > nul".into()]);
+    #[cfg(not(windows))]
+    let (cmd, args) = ("sleep", vec!["10".into()]);
+
+    let peer = ide_jsonrpc::Peer::spawn_contained(
+        cmd,
+        &args,
+        &cwd,
+        &[],
+        Arc::new(ide_jsonrpc::NoopHandler),
+        Box::new(|_| {}),
+        ide_jsonrpc::Framing::Lines,
+    )
+    .expect("spawn test process");
+    assert!(peer.pid().is_some());
+
+    let mut scope = CompletionScope { cwd: cwd.clone(), peer: Some(peer), finished: false };
+
+    let _ = tokio::time::timeout(Duration::from_millis(10), scope.finish()).await;
+
+    drop(scope);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if !cwd.exists() {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "temporary cwd must be removed after finish cancellation");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
