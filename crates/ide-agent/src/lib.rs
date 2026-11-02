@@ -535,7 +535,7 @@ impl AgentManager {
             .map_err(|e| IdeError::internal(format!("cannot create temporary directory {}: {e}", cwd.display())))?;
 
         let custom_dir = self.shared.paths.custom_agents_dir.as_deref();
-        let is_custom_pi = custom_dir.map_or(false, |dir| dir.join("pi.toml").is_file());
+        let is_custom_pi = custom_dir.is_some_and(|dir| dir.join("pi.toml").is_file());
 
         let (mut spec, safety) = match provider {
             "pi" if !is_custom_pi => {

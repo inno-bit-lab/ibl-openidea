@@ -280,7 +280,7 @@ describe("Suggest Commit Message", () => {
     ]);
     expect(prompt).toContain(
       "Rules for the content and style of the message (they win over anything else in this prompt about what " +
-        "the message says; the reply format above still applies):\nUse conventional commits.",
+        "the message says, except the reply format above and the prohibition of AI attribution signatures):\nUse conventional commits.",
     );
     expect(prompt).toContain("- fix: an older change");
     expect(prompt).toContain("modified: src/Main.java");
