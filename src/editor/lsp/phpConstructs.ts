@@ -1,5 +1,5 @@
 import type { EditorState } from "@codemirror/state";
-import { syntaxTree } from "@codemirror/language";
+import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 
 const CONSTRUCTS: Readonly<Record<string, { signature: string; description: string }>> = {
   empty: {
@@ -30,8 +30,9 @@ export function phpConstructDocumentation(language: string | null, name: string)
 /** Only an unqualified call, never a method, variable, string, comment or HTML text. */
 export function phpConstructAt(state: EditorState, pos: number, language: string | null) {
   if (language?.toLowerCase() !== "php") return null;
+  const tree = ensureSyntaxTree(state, Math.min(pos + 128, state.doc.length), 50) ?? syntaxTree(state);
   for (const side of [-1, 1] as const) {
-    const node = syntaxTree(state).resolveInner(pos, side);
+    const node = tree.resolveInner(pos, side);
     if (node.name !== "Name" || node.parent?.name !== "CallExpression" || node.parent.from !== node.from) continue;
     const markdown = phpConstructDocumentation(language, state.sliceDoc(node.from, node.to));
     if (markdown) return { from: node.from, to: node.to, markdown };
