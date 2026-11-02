@@ -2376,7 +2376,7 @@ async fn remove_completion_dir(cwd: &Path) {
 
 impl CompletionScope {
     async fn finish(&mut self) {
-        if let Some(peer) = self.peer.take() {
+        if let Some(ref peer) = self.peer {
             peer.kill();
             if peer.pid().is_none() {
                 remove_completion_dir(&self.cwd).await;
@@ -2400,10 +2400,19 @@ impl CompletionScope {
                         let peer = peer.clone();
                         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                             runtime.spawn(async move {
-                                if let Ok(Some(Ok(_))) = tokio::time::timeout(Duration::from_secs(30), peer.process_exited()).await {
-                                    remove_completion_dir(&cwd).await;
-                                } else {
-                                    tracing::error!(cwd = %cwd.display(), "process did not exit within 30s; preserving cwd to prevent conflicts");
+                                match tokio::time::timeout(Duration::from_secs(30), peer.process_exited()).await {
+                                    Ok(Some(Ok(_))) => {
+                                        remove_completion_dir(&cwd).await;
+                                    }
+                                    Ok(Some(Err(e))) => {
+                                        tracing::warn!(cwd = %cwd.display(), %e, "process wait failed; preserving cwd");
+                                    }
+                                    Ok(None) => {
+                                        tracing::warn!(cwd = %cwd.display(), "process exit signal lost; preserving cwd");
+                                    }
+                                    Err(_) => {
+                                        tracing::error!(cwd = %cwd.display(), "process did not exit within 30s; preserving cwd to prevent conflicts");
+                                    }
                                 }
                             });
                         }
@@ -2413,42 +2422,44 @@ impl CompletionScope {
         } else {
             remove_completion_dir(&self.cwd).await;
         }
+        self.peer = None;
         self.finished = true;
     }
 }
 
 impl Drop for CompletionScope {
     fn drop(&mut self) {
-        let peer = self.peer.take();
-        if let Some(ref p) = peer {
-            p.kill();
-        }
         if self.finished {
             return;
         }
-        // Cancellation still cleans an unlocked cwd synchronously. A CLI holding it needs
-        // the runtime to finish killing its process before the background retry succeeds.
-        match std::fs::remove_dir_all(&self.cwd) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                if let Some(peer) = peer {
-                    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                        let cwd = self.cwd.clone();
-                        runtime.spawn(async move {
-                            if let Ok(Some(Ok(_))) = tokio::time::timeout(Duration::from_secs(30), peer.process_exited()).await {
-                                remove_completion_dir(&cwd).await;
-                            } else {
-                                tracing::error!(cwd = %cwd.display(), "process did not exit within 30s; preserving cwd");
-                            }
-                        });
-                    } else {
-                        tracing::warn!(cwd = %self.cwd.display(), "runtime unavailable during drop; preserving cwd: {error}");
+        let peer = self.peer.take();
+        if let Some(peer) = peer {
+            peer.kill();
+            if peer.pid().is_none() {
+                let _ = std::fs::remove_dir_all(&self.cwd);
+            } else if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                let cwd = self.cwd.clone();
+                runtime.spawn(async move {
+                    match tokio::time::timeout(Duration::from_secs(30), peer.process_exited()).await {
+                        Ok(Some(Ok(_))) => {
+                            remove_completion_dir(&cwd).await;
+                        }
+                        Ok(Some(Err(e))) => {
+                            tracing::warn!(cwd = %cwd.display(), %e, "process wait failed; preserving cwd");
+                        }
+                        Ok(None) => {
+                            tracing::warn!(cwd = %cwd.display(), "process exit signal lost; preserving cwd");
+                        }
+                        Err(_) => {
+                            tracing::error!(cwd = %cwd.display(), "process did not exit within 30s; preserving cwd");
+                        }
                     }
-                } else {
-                    tracing::warn!(cwd = %self.cwd.display(), "failed to remove temporary directory: {error}");
-                }
+                });
+            } else {
+                tracing::warn!(cwd = %self.cwd.display(), "runtime unavailable during drop; preserving cwd");
             }
+        } else {
+            let _ = std::fs::remove_dir_all(&self.cwd);
         }
     }
 }

@@ -2886,3 +2886,81 @@ async fn revocation_finish_spares_a_later_grant() {
     assert!(!peer_b.is_closed(), "peer B must NOT be killed by stale R finish");
     assert!(mgr.shared.admit().is_ok(), "admission must remain valid for Grant G");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completion_scope_cancellation_during_session_with_real_process_waits_for_exit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("completion_scope_test_session");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(cwd.join("marker.txt"), b"running").unwrap();
+
+    #[cfg(windows)]
+    let (cmd, args) = ("cmd.exe", vec!["/c".into(), "ping 127.0.0.1 -n 10 > nul".into()]);
+    #[cfg(not(windows))]
+    let (cmd, args) = ("sleep", vec!["10".into()]);
+
+    let peer = ide_jsonrpc::Peer::spawn_contained(
+        cmd,
+        &args,
+        &cwd,
+        &[],
+        Arc::new(ide_jsonrpc::NoopHandler),
+        Box::new(|_| {}),
+        ide_jsonrpc::Framing::Lines,
+    )
+    .expect("spawn test process");
+    assert!(peer.pid().is_some());
+
+    let scope = CompletionScope { cwd: cwd.clone(), peer: Some(peer), finished: false };
+
+    drop(scope);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if !cwd.exists() {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "temporary cwd must be removed after process exit");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn completion_scope_cancellation_during_finish_with_real_process_waits_for_exit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().join("completion_scope_test_finish");
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(cwd.join("marker.txt"), b"running").unwrap();
+
+    #[cfg(windows)]
+    let (cmd, args) = ("cmd.exe", vec!["/c".into(), "ping 127.0.0.1 -n 10 > nul".into()]);
+    #[cfg(not(windows))]
+    let (cmd, args) = ("sleep", vec!["10".into()]);
+
+    let peer = ide_jsonrpc::Peer::spawn_contained(
+        cmd,
+        &args,
+        &cwd,
+        &[],
+        Arc::new(ide_jsonrpc::NoopHandler),
+        Box::new(|_| {}),
+        ide_jsonrpc::Framing::Lines,
+    )
+    .expect("spawn test process");
+    assert!(peer.pid().is_some());
+
+    let mut scope = CompletionScope { cwd: cwd.clone(), peer: Some(peer), finished: false };
+
+    let _ = tokio::time::timeout(Duration::from_millis(10), scope.finish()).await;
+
+    drop(scope);
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if !cwd.exists() {
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "temporary cwd must be removed after finish cancellation");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
