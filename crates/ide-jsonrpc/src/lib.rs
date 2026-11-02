@@ -229,6 +229,8 @@ impl Handler for NoopHandler {
 }
 
 type Pending = HashMap<i64, oneshot::Sender<Result<Value, RpcError>>>;
+type ProcessExitResult = Result<Option<i32>, (std::io::ErrorKind, String)>;
+type ProcessExitSender = watch::Sender<Option<ProcessExitResult>>;
 
 struct Inner {
     out: mpsc::UnboundedSender<Vec<u8>>,
@@ -245,7 +247,7 @@ struct Inner {
     reader_done: CancellationToken,
     /// Fired by [`Peer::supervise`] after teardown and wait completes.
     /// `None` while process is running; `Some(Ok(exit code))` or `Some(Err(...))` when process exited.
-    process_exited: watch::Sender<Option<Result<Option<i32>, (std::io::ErrorKind, String)>>>,
+    process_exited: ProcessExitSender,
 }
 
 impl Inner {
