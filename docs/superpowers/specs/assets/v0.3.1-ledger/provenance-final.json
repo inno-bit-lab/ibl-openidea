@@ -1,0 +1,4218 @@
+{
+  "base": "a63f234cdeca640efbd80dd243126a8cc7c67953",
+  "freeze": "06109aae95343796e3b96db4c3239c0e60f9ea52",
+  "rows": [
+    {
+      "mt": "MT-1",
+      "source": "9d670e6262e9375bbfe66979b8db3245930e3d77",
+      "result": "bbee8a6b6fe4214643fae2d155c7f6a21aaf912c",
+      "equalPaths": [
+        "THIRD_PARTY_LICENSES.md",
+        "crates/ide-host/src/ops/jvm_icons.rs",
+        "crates/ide-host/src/ops/mod.rs",
+        "crates/ide-host/src/rpc.rs",
+        "crates/ide-host/tests/rpc.rs",
+        "crates/ide-syntax/src/jvm.rs",
+        "crates/ide-syntax/src/lib.rs",
+        "crates/ide-syntax/src/tests/jvm.rs",
+        "crates/ide-syntax/src/tests/mod.rs",
+        "fixtures/ts-app/.openidea/.gitignore",
+        "src-tauri/src/commands/mod.rs",
+        "src-tauri/src/commands/syntax.rs",
+        "src/bindings.ts",
+        "src/editor/core/view/EditorArea.tsx",
+        "src/features/project-tree/ProjectView.module.css",
+        "src/features/project-tree/ProjectView.tsx",
+        "src/features/project-tree/folderKind.test.ts",
+        "src/features/project-tree/folderKind.ts",
+        "src/features/search/everywhere/SearchEverywhere.tsx",
+        "src/features/search/recent/RecentPopups.tsx",
+        "src/platform/filePresentation.cache.test.tsx",
+        "src/platform/filePresentation.test.ts",
+        "src/platform/filePresentation.ts",
+        "src/platform/projectPresentation.test.ts",
+        "src/platform/projectPresentation.ts",
+        "src/ui/expui/gradle/gradle.svg",
+        "src/ui/expui/gradle/gradle@20x20.svg",
+        "src/ui/expui/gradle/gradle@20x20_dark.svg",
+        "src/ui/expui/gradle/gradleSubproject.svg",
+        "src/ui/expui/gradle/gradleSubproject_dark.svg",
+        "src/ui/expui/gradle/gradle_dark.svg",
+        "src/ui/expui/kotlin/objectKotlin.svg",
+        "src/ui/expui/kotlin/objectKotlin_dark.svg",
+        "src/ui/expui/nodes/classAbstract.svg",
+        "src/ui/expui/nodes/classAbstract_dark.svg",
+        "src/ui/expui/nodes/compiledClassesFolder.svg",
+        "src/ui/expui/nodes/compiledClassesFolder_dark.svg",
+        "src/ui/expui/nodes/exception.svg",
+        "src/ui/expui/nodes/exception_dark.svg",
+        "src/ui/expui/nodes/generatedSource.svg",
+        "src/ui/expui/nodes/generatedSource_dark.svg",
+        "src/ui/expui/nodes/generatedTestRoot.svg",
+        "src/ui/expui/nodes/generatedTestRoot_dark.svg",
+        "src/ui/expui/nodes/javaDocFolder.svg",
+        "src/ui/expui/nodes/javaDocFolder_dark.svg",
+        "src/ui/expui/nodes/runnableMark.svg",
+        "src/ui/expui/nodes/runnableMark_dark.svg",
+        "src/ui/expui/nodes/test.svg",
+        "src/ui/expui/nodes/test_dark.svg",
+        "src/ui/icons.tsx"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "8fe09eba7ff02554e7ae2be76f05ca37e632dacb",
+      "result": "empty-equivalent",
+      "equalPaths": [
+        "src/features/debugger/__tests__/javaSeparator.test.ts"
+      ],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "92cbdd0cb828f7a8f1ca046415ad1bf67215bf3d",
+      "result": "e44a5e159f17e6e9dbdd65881a32097ab5f464f6",
+      "equalPaths": [
+        "crates/ide-host/tests/rpc.rs"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "53bebe4836dd25b3fe2ca39f86d884cc7c9b5fa3",
+      "result": "34bf99e8349a6d609ccdb5a893c85f6bdbbb4c3d",
+      "equalPaths": [
+        "crates/ide-build/src/process.rs",
+        "crates/ide-build/src/web.rs",
+        "crates/ide-host/src/ops/run/commands.rs",
+        "crates/ide-run/Cargo.toml",
+        "crates/ide-run/src/lib.rs",
+        "crates/ide-run/src/process.rs",
+        "crates/ide-run/src/tomcat.rs",
+        "crates/ide-run/tests/process.rs",
+        "crates/ide-run/tests/tomcat_artifact.rs",
+        "src/platform/locales/text/zh.json"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": [
+        "Cargo.lock"
+      ]
+    },
+    {
+      "mt": "MT-1",
+      "source": "ac360b61433711ad818e6779e0208b813e045f54",
+      "result": "d4f55424edf9bcac6c79bca5df5eab51bde6e7ef",
+      "equalPaths": [
+        "crates/ide-core/src/settings.rs",
+        "crates/ide-dap/src/adapter.rs",
+        "crates/ide-dap/src/lib.rs",
+        "crates/ide-dap/src/tests.rs",
+        "crates/ide-host/src/ops/debug.rs",
+        "crates/ide-host/src/ops/run.rs",
+        "crates/ide-run/src/config.rs",
+        "crates/ide-run/src/detect.rs",
+        "crates/ide-run/src/go.rs",
+        "crates/ide-run/src/lib.rs",
+        "crates/ide-run/src/process.rs",
+        "crates/ide-run/tests/detect.rs",
+        "crates/ide-run/tests/process.rs",
+        "crates/ide-sdk/src/apply.rs",
+        "crates/ide-sdk/src/go.rs",
+        "crates/ide-sdk/src/lib.rs",
+        "crates/ide-sdk/src/libraries.rs",
+        "crates/ide-sdk/src/tests.rs",
+        "src/bindings.ts",
+        "src/features/code-insight/goConstraints.test.ts",
+        "src/features/code-insight/goConstraints.ts",
+        "src/features/code-insight/index.ts",
+        "src/features/debugger/__tests__/launch.test.ts",
+        "src/features/debugger/launch.ts",
+        "src/features/libraries/index.ts",
+        "src/features/run/configs.ts",
+        "src/features/run/context.ts",
+        "src/features/run/goActions.test.ts",
+        "src/features/run/goActions.ts",
+        "src/features/run/goArguments.ts",
+        "src/features/run/goGenerate.test.ts",
+        "src/features/run/goGenerate.ts",
+        "src/features/run/goModules.ts",
+        "src/features/run/goTypes.test.ts",
+        "src/features/run/goTypes.ts",
+        "src/features/run/index.ts",
+        "src/features/run/producers.test.ts",
+        "src/features/run/producers.ts",
+        "src/features/run/runGutter.ts",
+        "src/features/run/store.ts",
+        "src/features/run/targets.test.ts",
+        "src/features/run/targets.ts",
+        "src/features/run/testing/go.test.ts",
+        "src/features/run/testing/go.ts",
+        "src/features/run/testing/index.ts",
+        "src/features/run/testing/rerun.test.ts",
+        "src/features/run/testing/rerun.ts",
+        "src/features/run/types.ts",
+        "src/features/settings/__tests__/goBuildTags.test.ts",
+        "src/features/settings/__tests__/languages.test.ts",
+        "src/features/settings/components/Form.tsx",
+        "src/features/settings/languages/GoBuildTags.tsx",
+        "src/features/settings/languages/GoModules.tsx",
+        "src/features/settings/pages/languages.tsx",
+        "src/platform/commandLine.ts",
+        "src/platform/languageSettings.ts"
+      ],
+      "localeSemanticDelta": [
+        "src/platform/locales/text/zh.json"
+      ],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "1e8551ad0bb46a919053243bde5a21c1d3acae6c",
+      "result": "e69d3e66854a74f2fa0610752a519586d9a95192",
+      "equalPaths": [
+        "crates/ide-core/src/text.rs",
+        "crates/ide-host/src/ops/run.rs",
+        "crates/ide-host/src/project.rs",
+        "crates/ide-host/tests/run_configs.rs",
+        "crates/ide-lsp/Cargo.toml",
+        "crates/ide-lsp/src/convert.rs",
+        "crates/ide-lsp/src/lib.rs",
+        "crates/ide-lsp/src/scope.rs",
+        "crates/ide-run/Cargo.toml",
+        "crates/ide-run/src/detect.rs",
+        "crates/ide-run/src/detect/cmake.rs",
+        "crates/ide-run/src/process.rs",
+        "crates/ide-run/tests/detect.rs",
+        "crates/ide-run/tests/process.rs",
+        "src/editor/core/cm/cmake.test.ts",
+        "src/editor/core/cm/cmake.ts",
+        "src/editor/core/cm/languages.ts",
+        "src/features/debugger/__tests__/launch.test.ts",
+        "src/features/debugger/launch.ts",
+        "src/features/run/configs.ts",
+        "src/features/run/index.ts",
+        "src/features/run/producers.test.ts",
+        "src/features/run/producers.ts"
+      ],
+      "localeSemanticDelta": [
+        "src/platform/locales/text/zh.json"
+      ],
+      "differentPaths": [
+        "Cargo.lock"
+      ]
+    },
+    {
+      "mt": "MT-1",
+      "source": "8f85f35ebe96ac9169f6c5293b349f78ad9534a1",
+      "result": "c09e9360eabe9e43f5bca3083d61f32cb45d0fff",
+      "equalPaths": [
+        "crates/ide-dap/src/adapter.rs",
+        "crates/ide-run/tests/process.rs",
+        "src/platform/locales/textCatalog.test.ts"
+      ],
+      "localeSemanticDelta": [
+        "src/platform/locales/text/zh.json"
+      ],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "999eb86408fb40d06061f6f1f11e6bec78b246fe",
+      "result": "93d97be315b1e1a96b463cd4f4ad6ca7dda14c09",
+      "equalPaths": [
+        "crates/ide-lsp/tests/mock_server.rs"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "a2405c083adfae6e6144bb6518a3d78b542cd72b",
+      "result": "950fd3eba202f14c9aefbc68bf0932a56e512461",
+      "equalPaths": [
+        "crates/ide-lsp/src/handler.rs",
+        "crates/ide-lsp/src/jdtls.rs",
+        "crates/ide-sdk/src/apply.rs",
+        "crates/ide-sdk/src/java.rs"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "7610fc3f8031c1de44089f7e6c8b519d4819514e",
+      "result": "e5611f023d72ae723ff6c35024878e311dd9e201",
+      "equalPaths": [
+        "crates/ide-host/src/ops/java.rs",
+        "crates/ide-lsp/src/jdtls.rs",
+        "src/features/debugger/__tests__/console.test.ts",
+        "src/features/debugger/__tests__/javaCancel.test.ts",
+        "src/features/debugger/__tests__/toolWindow.test.tsx",
+        "src/features/debugger/actions.ts",
+        "src/features/debugger/java.ts",
+        "src/features/debugger/state.ts",
+        "src/features/debugger/ui/DebugToolWindow.tsx",
+        "src/features/run/resolveCancellation.test.ts",
+        "src/features/run/store.ts",
+        "src/platform/javaLaunch.ts",
+        "src/platform/locales/text/zh.json"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "1e9cf1c447ac0f50788606405453f75d28a01e06",
+      "result": "b5b16b64b361b75add0571a17260fddc03764a4f",
+      "equalPaths": [
+        "src/features/debugger/__tests__/runOrigin.test.ts",
+        "src/features/debugger/__tests__/serviceConsole.test.tsx",
+        "src/features/debugger/index.ts",
+        "src/features/debugger/state.ts",
+        "src/features/debugger/ui/DebugConsole.tsx",
+        "src/features/debugger/ui/DebugToolWindow.tsx",
+        "src/features/run/RunServices.module.css",
+        "src/features/run/RunView.tsx",
+        "src/features/run/index.ts",
+        "src/features/run/remote.test.tsx",
+        "src/features/run/serviceSessions.test.ts",
+        "src/features/run/serviceSessions.ts",
+        "src/features/run/services.test.ts",
+        "src/features/run/services.tsx",
+        "src/features/services/ServicesTree.debug.test.tsx",
+        "src/workbench/contributions.ts"
+      ],
+      "localeSemanticDelta": [
+        "src/platform/locales/text/zh.json"
+      ],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-1",
+      "source": "4796265b5cf33e66711b11538953e3cc744ac284",
+      "result": "3a70ab6638a3f8a002511775339e9259e649fc97",
+      "equalPaths": [
+        "src/features/debugger/java.ts"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-2",
+      "source": "290abd303e0d879d1cf1e1446db4b050ed2d7df0",
+      "result": "f56099de545f40a287036ac7cdbf6594f747d649",
+      "equalPaths": [
+        "crates/ide-core/src/remote_settings.rs",
+        "crates/ide-host/src/ops/deploy.rs",
+        "crates/ide-host/src/ops/mod.rs",
+        "crates/ide-host/tests/rpc.rs",
+        "crates/ide-remote/src/deploy.rs",
+        "crates/ide-remote/src/service.rs",
+        "crates/ide-remote/tests/local.rs",
+        "crates/ide-ssh/src/filesystem.rs",
+        "crates/ide-ssh/src/lib.rs",
+        "crates/ide-ssh/src/sftp.rs",
+        "src-tauri/src/commands/deploy.rs",
+        "src-tauri/src/commands/mod.rs",
+        "src-tauri/src/remote_dev.rs",
+        "src/bindings.ts",
+        "src/features/deployment/actions.tsx",
+        "src/features/deployment/remoteHost.test.ts",
+        "src/features/deployment/remoteHost.ts",
+        "src/features/deployment/store.ts",
+        "src/features/remote-dev/ConnectDialog.tsx",
+        "src/features/settings/pages/Deployment.module.css",
+        "src/features/settings/pages/deployment.tsx",
+        "src/features/settings/pages/deploymentModel.test.ts",
+        "src/features/settings/pages/runTargets.tsx",
+        "src/platform/deploymentSettings.test.ts",
+        "src/platform/locales/text/zh.json",
+        "src/platform/remoteSettings.ts"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-2",
+      "source": "ee2585e7e9fc10b000ca02017519693b33df7978",
+      "result": "c3a51f1807521618d4929a990a8641da701319c9",
+      "equalPaths": [
+        "crates/ide-host/src/ops/deploy.rs",
+        "crates/ide-host/tests/rpc.rs",
+        "crates/ide-remote/src/deploy.rs",
+        "crates/ide-remote/src/lib.rs",
+        "crates/ide-remote/tests/local.rs",
+        "src-tauri/src/commands/deploy.rs",
+        "src-tauri/src/commands/mod.rs",
+        "src/bindings.ts",
+        "src/features/deployment/Dialogs.test.tsx",
+        "src/features/deployment/Dialogs.tsx",
+        "src/features/deployment/actions.test.tsx",
+        "src/features/deployment/actions.tsx",
+        "src/features/deployment/store.ts"
+      ],
+      "localeSemanticDelta": [
+        "src/platform/locales/text/zh.json"
+      ],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "bde19959b939acfd325d32816d19f57efbcec3db",
+      "result": "92165d3c057b4d95942064f6ff23ae267bb4a20e",
+      "equalPaths": [
+        "crates/ide-core/src/settings.rs",
+        "crates/ide-workspace/src/settings.rs",
+        "src/bindings.ts",
+        "src/editor/core/colorSchemeRuntime.ts",
+        "src/features/settings/__tests__/colorScheme.test.tsx",
+        "src/features/settings/pages/behavior.tsx",
+        "src/features/settings/pages/editor/Editor.module.css",
+        "src/features/settings/pages/editor/colorScheme.tsx",
+        "src/platform/__fixtures__/colorSchemes/daylight.icls",
+        "src/platform/__fixtures__/colorSchemes/forest.icls",
+        "src/platform/clientSettings.ts",
+        "src/platform/colorScheme.ts",
+        "src/platform/editorSettings.ts",
+        "src/platform/icls.test.ts",
+        "src/platform/icls.ts",
+        "src/workbench/quickSwitch.ts"
+      ],
+      "localeSemanticDelta": [
+        "src/platform/locales/text/zh.json"
+      ],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "d4b354732c10dc9cb47e6495ba428f4413a15cef",
+      "result": "e7c39c8c021fc0958ac05d732c93d1f8247e2a86",
+      "equalPaths": [
+        "src/editor/core/actions.ts",
+        "src/editor/core/cm/find.test.ts",
+        "src/editor/core/cm/find.ts",
+        "src/editor/core/view/FindBar.test.tsx",
+        "src/editor/core/view/FindBar.tsx",
+        "src/features/search/__tests__/editorResults.test.tsx",
+        "src/features/search/__tests__/findWindow.test.ts",
+        "src/features/search/find/FindToolWindow.tsx",
+        "src/features/search/find/session.ts",
+        "src/features/search/find/windowStore.ts",
+        "src/features/search/index.ts",
+        "src/platform/keymaps/intellij-macos.ts",
+        "src/platform/keymaps/intellij-windows.ts",
+        "src/platform/keymaps/vscode-macos.ts",
+        "src/workbench/contributions.ts"
+      ],
+      "localeSemanticDelta": [
+        "src/platform/locales/text/zh.json"
+      ],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "c0f8557f05326165efbad8c4bc4b40970c2a2839",
+      "result": "612336ef57b374cca322d229ecbabe21c6e71624",
+      "equalPaths": [
+        "crates/ide-host/src/ops/vcs/commands.rs",
+        "crates/ide-vcs/src/lib.rs",
+        "crates/ide-vcs/src/patch.rs",
+        "crates/ide-vcs/src/shelf.rs",
+        "crates/ide-vcs/tests/history_ops.rs",
+        "src-tauri/src/commands/mod.rs",
+        "src-tauri/src/commands/vcs.rs",
+        "src/bindings.ts",
+        "src/features/vcs/__tests__/shelf.test.tsx",
+        "src/features/vcs/actions.tsx",
+        "src/features/vcs/commitStore.ts",
+        "src/features/vcs/historyActions.tsx",
+        "src/features/vcs/patches.tsx",
+        "src/features/vcs/shelf.tsx"
+      ],
+      "localeSemanticDelta": [
+        "src/platform/locales/text/zh.json"
+      ],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "cbdc177bbc34e41b79d23d866a59e8a48d7cdf2e",
+      "result": "57b6dab59378db75ca2e7c5660f582664876c54d",
+      "equalPaths": [
+        "src/features/run/ConsoleView.tsx",
+        "src/features/run/FindBar.tsx",
+        "src/features/run/Run.module.css",
+        "src/features/run/RunView.tsx",
+        "src/features/run/find.test.ts",
+        "src/features/run/find.ts",
+        "src/features/run/findBar.test.tsx",
+        "src/features/run/segments.test.ts",
+        "src/features/run/segments.ts",
+        "src/platform/locales/text/zh.json"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "c5cb217c7c24065c8e11bcade4e71016f2d5b68c",
+      "result": "99ed94c8307fcfa26af13e33befd6f1afaa2568e",
+      "equalPaths": [
+        "src/features/project-tree/ProjectView.test.tsx",
+        "src/features/project-tree/ProjectView.tsx",
+        "src/features/search/__tests__/pathScopeActions.test.tsx",
+        "src/features/search/bookmarks/BookmarksView.tsx",
+        "src/features/search/find/store.ts",
+        "src/features/search/index.ts",
+        "src/features/vcs/CommitView.tsx",
+        "src/features/vcs/__tests__/changesDirectory.test.tsx",
+        "src/ui/Tree.test.tsx",
+        "src/ui/Tree.tsx",
+        "src/ui/treeDirectoryContext.ts"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "4418f49c352a01041333d614835fc20d6098c8f1",
+      "result": "bd67f48b1a6a63d1f7a4a37a3d5900e4f5bd9f5d",
+      "equalPaths": [
+        "crates/ide-vcs/tests/history_ops.rs"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "27ed0515e8f9635301035c179d7abae4951b9c5c",
+      "result": "38192984e1759cf06baa3ee607d202abd30a83c8",
+      "equalPaths": [
+        "crates/ide-core/src/editor_settings.rs",
+        "crates/ide-host/src/ops/analysis.rs",
+        "crates/ide-host/src/ops/doc/commands.rs",
+        "crates/ide-host/src/ops/project.rs",
+        "crates/ide-host/src/ops/search.rs",
+        "crates/ide-host/src/ops/syntax.rs",
+        "crates/ide-host/src/ops/vcs/commands.rs",
+        "crates/ide-host/src/project.rs",
+        "crates/ide-host/tests/properties.rs",
+        "crates/ide-host/tests/rpc.rs",
+        "crates/ide-host/tests/vcs_encoding.rs",
+        "crates/ide-vcs/src/lib.rs",
+        "crates/ide-vcs/src/patch.rs",
+        "crates/ide-vcs/src/text_encoding.rs",
+        "crates/ide-vcs/src/write.rs",
+        "crates/ide-vfs/src/encoding.rs",
+        "crates/ide-vfs/src/lib.rs",
+        "crates/ide-workspace/src/documents.rs",
+        "crates/ide-workspace/src/file_defaults.rs",
+        "crates/ide-workspace/tests/documents.rs",
+        "src-tauri/src/commands/doc.rs",
+        "src-tauri/src/commands/vcs.rs",
+        "src/bindings.ts",
+        "src/features/settings/__tests__/dialog.test.tsx",
+        "src/features/settings/index.ts",
+        "src/features/settings/nativeToAscii.ts",
+        "src/features/settings/pages/editor/codeStyle.tsx",
+        "src/features/settings/pages/editor/kit.tsx",
+        "src/platform/editorSettings.ts",
+        "src/platform/locales/text/zh.json"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "17e3cd2b39543e1196a4367c9a019e2e5abe1fa3",
+      "result": "a927d24af43984753abd66dd664b1e3b21f21d79",
+      "equalPaths": [
+        "crates/ide-core/src/settings.rs",
+        "crates/ide-host/src/ops/doc.rs",
+        "crates/ide-host/src/ops/doc/tests.rs",
+        "crates/ide-host/src/rpc.rs",
+        "crates/ide-host/tests/rpc.rs",
+        "crates/ide-workspace/src/documents.rs",
+        "crates/ide-workspace/tests/documents.rs",
+        "src-tauri/src/commands/doc.rs",
+        "src-tauri/src/commands/mod.rs",
+        "src/bindings.ts",
+        "src/editor/core/backend.ts",
+        "src/editor/core/controller.ts",
+        "src/editor/core/diskSync.test.ts",
+        "src/editor/core/diskSync.ts",
+        "src/features/settings/__tests__/staging.test.ts",
+        "src/features/settings/model/schema.ts",
+        "src/features/settings/pages/behavior.tsx",
+        "src/platform/locales/text/zh.json"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "178fc9eaba0db1964fe848fab64e657f6a9e846f",
+      "result": "6475c6ad72315c12aee90d9c11e12c6154db0de8",
+      "equalPaths": [
+        "docs/plugins/themes.md",
+        "scripts/theme/intellij.ts",
+        "src/editor/core/view/EditorArea.tsx",
+        "src/editor/core/view/editorLayoutActions.test.tsx",
+        "src/features/viewers/index.ts",
+        "src/features/viewers/markdown/Markdown.module.css",
+        "src/features/viewers/markdown/MarkdownEditor.tsx",
+        "src/features/viewers/markdown/MarkdownLayoutActions.tsx",
+        "src/features/web/Web.module.css",
+        "src/features/web/WebEditor.tsx",
+        "src/styles/tokens.css",
+        "src/ui/FloatingToolbar.module.css",
+        "src/ui/FloatingToolbar.test.tsx",
+        "src/ui/FloatingToolbar.tsx",
+        "src/ui/expui/general/editorOnly.svg",
+        "src/ui/expui/general/editorOnly_dark.svg",
+        "src/ui/expui/general/editorPreview.svg",
+        "src/ui/expui/general/editorPreview_dark.svg",
+        "src/ui/expui/general/previewOnly.svg",
+        "src/ui/expui/general/previewOnly_dark.svg",
+        "src/ui/icons.tsx",
+        "src/ui/index.ts",
+        "src/workbench/contributions.ts",
+        "templates/theme-plugin/themes/harbor-night.theme.json"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "d6f6525ca5d7533d41b9d7f045dc7a4c597338a5",
+      "result": "299100ba383aa99a45f127c822d3ede60b023ecf",
+      "equalPaths": [
+        "src/features/scratch/ScratchChooser.module.css",
+        "src/features/scratch/ScratchChooser.tsx",
+        "src/features/scratch/__tests__/scratch.test.tsx"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-3",
+      "source": "b2d11880490552ab6eb36f540b8d2fab0116ce0b",
+      "result": "09e3dd505ad6957056b81f7c99fc47d7eef2dd5b",
+      "equalPaths": [
+        "src/features/terminal/TerminalView.tsx",
+        "src/ui/Popup.test.tsx",
+        "src/ui/Popup.tsx"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-4",
+      "source": "a553dafa7a9ce52cdb2a18e889fad8b3cafcdaf8",
+      "result": "7af6a3ba43f39bf9d8bbb64876fa6c447fb53d5d",
+      "equalPaths": [
+        "src-tauri/src/menu.rs",
+        "src-tauri/src/windows.rs",
+        "src-tauri/tauri.linux.conf.json",
+        "src/platform/platformInfo.ts",
+        "src/workbench/MainMenu.tsx",
+        "src/workbench/TitleBar.module.css",
+        "src/workbench/TitleBar.tsx",
+        "src/workbench/WindowControls.tsx"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-4",
+      "source": "bdadecdf91a46b87f52aac015a53bc707dfb892e",
+      "result": "4e8884fc61672bbdc573a81172316963d2f9f976",
+      "equalPaths": [
+        "src-tauri/src/windows.rs"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-4",
+      "source": "e7740e4032f9e15c2dd3502abd59ae288da466b9",
+      "result": "ac32a6844d4c22afaff734537d1cdd6b1173f530",
+      "equalPaths": [
+        "crates/ide-core/src/settings.rs",
+        "src/bindings.ts",
+        "src/features/settings/__tests__/mainMenuStyle.test.tsx",
+        "src/features/settings/model/behaviorSchema.ts",
+        "src/features/settings/pages/behavior.tsx",
+        "src/platform/locales/text/zh.json",
+        "src/workbench/MainMenu.interaction.test.tsx",
+        "src/workbench/MainMenu.tsx",
+        "src/workbench/TitleBar.module.css",
+        "src/workbench/TitleBar.test.tsx"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-5",
+      "source": "cf51b579241ed8aeb0c3a6dd629f04fe31ac6585",
+      "result": "06c453ebed985469c7fedeef0020648ab53daea0",
+      "equalPaths": [
+        "crates/ide-agent/src/registry.rs",
+        "crates/ide-tools/src/jdk.rs",
+        "crates/ide-tools/src/platform.rs",
+        "crates/ide-tools/src/registry.rs"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": [
+        ".github/workflows/release.yml"
+      ]
+    },
+    {
+      "mt": "MT-6",
+      "source": "2c9a6470fff4c54adf4f0d6fae3fbe01f616ade7",
+      "result": "935c42c1e37c6a590b718be029d8c297a52865fd",
+      "equalPaths": [
+        "crates/ide-core/src/event.rs",
+        "crates/ide-host/src/environment.rs",
+        "crates/ide-host/src/lib.rs",
+        "crates/ide-host/src/notebook.rs",
+        "crates/ide-host/src/ops/build.rs",
+        "crates/ide-host/src/ops/coverage.rs",
+        "crates/ide-host/src/ops/debug.rs",
+        "crates/ide-host/src/ops/env.rs",
+        "crates/ide-host/src/ops/java.rs",
+        "crates/ide-host/src/ops/notebook.rs",
+        "crates/ide-host/src/ops/project.rs",
+        "crates/ide-host/src/ops/run.rs",
+        "crates/ide-host/src/ops/run/commands.rs",
+        "crates/ide-host/src/ops/sdk.rs",
+        "crates/ide-host/src/ops/term.rs",
+        "crates/ide-host/src/ops/tools.rs",
+        "crates/ide-host/src/ops/vcs.rs",
+        "crates/ide-host/src/ops/vcs/commands.rs",
+        "crates/ide-host/src/project.rs",
+        "crates/ide-host/src/rpc.rs",
+        "crates/ide-host/src/trust.rs",
+        "crates/ide-host/tests/properties.rs",
+        "crates/ide-host/tests/remote_env.rs",
+        "crates/ide-host/tests/run_configs.rs",
+        "crates/ide-host/tests/trust.rs",
+        "crates/ide-host/tests/trust_git_binary.rs",
+        "crates/ide-host/tests/vcs_encoding.rs",
+        "crates/ide-host/tests/vcs_roots.rs",
+        "crates/ide-host/tests/workspaces.rs",
+        "crates/ide-lsp/src/lib.rs",
+        "crates/ide-plugin/src/lib.rs",
+        "crates/ide-plugin/tests/host.rs",
+        "crates/ide-run/src/process.rs",
+        "crates/ide-run/tests/process.rs",
+        "crates/ide-vcs/src/cli.rs",
+        "crates/ide-vcs/src/manage.rs",
+        "crates/ide-vcs/src/ops.rs",
+        "crates/ide-vcs/src/remotes.rs",
+        "crates/ide-vcs/src/repo.rs",
+        "crates/ide-vcs/src/write.rs",
+        "crates/ide-vcs/tests/repo.rs",
+        "src-tauri/src/commands/app.rs",
+        "src-tauri/src/commands/coverage.rs",
+        "src-tauri/src/commands/mod.rs",
+        "src-tauri/src/commands/plugin.rs",
+        "src-tauri/src/remote_dev.rs",
+        "src-tauri/src/state.rs",
+        "src/bindings.ts",
+        "src/editor/core/controller.test.ts",
+        "src/editor/core/view/statusItems.test.tsx",
+        "src/editor/navigation/gotoTest.test.ts",
+        "src/features/agents/composerCommands.test.tsx",
+        "src/features/agents/store.ts",
+        "src/features/app/__tests__/windows.test.ts",
+        "src/features/app/windows.ts",
+        "src/features/build-tools/index.ts",
+        "src/features/build-tools/store.ts",
+        "src/features/code-insight/servers.test.ts",
+        "src/features/debugger/breakpoints/exceptions.ts",
+        "src/features/debugger/breakpoints/special.ts",
+        "src/features/debugger/breakpoints/store.ts",
+        "src/features/debugger/index.ts",
+        "src/features/index.ts",
+        "src/features/libraries/index.ts",
+        "src/features/plugins/index.ts",
+        "src/features/project-tree/contextMenu.test.ts",
+        "src/features/project-tree/newPopupModel.test.ts",
+        "src/features/project-tree/roots.test.ts",
+        "src/features/project-trust/index.tsx",
+        "src/features/project-trust/trust.module.css",
+        "src/features/project-trust/trust.test.tsx",
+        "src/features/remote-dev/ConnectDialog.tsx",
+        "src/features/remote-dev/remoteDev.test.ts",
+        "src/features/run/contextRun.test.ts",
+        "src/features/run/index.ts",
+        "src/features/run/store.ts",
+        "src/features/services/ServicesTree.debug.test.tsx",
+        "src/features/services/ServicesTree.reorder.test.tsx",
+        "src/features/settings/languages/PythonStatus.tsx",
+        "src/features/welcome/ProjectsPage.tsx",
+        "src/features/welcome/recent.test.ts",
+        "src/features/welcome/recent.ts",
+        "src/features/welcome/session.ts",
+        "src/platform/locales/text/zh.json",
+        "src/platform/project.ts",
+        "src/platform/projectRoots.test.ts",
+        "src/platform/projectTrust.ts",
+        "src/platform/remote.ts",
+        "src/platform/remoteSettings.test.ts",
+        "src/styles/tokens.css",
+        "src/ui/Dialog.module.css",
+        "src/ui/Dialog.tsx",
+        "src/workbench/Workbench.test.tsx",
+        "src/workbench/Workbench.tsx",
+        "src/workbench/contributions.ts",
+        "src/workbench/devSamples.tsx",
+        "src/workbench/distractionFree.test.tsx",
+        "src/workbench/projectWindow.test.ts"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": [
+        "crates/ide-host/src/ops/agent.rs",
+        "crates/ide-host/tests/rpc.rs",
+        "crates/ide-vcs/src/lib.rs",
+        "src-tauri/src/lib.rs",
+        "src/features/agents/index.ts"
+      ]
+    },
+    {
+      "mt": "MT-6",
+      "source": "2faa64fb68ae453eb500dbc158012b03486d4abf",
+      "result": "7c9e79da72ae1e5aa19c23c386bd6249ef851b81",
+      "equalPaths": [
+        "crates/ide-host/tests/trust.rs"
+      ],
+      "localeSemanticDelta": [],
+      "differentPaths": []
+    },
+    {
+      "mt": "MT-7",
+      "source": "5329ddc469a8bc0c7d6777cbc80180d85f409a32",
+      "result": "e817713694d27f017e0d88385012f4129abd958f",
+      "equalPaths": [],
+      "differentPaths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "package.json",
+        "src-tauri/tauri.conf.json"
+      ]
+    },
+    {
+      "mt": "MT-7",
+      "source": "06109aae95343796e3b96db4c3239c0e60f9ea52",
+      "result": "superseded version-only content",
+      "equalPaths": [],
+      "differentPaths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "package.json",
+        "src-tauri/tauri.conf.json"
+      ]
+    }
+  ],
+  "forkPathDelta": [
+    {
+      "path": ".github/workflows/release.yml",
+      "retainedBaseline": true,
+      "prs": [
+        20
+      ],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "Cargo.lock",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        17
+      ],
+      "reason": "Retained fork workspace/configuration and version identity"
+    },
+    {
+      "path": "Cargo.toml",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork workspace/configuration and version identity"
+    },
+    {
+      "path": "README.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork workspace/configuration and version identity"
+    },
+    {
+      "path": "crates/ide-agent/src/acp/e2e.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/lib.rs",
+      "retainedBaseline": true,
+      "prs": [
+        14,
+        22,
+        24
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/model.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/native/claude/cli.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/native/claude/tests.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/native/codex/mod.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/native/codex/tests.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/provider.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/registry.rs",
+      "retainedBaseline": true,
+      "prs": [
+        20
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/replay_tests.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/src/tests.rs",
+      "retainedBaseline": true,
+      "prs": [
+        14,
+        22,
+        24
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-agent/tests/fixtures/suggest-responses.json",
+      "retainedBaseline": false,
+      "prs": [
+        24
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-core/Cargo.toml",
+      "retainedBaseline": true,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-core/src/lib.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-core/src/process.rs",
+      "retainedBaseline": false,
+      "prs": [
+        18
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-core/src/process_tree.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14,
+        18
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-core/src/tool_path.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-core/src/workflow_settings.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-core/tests/managed_tool_path.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-host/src/ops/agent.rs",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-host/src/ops/vcs.rs",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-host/src/project.rs",
+      "retainedBaseline": false,
+      "prs": [
+        15,
+        19,
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-host/src/rpc.rs",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        19,
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-host/src/trust.rs",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-host/tests/rpc.rs",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-host/tests/trust_fork.rs",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-host/tests/trust_fork_git_binary.rs",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-jsonrpc/src/lib.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14,
+        18
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-jsonrpc/tests/process_tree.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-remote/src/deploy.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-remote/src/service.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-remote/tests/local.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-ssh/src/filesystem.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-ssh/src/sftp.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-tools/Cargo.toml",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-tools/src/jdk.rs",
+      "retainedBaseline": false,
+      "prs": [
+        20
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-tools/src/lib.rs",
+      "retainedBaseline": true,
+      "prs": [
+        13
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-tools/src/server.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-tools/src/tests.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-tools/tests/path_budget_cmd.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/src/history.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/src/lib.rs",
+      "retainedBaseline": true,
+      "prs": [
+        19,
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/src/patch.rs",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/src/refs.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/src/roots.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/src/status.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/tests/history_ops.rs",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/tests/log_shape.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/tests/repo.rs",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vcs/tests/restricted_ignored.rs",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-vfs/src/encoding.rs",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "crates/ide-workspace/tests/documents.rs",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations"
+    },
+    {
+      "path": "docs/development/parallel-local-dev.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/intents/2026-10-30-browser-web-ide.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/releases/v0.3.0.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-30-mt-a-infrastructure.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-30-mt-b-fixes.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-30-mt-c-identity.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-mt1-platform.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-mt2-agents.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-mt3-vcs.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-mt4-italian-release.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-path-budget.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-30-improvement-roadmap.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-30-release-hardening-design.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-italian-glossary.md",
+      "retainedBaseline": true,
+      "prs": [
+        23
+      ],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-path-budget-design.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-upstream-sync-design.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-upstream-sync-port-map.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence"
+    },
+    {
+      "path": "index.html",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork workspace/configuration and version identity"
+    },
+    {
+      "path": "knip.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork workspace/configuration and version identity"
+    },
+    {
+      "path": "package.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork workspace/configuration and version identity"
+    },
+    {
+      "path": "scripts/dev-session.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/dev-session.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/acceptance.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/build.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/cargo-slot.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/dev.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/env.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/test-full.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/test-rust.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/tests/cargo-slot.tests.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/tests/dev-profile.tests.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/local/tests/env-bootstrap.tests.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "scripts/release-manifest.test.ts",
+      "retainedBaseline": false,
+      "prs": [
+        20
+      ],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures"
+    },
+    {
+      "path": "src-tauri/Cargo.toml",
+      "retainedBaseline": false,
+      "prs": [
+        17
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/128x128.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/128x128@2x.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/32x32.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square107x107Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square142x142Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square150x150Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square284x284Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square30x30Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square310x310Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square44x44Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square71x71Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/Square89x89Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/StoreLogo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/icon.icns",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/icon.ico",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/icon.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/source/openidea-mark.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/source/openidea-small.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/source/openidea-wordmark-dark.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/source/openidea-wordmark.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/icons/source/openidea.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/src/commands/agent.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/src/commands/mod.rs",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        22
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/src/commands/vcs.rs",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/src/dev.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "retainedBaseline": true,
+      "prs": [
+        17,
+        22
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/src/menu.rs",
+      "retainedBaseline": true,
+      "prs": [
+        21
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/src/migrate.rs",
+      "retainedBaseline": true,
+      "prs": [
+        17,
+        18,
+        22
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/src/migration_feedback.rs",
+      "retainedBaseline": false,
+      "prs": [
+        17,
+        18
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/tauri.conf.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/tauri.linux.conf.json",
+      "retainedBaseline": false,
+      "prs": [
+        21
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/tauri.local.conf.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src-tauri/tauri.windows.conf.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations"
+    },
+    {
+      "path": "src/bindings.ts",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        21,
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/editor/core/controller.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/editor/core/controller.ts",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/Agents.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/AgentsCatalog.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/AgentsCatalogEditor.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/AgentsView.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/HomeEditor.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/agentRegistry.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/agents.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/composerCommands.test.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/index.ts",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/model.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/agents/store.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/analysis/scope.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/app/AboutDialog.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/app/__tests__/menuBridge.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/app/__tests__/shell.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/app/__tests__/updates.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/app/projectActions.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/build-tools/linkage.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/debugger/missingAdapter.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/github/diff/reviewDiff.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        13
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/perf/__tests__/perf.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/perf/__tests__/views.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/perf/memory.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/project-tree/contextMenu.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/run/find.test.ts",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/run/find.ts",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/__tests__/pythonStatus.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/__tests__/staging.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/model/schema.ts",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/pages/MessageSuggestion.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/pages/Workflow.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/pages/behavior.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19,
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/pages/editor/colorScheme.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/pages/editor/font.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/pages/vcs.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/settings/runtime.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/templates/__tests__/views.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/BranchWidget.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/CommitView.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19,
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/CompareBranches.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/DiffEditor.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/GitLog.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/GitLog.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/SelectionHistory.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/__tests__/changes.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/__tests__/commitSuggest.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        24
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/__tests__/commitViewOptions.test.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22,
+        24
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/__tests__/decorations.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/__tests__/fileHistoryAndCompare.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/__tests__/gitOps.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/__tests__/logBranches.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/__tests__/logPanes.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/actions.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/branchMenu.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/branchOps.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/changeOps.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/changes.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/cm.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/commitStore.ts",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/commitSuggest.ts",
+      "retainedBaseline": true,
+      "prs": [
+        24
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/common.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/compareBranchesKind.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/diffInput.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/gitMenuDialogs.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/index.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/logPaneActions.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/model.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/operations.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/ops.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/vcs/remoteUi.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/welcome/ProjectsPage.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/welcome/WelcomeView.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/features/welcome/welcome.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/platform/agentIds.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/platform/i18n.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        23
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/platform/i18n.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/platform/locales/actionTitles.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas"
+    },
+    {
+      "path": "src/platform/locales/en.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas"
+    },
+    {
+      "path": "src/platform/locales/it.json",
+      "retainedBaseline": true,
+      "prs": [
+        23
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas"
+    },
+    {
+      "path": "src/platform/locales/text/it.json",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        21,
+        22,
+        23,
+        24
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas"
+    },
+    {
+      "path": "src/platform/locales/text/zh.json",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        21,
+        22,
+        24
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas"
+    },
+    {
+      "path": "src/platform/locales/textCatalog.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        15
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas"
+    },
+    {
+      "path": "src/platform/locales/zh.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas"
+    },
+    {
+      "path": "src/platform/workflowSettings.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/platform/workflowSettings.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/ui/Dialog.module.css",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/ui/Feedback.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/ui/Tree.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/ui/icons.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/ui/openidea/agents/agy.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/ui/openidea/agents/pi.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/ui/openidea/agents/pi_dark.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/workbench/MainMenu.interaction.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/workbench/MainMenu.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/workbench/Notifications.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/workbench/TitleBar.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/workbench/TitleBar.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/workbench/Welcome.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    },
+    {
+      "path": "src/workbench/Workbench.test.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations"
+    }
+  ],
+  "originalExecutionBase": "a63f234cdeca640efbd80dd243126a8cc7c67953",
+  "finalExecutionBase": "a5e0624a5d792737a7465d69d886eff434a0f5be",
+  "finalForkPathDelta": [
+    {
+      "path": ".github/workflows/release.yml",
+      "retainedBaseline": true,
+      "prs": [
+        20
+      ],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "Cargo.lock",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        17
+      ],
+      "reason": "Fork 0.3.1 workspace version; retained identity/updater and reviewed dependency edges",
+      "mt7": true
+    },
+    {
+      "path": "Cargo.toml",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork 0.3.1 workspace version; retained identity/updater and reviewed dependency edges",
+      "mt7": true
+    },
+    {
+      "path": "README.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork workspace/configuration and version identity",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/acp/e2e.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/lib.rs",
+      "retainedBaseline": true,
+      "prs": [
+        14,
+        22,
+        24
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/model.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/native/claude/cli.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/native/claude/tests.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/native/codex/mod.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/native/codex/tests.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/provider.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/registry.rs",
+      "retainedBaseline": true,
+      "prs": [
+        20
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/replay_tests.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/src/tests.rs",
+      "retainedBaseline": true,
+      "prs": [
+        14,
+        22,
+        24
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-agent/tests/fixtures/suggest-responses.json",
+      "retainedBaseline": false,
+      "prs": [
+        24
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-core/Cargo.toml",
+      "retainedBaseline": true,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-core/src/lib.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-core/src/process.rs",
+      "retainedBaseline": false,
+      "prs": [
+        18
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-core/src/process_tree.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14,
+        18
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-core/src/tool_path.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-core/src/workflow_settings.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-core/tests/managed_tool_path.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-host/src/ops/agent.rs",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-host/src/ops/vcs.rs",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-host/src/project.rs",
+      "retainedBaseline": false,
+      "prs": [
+        15,
+        19,
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-host/src/rpc.rs",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        19,
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-host/src/trust.rs",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-host/tests/rpc.rs",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-host/tests/trust_fork.rs",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-host/tests/trust_fork_git_binary.rs",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-jsonrpc/src/lib.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14,
+        18
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-jsonrpc/tests/process_tree.rs",
+      "retainedBaseline": false,
+      "prs": [
+        14
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-remote/src/deploy.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-remote/src/service.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-remote/tests/local.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-ssh/src/filesystem.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-ssh/src/sftp.rs",
+      "retainedBaseline": false,
+      "prs": [
+        16
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-tools/Cargo.toml",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-tools/src/jdk.rs",
+      "retainedBaseline": false,
+      "prs": [
+        20
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-tools/src/lib.rs",
+      "retainedBaseline": true,
+      "prs": [
+        13
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-tools/src/server.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-tools/src/tests.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-tools/tests/path_budget_cmd.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/src/history.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/src/lib.rs",
+      "retainedBaseline": true,
+      "prs": [
+        19,
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/src/patch.rs",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/src/refs.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/src/roots.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/src/status.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/tests/history_ops.rs",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/tests/log_shape.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/tests/repo.rs",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vcs/tests/restricted_ignored.rs",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-vfs/src/encoding.rs",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "crates/ide-workspace/tests/documents.rs",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork backend/VCS/agents, process-tree containment and reviewed runtime adaptations",
+      "mt7": false
+    },
+    {
+      "path": "docs/development/parallel-local-dev.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/intents/2026-10-30-browser-web-ide.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/releases/v0.3.0.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/releases/v0.3.1.md",
+      "retainedBaseline": false,
+      "prs": [],
+      "reason": "MT-7 draft release notes and content/provenance ledger",
+      "mt7": true
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-30-mt-a-infrastructure.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-30-mt-b-fixes.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-30-mt-c-identity.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-mt1-platform.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-mt2-agents.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-mt3-vcs.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-mt4-italian-release.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-31-sync-path-budget.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-30-improvement-roadmap.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-30-release-hardening-design.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-italian-glossary.md",
+      "retainedBaseline": true,
+      "prs": [
+        23
+      ],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-path-budget-design.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-upstream-sync-design.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-upstream-sync-port-map.md",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork documentation, frozen plans and release evidence",
+      "mt7": false
+    },
+    {
+      "path": "docs/superpowers/specs/2026-10-31-upstream-sync-v0.3.1-ledger.md",
+      "retainedBaseline": false,
+      "prs": [],
+      "reason": "MT-7 draft release notes and content/provenance ledger",
+      "mt7": true
+    },
+    {
+      "path": "index.html",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork workspace/configuration and version identity",
+      "mt7": false
+    },
+    {
+      "path": "knip.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork workspace/configuration and version identity",
+      "mt7": false
+    },
+    {
+      "path": "package.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork 0.3.1 workspace version; retained identity/updater and reviewed dependency edges",
+      "mt7": true
+    },
+    {
+      "path": "scripts/dev-session.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/dev-session.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/acceptance.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/build.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/cargo-slot.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/dev.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/env.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/test-full.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/test-rust.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/tests/cargo-slot.tests.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/tests/dev-profile.tests.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/local/tests/env-bootstrap.tests.ps1",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "scripts/release-manifest.test.ts",
+      "retainedBaseline": false,
+      "prs": [
+        20
+      ],
+      "reason": "Fork CI/release guards, isolated Windows development and regression fixtures",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/Cargo.toml",
+      "retainedBaseline": false,
+      "prs": [
+        17
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/128x128.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/128x128@2x.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/32x32.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square107x107Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square142x142Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square150x150Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square284x284Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square30x30Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square310x310Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square44x44Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square71x71Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/Square89x89Logo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/StoreLogo.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/icon.icns",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/icon.ico",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/icon.png",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/source/openidea-mark.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/source/openidea-small.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/source/openidea-wordmark-dark.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/source/openidea-wordmark.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/icons/source/openidea.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/src/commands/agent.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/src/commands/mod.rs",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        22
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/src/commands/vcs.rs",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/src/dev.rs",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "retainedBaseline": true,
+      "prs": [
+        17,
+        22
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/src/menu.rs",
+      "retainedBaseline": true,
+      "prs": [
+        21
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/src/migrate.rs",
+      "retainedBaseline": true,
+      "prs": [
+        17,
+        18,
+        22
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/src/migration_feedback.rs",
+      "retainedBaseline": false,
+      "prs": [
+        17,
+        18
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/tauri.conf.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork 0.3.1 workspace version; retained identity/updater and reviewed dependency edges",
+      "mt7": true
+    },
+    {
+      "path": "src-tauri/tauri.linux.conf.json",
+      "retainedBaseline": false,
+      "prs": [
+        21
+      ],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/tauri.local.conf.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src-tauri/tauri.windows.conf.json",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Fork identity/branding, updater/profile migration and reviewed host adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/bindings.ts",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        21,
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/editor/core/controller.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/editor/core/controller.ts",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/Agents.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/AgentsCatalog.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/AgentsCatalogEditor.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/AgentsView.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/HomeEditor.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/agentRegistry.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/agents.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/composerCommands.test.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/index.ts",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/model.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/agents/store.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/analysis/scope.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/app/AboutDialog.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/app/__tests__/menuBridge.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/app/__tests__/shell.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/app/__tests__/updates.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/app/projectActions.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/build-tools/linkage.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/debugger/missingAdapter.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/github/diff/reviewDiff.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        13
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/perf/__tests__/perf.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/perf/__tests__/views.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/perf/memory.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/project-tree/contextMenu.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/run/find.test.ts",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/run/find.ts",
+      "retainedBaseline": false,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/search/__tests__/findInFilesText.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        25
+      ],
+      "reason": "Accepted Italian UI regression fixture",
+      "mt7": false
+    },
+    {
+      "path": "src/features/search/find/FindInFiles.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        25
+      ],
+      "reason": "Accepted Italian UI regression fixture",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/__tests__/pythonStatus.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/__tests__/staging.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/model/schema.ts",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/pages/MessageSuggestion.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/pages/Workflow.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/pages/behavior.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19,
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/pages/editor/colorScheme.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/pages/editor/font.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/pages/vcs.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/settings/runtime.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/templates/__tests__/views.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/BranchWidget.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/CommitView.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19,
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/CompareBranches.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/DiffEditor.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/GitLog.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/GitLog.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/SelectionHistory.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/__tests__/changes.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/__tests__/commitSuggest.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        24
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/__tests__/commitViewOptions.test.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22,
+        24
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/__tests__/decorations.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/__tests__/fileHistoryAndCompare.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/__tests__/gitOps.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/__tests__/logBranches.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/__tests__/logPanes.test.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/actions.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/branchMenu.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/branchOps.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/changeOps.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/changes.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/cm.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/commitStore.ts",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/commitSuggest.ts",
+      "retainedBaseline": true,
+      "prs": [
+        24
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/common.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/compareBranchesKind.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/diffInput.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/gitMenuDialogs.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/index.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/logPaneActions.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/model.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/operations.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/ops.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/vcs/remoteUi.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/welcome/ProjectsPage.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/welcome/WelcomeView.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        25
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/features/welcome/welcome.test.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        25
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/agentIds.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/i18n.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        23
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/i18n.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/locales/actionTitles.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/locales/en.json",
+      "retainedBaseline": true,
+      "prs": [
+        25
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/locales/it.json",
+      "retainedBaseline": true,
+      "prs": [
+        23,
+        25
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/locales/text/it.json",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        21,
+        22,
+        23,
+        24,
+        25
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/locales/text/zh.json",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        16,
+        19,
+        21,
+        22,
+        24,
+        25
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/locales/textCatalog.test.ts",
+      "retainedBaseline": true,
+      "prs": [
+        15
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/locales/zh.json",
+      "retainedBaseline": true,
+      "prs": [
+        25
+      ],
+      "reason": "Italian locale, fork-only strings and reviewed translation deltas",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/workflowSettings.test.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/platform/workflowSettings.ts",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/ui/Dialog.module.css",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/ui/Feedback.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/ui/Tree.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/ui/icons.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        15,
+        19
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/ui/openidea/agents/agy.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/ui/openidea/agents/pi.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/ui/openidea/agents/pi_dark.svg",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/workbench/MainMenu.interaction.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/workbench/MainMenu.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/workbench/Notifications.module.css",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/workbench/TitleBar.test.tsx",
+      "retainedBaseline": false,
+      "prs": [
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/workbench/TitleBar.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        21
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/workbench/Welcome.tsx",
+      "retainedBaseline": true,
+      "prs": [],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    },
+    {
+      "path": "src/workbench/Workbench.test.tsx",
+      "retainedBaseline": true,
+      "prs": [
+        22
+      ],
+      "reason": "Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations",
+      "mt7": false
+    }
+  ],
+  "uiFollowup": {
+    "pr": 25,
+    "merge": "a5e0624a5d792737a7465d69d886eff434a0f5be",
+    "head": "1a32a3227139cf3aab510f5aa09bf80c7d5a9016",
+    "review": 5727846159,
+    "ci": "https://github.com/inno-bit-lab/ibl-openidea/actions/runs/41299314298",
+    "sourceKeysAdded": 3,
+    "keyedAdded": 1
+  }
+}

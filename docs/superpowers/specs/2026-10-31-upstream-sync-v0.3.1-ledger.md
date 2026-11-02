@@ -62,7 +62,7 @@ Every source CI above was reread with its exact head, seven completed jobs and s
 | MT-7 | `5329ddc469a8bc0c7d6777cbc80180d85f409a32` | `e817713694d27f017e0d88385012f4129abd958f` | Adapted with -x to fork 0.3.1 in four files; 35 local lock records updated, every sourced dependency record unchanged. Result preserves the source author and -x trailer; its subject is adapted to chore: v0.3.1.                                  |
 | MT-7 | `06109aae95343796e3b96db4c3239c0e60f9ea52` | `superseded version-only content`          | Only four version files changed upstream. Superseded by fork 0.3.1, never apply 0.1.31. Strategy-ours ancestry is recorded externally after the complete content gate.                                                                              |
 
-Each non-version source patch was compared to its resulting port per path. Catalog conflicts were compared by semantic key delta. This proves content application in addition to provenance trailers; later deviations are bound to the independently reviewed predecessor PRs above. Raw audit: `target/local/evidence/final-gate/F5E936/provenance-audit.json`.
+Each non-version source patch was compared to its resulting port per path. Catalog conflicts were compared by semantic key delta. This proves content application in addition to provenance trailers; later deviations are bound to the independently reviewed predecessor PRs above. Raw audit: `docs/superpowers/specs/assets/v0.3.1-ledger/provenance-audit.json`.
 
 ## Final Italian audit
 
@@ -308,7 +308,7 @@ The table accounts for the prepared final content against the exact upstream fre
 | `src/workbench/Welcome.tsx`                                        | yes                 | baseline                               | Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations                 |
 | `src/workbench/Workbench.test.tsx`                                 | yes                 | #22                                    | Retained fork UI/VCS/agents and reviewed trust, menu and editor adaptations                 |
 
-Raw final path accounting: target/local/evidence/final-gate/F5E936/provenance-final.json. The original 33-source patch audit is retained separately; PR #25 is an accepted fork follow-up, not an additional upstream interval commit.
+Raw final path accounting: `docs/superpowers/specs/assets/v0.3.1-ledger/provenance-final.json`. The original 33-source patch audit is retained separately; PR #25 is an accepted fork follow-up, not an additional upstream interval commit.
 
 ## Reviewed source adaptations
 
